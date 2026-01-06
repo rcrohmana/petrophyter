@@ -1,0 +1,21 @@
+# Petrophyter PyQt - Requirements
+# Desktop Petrophysics Application
+
+# Core Qt Framework
+PyQt6>=6.5.0
+PyQt6-Qt6>=6.5.0
+
+# Well Log Processing
+lasio>=0.31
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.11.0
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.18.0
+
+# Excel Export
+openpyxl>=3.1.0
