@@ -333,8 +333,26 @@ class CrossPlot(PlotWidget):
         y_label: str = "Y",
         title: str = "Crossplot",
         colorbar_label: str = None,
+        x_range: tuple = None,
+        y_range: tuple = None,
+        invert_x: bool = False,
+        invert_y: bool = False,
+        grid_style: str = "major",
     ):
-        """Create a crossplot."""
+        """Create a crossplot with professional styling.
+        
+        Args:
+            x_data, y_data: Data series to plot
+            color_data: Optional color-by series
+            x_label, y_label: Axis labels
+            title: Plot title
+            colorbar_label: Label for colorbar
+            x_range: (min, max) for x-axis, or None for auto
+            y_range: (min, max) for y-axis, or None for auto
+            invert_x: Invert x-axis (e.g., for NPHI)
+            invert_y: Invert y-axis (e.g., for RHOB)
+            grid_style: 'major', 'both', or 'none'
+        """
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.set_facecolor(self._axes_color)
@@ -346,20 +364,109 @@ class CrossPlot(PlotWidget):
 
         if color_data is not None:
             c = color_data[mask]
-            scatter = ax.scatter(x, y, c=c, cmap="viridis", alpha=0.6, s=5)
-            cbar = self.figure.colorbar(scatter, ax=ax)
+            scatter = ax.scatter(x, y, c=c, cmap="viridis", alpha=0.6, s=8, edgecolors='none')
+            cbar = self.figure.colorbar(scatter, ax=ax, pad=0.02)
             if colorbar_label:
                 cbar.set_label(colorbar_label, fontsize=9)
+            cbar.ax.tick_params(labelsize=8)
         else:
-            ax.scatter(x, y, alpha=0.6, s=5, color="#1E90FF")
+            ax.scatter(x, y, alpha=0.6, s=8, color="#1E90FF", edgecolors='none')
 
-        ax.set_xlabel(x_label, fontsize=9)
-        ax.set_ylabel(y_label, fontsize=9)
-        ax.set_title(title, fontsize=10)
-        ax.grid(True, alpha=0.3)
+        # Set axis ranges
+        if x_range:
+            ax.set_xlim(x_range)
+        if y_range:
+            ax.set_ylim(y_range)
+            
+        # Invert axes if needed
+        if invert_x:
+            ax.invert_xaxis()
+        if invert_y:
+            ax.invert_yaxis()
+
+        ax.set_xlabel(x_label, fontsize=10, fontweight='bold')
+        ax.set_ylabel(y_label, fontsize=10, fontweight='bold')
+        ax.set_title(title, fontsize=11, fontweight='bold')
+        
+        # Professional grid styling
+        if grid_style == "both":
+            ax.grid(True, which='major', alpha=0.5, linestyle='-', linewidth=0.8)
+            ax.grid(True, which='minor', alpha=0.2, linestyle=':', linewidth=0.5)
+            ax.minorticks_on()
+        elif grid_style == "major":
+            ax.grid(True, which='major', alpha=0.4, linestyle='-', linewidth=0.6)
+        
+        # Better tick styling
+        ax.tick_params(axis='both', which='major', labelsize=8)
 
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def plot_neutron_density(
+        self,
+        nphi: pd.Series,
+        rhob: pd.Series,
+        color_data: pd.Series = None,
+        colorbar_label: str = "Vsh",
+        title: str = "Neutron-Density Crossplot",
+    ):
+        """Standard Neutron-Density crossplot with industry-standard scales.
+        
+        Standard petrophysics scales:
+        - NPHI: 0.45 to -0.15 (reversed, limestone scale)
+        - RHOB: 1.95 to 2.95 g/cc
+        """
+        self.plot_crossplot(
+            x_data=nphi,
+            y_data=rhob,
+            color_data=color_data,
+            x_label="NPHI (v/v)",
+            y_label="RHOB (g/cc)",
+            title=title,
+            colorbar_label=colorbar_label,
+            x_range=(0.45, -0.15),  # Standard limestone scale, reversed
+            y_range=(1.95, 2.95),   # Standard density range
+            invert_x=False,  # Already reversed via range
+            invert_y=True,   # Low density at top
+            grid_style="both",
+        )
+        
+    def plot_porosity_perm(
+        self,
+        phie: pd.Series,
+        perm: pd.Series,
+        color_data: pd.Series = None,
+        colorbar_label: str = "Vsh",
+        title: str = "Porosity-Permeability",
+        log_perm: bool = True,
+    ):
+        """Standard Porosity-Permeability crossplot.
+        
+        Standard scales:
+        - PHIE: 0 to 0.4 (or auto)
+        - Perm: log scale, 0.001 to 10000 mD
+        """
+        if log_perm:
+            perm_plot = np.log10(perm.clip(lower=0.001))
+            y_label = "log₁₀(K) [mD]"
+            y_range = (-3, 4)  # 0.001 to 10000 mD
+        else:
+            perm_plot = perm
+            y_label = "Permeability (mD)"
+            y_range = None
+            
+        self.plot_crossplot(
+            x_data=phie,
+            y_data=perm_plot,
+            color_data=color_data,
+            x_label="PHIE (v/v)",
+            y_label=y_label,
+            title=title,
+            colorbar_label=colorbar_label,
+            x_range=(0, 0.40),
+            y_range=y_range,
+            grid_style="both",
+        )
 
 
 class CompositeLogPlot(PlotWidget):

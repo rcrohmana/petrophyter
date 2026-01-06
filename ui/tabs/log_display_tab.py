@@ -159,15 +159,52 @@ class LogDisplayTab(QWidget):
         self.xplot_group = QGroupBox("Crossplots (click to expand)")
         self.xplot_group.setCheckable(True)
         self.xplot_group.setChecked(False)  # Collapsed by default
-        xplot_layout = QHBoxLayout(self.xplot_group)
+        xplot_main_layout = QVBoxLayout(self.xplot_group)
+        
+        # Crossplot depth filter controls
+        xplot_controls = QHBoxLayout()
+        xplot_controls.addWidget(QLabel("Crossplot Depth Filter:"))
+        
+        xplot_controls.addWidget(QLabel("Top:"))
+        self.xplot_top_spin = QDoubleSpinBox()
+        self.xplot_top_spin.setRange(0, 100000)
+        self.xplot_top_spin.setDecimals(1)
+        self.xplot_top_spin.setSuffix(" ft")
+        self.xplot_top_spin.setMinimumWidth(100)
+        xplot_controls.addWidget(self.xplot_top_spin)
+        
+        xplot_controls.addWidget(QLabel("Bottom:"))
+        self.xplot_bottom_spin = QDoubleSpinBox()
+        self.xplot_bottom_spin.setRange(0, 100000)
+        self.xplot_bottom_spin.setDecimals(1)
+        self.xplot_bottom_spin.setSuffix(" ft")
+        self.xplot_bottom_spin.setMinimumWidth(100)
+        xplot_controls.addWidget(self.xplot_bottom_spin)
+        
+        self.xplot_update_btn = QPushButton("Update Crossplots")
+        self.xplot_update_btn.clicked.connect(self._update_crossplots)
+        xplot_controls.addWidget(self.xplot_update_btn)
+        
+        # Sync with log depth checkbox
+        self.xplot_sync_check = QCheckBox("Sync with Log Depth")
+        self.xplot_sync_check.setChecked(True)
+        self.xplot_sync_check.stateChanged.connect(self._on_xplot_sync_changed)
+        xplot_controls.addWidget(self.xplot_sync_check)
+        
+        xplot_controls.addStretch()
+        xplot_main_layout.addLayout(xplot_controls)
+        
+        # Crossplot widgets
+        xplot_layout = QHBoxLayout()
 
         self.nd_crossplot = CrossPlot()
-        self.nd_crossplot.setFixedHeight(300)  # Fixed height
+        self.nd_crossplot.setFixedHeight(320)  # Slightly taller
         self.pk_crossplot = CrossPlot()
-        self.pk_crossplot.setFixedHeight(300)  # Fixed height
+        self.pk_crossplot.setFixedHeight(320)
 
         xplot_layout.addWidget(self.nd_crossplot)
         xplot_layout.addWidget(self.pk_crossplot)
+        xplot_main_layout.addLayout(xplot_layout)
 
         # Connect toggle to show/hide contents
         self.xplot_group.toggled.connect(
@@ -198,16 +235,36 @@ class LogDisplayTab(QWidget):
 
     def _toggle_crossplots(self, group_box, checked: bool):
         """Toggle visibility of crossplots content."""
-        for i in range(group_box.layout().count()):
-            widget = group_box.layout().itemAt(i).widget()
-            if widget:
-                widget.setVisible(checked)
+        # Get the main layout of the group box
+        main_layout = group_box.layout()
+        for i in range(main_layout.count()):
+            item = main_layout.itemAt(i)
+            # Handle both widgets and layouts
+            if item.widget():
+                item.widget().setVisible(checked)
+            elif item.layout():
+                for j in range(item.layout().count()):
+                    sub_item = item.layout().itemAt(j)
+                    if sub_item.widget():
+                        sub_item.widget().setVisible(checked)
+                        
         if checked:
             group_box.setTitle("Crossplots")
-            group_box.setFixedHeight(340)  # Header + 300px plots
+            group_box.setFixedHeight(400)  # Header + controls + plots
+            # Update crossplots when expanded
+            if self.model.calculated and self.model.results is not None:
+                self._update_crossplots()
         else:
             group_box.setTitle("Crossplots (click to expand)")
             group_box.setMaximumHeight(30)
+            
+    def _on_xplot_sync_changed(self, state: int):
+        """Handle sync checkbox change."""
+        if state and self.model.calculated:
+            # Sync with main log depth
+            self.xplot_top_spin.setValue(self.top_spin.value())
+            self.xplot_bottom_spin.setValue(self.bottom_spin.value())
+            self._update_crossplots()
 
     def _on_engine_changed(self, index: int):
         """Switch between interactive and classic plot engines."""
@@ -238,6 +295,13 @@ class LogDisplayTab(QWidget):
             self._updating_depth = False
         else:
             self._update_classic_log()
+
+        # Sync crossplot depth if checkbox is checked
+        if hasattr(self, 'xplot_sync_check') and self.xplot_sync_check.isChecked():
+            self.xplot_top_spin.setValue(top)
+            self.xplot_bottom_spin.setValue(bottom)
+            if self.xplot_group.isChecked():
+                self._update_crossplots()
 
         self.depth_selection_changed.emit(top, bottom)
 
@@ -403,35 +467,98 @@ class LogDisplayTab(QWidget):
             self.bottom_spin.setRange(depth_min, depth_max)
             self.top_spin.setValue(depth_min)
             self.bottom_spin.setValue(depth_max)
+            
+            # Also set crossplot depth range
+            self.xplot_top_spin.setRange(depth_min, depth_max)
+            self.xplot_bottom_spin.setRange(depth_min, depth_max)
+            self.xplot_top_spin.setValue(depth_min)
+            self.xplot_bottom_spin.setValue(depth_max)
             self._updating_depth = False
 
         # Update current plot engine
         self._update_plot()
 
-        # Update crossplots
-        if "PHIN" in results.columns and "PHID" in results.columns:
-            self.nd_crossplot.plot_crossplot(
-                results["PHIN"],
-                results["PHID"],
-                color_data=results.get("VSH"),
-                x_label="NPHI (v/v)",
-                y_label="PHID (v/v)",
-                title="Neutron-Density Crossplot",
+        # Update crossplots if expanded
+        if self.xplot_group.isChecked():
+            self._update_crossplots()
+
+    def _update_crossplots(self):
+        """Update crossplots with depth filtering."""
+        if not self.model.calculated or self.model.results is None:
+            return
+            
+        results = self.model.results
+        
+        # Get depth range from crossplot controls
+        top = self.xplot_top_spin.value()
+        bottom = self.xplot_bottom_spin.value()
+        
+        # Filter data by depth
+        if "DEPTH" in results.columns and bottom > top:
+            mask = (results["DEPTH"] >= top) & (results["DEPTH"] <= bottom)
+            filtered = results[mask]
+        else:
+            filtered = results
+            
+        # Check if we have data after filtering
+        if len(filtered) == 0:
+            return
+
+        # Neutron-Density crossplot (use raw NPHI and RHOB if available)
+        if "NPHI" in filtered.columns and "RHOB" in filtered.columns:
+            # Standard N-D crossplot with raw logs
+            self.nd_crossplot.plot_neutron_density(
+                nphi=filtered["NPHI"],
+                rhob=filtered["RHOB"],
+                color_data=filtered.get("VSH"),
                 colorbar_label="Vsh",
+                title=f"N-D Crossplot ({top:.0f}-{bottom:.0f} ft)",
+            )
+        elif "PHIE_N" in filtered.columns and "PHIE_D" in filtered.columns:
+            # Porosity-derived crossplot - PHIE_N vs PHIE_D
+            self.nd_crossplot.plot_crossplot(
+                filtered["PHIE_N"],
+                filtered["PHIE_D"],
+                color_data=filtered.get("VSH"),
+                x_label="PHIE_N (v/v)",
+                y_label="PHIE_D (v/v)",
+                title=f"N-D Porosity ({top:.0f}-{bottom:.0f} ft)",
+                colorbar_label="Vsh",
+                x_range=(0, 0.45),  # Porosity range
+                y_range=(0, 0.45),  # Porosity range
+                grid_style="both",
+            )
+        elif "PHIN" in filtered.columns and "PHID" in filtered.columns:
+            # Alternative column names
+            self.nd_crossplot.plot_crossplot(
+                filtered["PHIN"],
+                filtered["PHID"],
+                color_data=filtered.get("VSH"),
+                x_label="PHIN (v/v)",
+                y_label="PHID (v/v)",
+                title=f"N-D Porosity ({top:.0f}-{bottom:.0f} ft)",
+                colorbar_label="Vsh",
+                x_range=(0, 0.45),
+                y_range=(0, 0.45),
+                grid_style="both",
             )
 
-        if "PHIE" in results.columns and "PERM_TIMUR" in results.columns:
-            import numpy as np
-
-            perm_log = np.log10(results["PERM_TIMUR"].clip(0.001))
-            self.pk_crossplot.plot_crossplot(
-                results["PHIE"],
-                perm_log,
-                color_data=results.get("VSH"),
-                x_label="PHIE (v/v)",
-                y_label="log10(K) (mD)",
-                title="Porosity-Permeability",
+        # Porosity-Permeability crossplot
+        if "PHIE" in filtered.columns and "PERM_TIMUR" in filtered.columns:
+            self.pk_crossplot.plot_porosity_perm(
+                phie=filtered["PHIE"],
+                perm=filtered["PERM_TIMUR"],
+                color_data=filtered.get("VSH"),
                 colorbar_label="Vsh",
+                title=f"Phi-K ({top:.0f}-{bottom:.0f} ft)",
+            )
+        elif "PHIE" in filtered.columns and "PERM_WR" in filtered.columns:
+            self.pk_crossplot.plot_porosity_perm(
+                phie=filtered["PHIE"],
+                perm=filtered["PERM_WR"],
+                color_data=filtered.get("VSH"),
+                colorbar_label="Vsh",
+                title=f"Phi-K WR ({top:.0f}-{bottom:.0f} ft)",
             )
 
     def get_current_depth_window(self) -> tuple:

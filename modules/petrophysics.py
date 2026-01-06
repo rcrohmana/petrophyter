@@ -32,6 +32,22 @@ class PetrophysicsCalculator:
         if "DEPTH" in data.columns:
             self.results["DEPTH"] = data["DEPTH"]
 
+    def _make_series(self, fill_value) -> pd.Series:
+        """
+        Create a Series with the correct index from self.data.
+
+        This helper method ensures that fallback Series maintain proper
+        index alignment, which is critical when data is filtered
+        (e.g., Per-Formation mode with non-contiguous indices).
+
+        Args:
+            fill_value: The value to fill the series with (e.g., np.nan, 0, 0.15)
+
+        Returns:
+            pd.Series with the same index as self.data
+        """
+        return pd.Series([fill_value] * len(self.data), index=self.data.index)
+
     # =========================================================================
     # VSHALE CALCULATIONS
     # =========================================================================
@@ -53,7 +69,7 @@ class PetrophysicsCalculator:
             Vshale series (0-1)
         """
         if gr_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         gr = self.data[gr_curve]
 
@@ -177,7 +193,7 @@ class PetrophysicsCalculator:
             Density porosity series
         """
         if rhob_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rhob = self.data[rhob_curve]
 
@@ -203,7 +219,7 @@ class PetrophysicsCalculator:
             Neutron porosity series
         """
         if nphi_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         nphi = self.data[nphi_curve].copy()
 
@@ -233,7 +249,7 @@ class PetrophysicsCalculator:
             Sonic porosity series
         """
         if dt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         dt = self.data[dt_curve]
 
@@ -261,9 +277,9 @@ class PetrophysicsCalculator:
             Total porosity series
         """
         if phid is None:
-            phid = self.results.get("PHID", pd.Series([np.nan] * len(self.data)))
+            phid = self.results.get("PHID", self._make_series(np.nan))
         if phin is None:
-            phin = self.results.get("PHIN", pd.Series([np.nan] * len(self.data)))
+            phin = self.results.get("PHIN", self._make_series(np.nan))
 
         # Square root mean of squares
         phit = np.sqrt((phid**2 + phin**2) / 2)
@@ -290,9 +306,9 @@ class PetrophysicsCalculator:
             Effective porosity series
         """
         if phit is None:
-            phit = self.results.get("PHIT", pd.Series([np.nan] * len(self.data)))
+            phit = self.results.get("PHIT", self._make_series(np.nan))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         phie = phit * (1 - vsh)
 
@@ -323,9 +339,9 @@ class PetrophysicsCalculator:
         Returns:
             Effective density porosity series
         """
-        phid = self.results.get("PHID", pd.Series([np.nan] * len(self.data)))
+        phid = self.results.get("PHID", self._make_series(np.nan))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale porosity from density
         phid_shale = (rho_matrix - rhob_shale) / (rho_matrix - rho_fluid)
@@ -352,9 +368,9 @@ class PetrophysicsCalculator:
         Returns:
             Effective neutron porosity series
         """
-        phin = self.results.get("PHIN", pd.Series([np.nan] * len(self.data)))
+        phin = self.results.get("PHIN", self._make_series(np.nan))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale correction
         phie_n = phin - (vsh * nphi_shale)
@@ -384,9 +400,9 @@ class PetrophysicsCalculator:
         Returns:
             Effective sonic porosity series
         """
-        phis = self.results.get("PHIS", pd.Series([np.nan] * len(self.data)))
+        phis = self.results.get("PHIS", self._make_series(np.nan))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale porosity
         phi_shale = (dt_shale - dt_matrix) / (dt_fluid - dt_matrix)
@@ -421,10 +437,10 @@ class PetrophysicsCalculator:
         Returns:
             Effective density-neutron porosity series
         """
-        phid = self.results.get("PHID", pd.Series([np.nan] * len(self.data)))
-        phin = self.results.get("PHIN", pd.Series([np.nan] * len(self.data)))
+        phid = self.results.get("PHID", self._make_series(np.nan))
+        phin = self.results.get("PHIN", self._make_series(np.nan))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale porosity from density
         phid_shale = (rho_matrix - rhob_shale) / (rho_matrix - rho_fluid)
@@ -478,7 +494,7 @@ class PetrophysicsCalculator:
             Dictionary with all PHIE calculations
         """
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         results = {}
         results["PHIE_D"] = self.calculate_phie_density(
@@ -547,11 +563,11 @@ class PetrophysicsCalculator:
         Returns:
             Gas-corrected effective porosity series
         """
-        phid = self.results.get("PHID", pd.Series([np.nan] * len(self.data)))
-        phin = self.results.get("PHIN", pd.Series([np.nan] * len(self.data)))
+        phid = self.results.get("PHID", self._make_series(np.nan))
+        phin = self.results.get("PHIN", self._make_series(np.nan))
 
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale porosity from density
         phid_shale = (rho_matrix - rhob_shale) / (rho_matrix - rho_fluid)
@@ -633,12 +649,12 @@ class PetrophysicsCalculator:
             Water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
 
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
 
         # Avoid division by zero
         phie_safe = np.maximum(phie, 0.001)
@@ -683,14 +699,14 @@ class PetrophysicsCalculator:
             Water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
 
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0.2] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0.2))
 
         sw_list = []
 
@@ -757,14 +773,14 @@ class PetrophysicsCalculator:
             Water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
 
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0.2] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0.2))
 
         # Simandoux with n=2 is a quadratic in Sw
         # A = PHIE^m / (a*Rw)
@@ -827,12 +843,12 @@ class PetrophysicsCalculator:
             Water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
 
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
 
         sw_list = []
 
@@ -916,7 +932,7 @@ class PetrophysicsCalculator:
             Water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
-            return pd.Series([np.nan] * len(self.data))
+            return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
 
@@ -925,7 +941,7 @@ class PetrophysicsCalculator:
         # For consistency with other methods signature, we accept 'phie'.
         if phie is None:
             phie = self.results.get(
-                "PHIT", self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+                "PHIT", self.results.get("PHIE", self._make_series(0.15))
             )
 
         sw_list = []
@@ -1004,7 +1020,7 @@ class PetrophysicsCalculator:
             Swirr series
         """
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
 
         phie_safe = np.maximum(phie, 0.01)  # Avoid division by very small numbers
         swirr = k_buckles / phie_safe
@@ -1039,10 +1055,10 @@ class PetrophysicsCalculator:
         if sw is None:
             sw = self.results.get(
                 "SW_INDO",
-                self.results.get("SW_ARCHIE", pd.Series([0.5] * len(self.data))),
+                self.results.get("SW_ARCHIE", self._make_series(0.5)),
             )
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0.3] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0.3))
 
         # Identify clean hydrocarbon zones
         clean_hc_zone = (vsh < vsh_threshold) & (sw < sw_threshold)
@@ -1081,10 +1097,10 @@ class PetrophysicsCalculator:
         if sw is None:
             sw = self.results.get(
                 "SW_INDO",
-                self.results.get("SW_ARCHIE", pd.Series([0.5] * len(self.data))),
+                self.results.get("SW_ARCHIE", self._make_series(0.5)),
             )
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0.3] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0.3))
 
         # Use Sw in relatively clean zones
         clean_mask = vsh < 0.4
@@ -1137,14 +1153,14 @@ class PetrophysicsCalculator:
             Tuple of (Swirr series, info dictionary with method used)
         """
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
         if sw is None:
             sw = self.results.get(
                 "SW_INDO",
-                self.results.get("SW_ARCHIE", pd.Series([0.5] * len(self.data))),
+                self.results.get("SW_ARCHIE", self._make_series(0.5)),
             )
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0.3] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0.3))
 
         info = {
             "method": "buckles_fallback",
@@ -1271,7 +1287,7 @@ class PetrophysicsCalculator:
             Permeability series (mD)
         """
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
 
         # Estimate Swi if not provided
         if swi is None:
@@ -1279,12 +1295,12 @@ class PetrophysicsCalculator:
             sw = self.results.get("SW_ARCHIE", None)
             if sw is not None:
                 # Minimum Sw in clean zones
-                vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+                vsh = self.results.get("VSH", self._make_series(0))
                 swi = sw.copy()
                 # In clean zones with hydrocarbons, Sw ~ Swi
                 swi = np.clip(swi, 0.05, 0.9)
             else:
-                swi = pd.Series([0.2] * len(self.data))
+                swi = self._make_series(0.2)
 
         phie_safe = np.maximum(phie, 0.001)
         swi_safe = np.maximum(swi, 0.05)
@@ -1320,14 +1336,14 @@ class PetrophysicsCalculator:
             Permeability series (mD)
         """
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
 
         if swi is None:
             sw = self.results.get("SW_ARCHIE", None)
             if sw is not None:
                 swi = np.clip(sw, 0.05, 0.9)
             else:
-                swi = pd.Series([0.2] * len(self.data))
+                swi = self._make_series(0.2)
 
         phie_safe = np.maximum(phie, 0.001)
         swi_safe = np.maximum(swi, 0.05)
@@ -1361,7 +1377,7 @@ class PetrophysicsCalculator:
         if perm is None:
             perm = self.results.get(
                 "PERM_TIMUR",
-                self.results.get("PERM_WR", pd.Series([10] * len(self.data))),
+                self.results.get("PERM_WR", self._make_series(10)),
             )
 
         def classify(k):
@@ -1493,15 +1509,15 @@ class PetrophysicsCalculator:
             Dictionary with thickness values
         """
         if vsh is None:
-            vsh = self.results.get("VSH", pd.Series([0] * len(self.data)))
+            vsh = self.results.get("VSH", self._make_series(0))
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0))
         if sw is None:
             sw = self.results.get(
                 "SW_ARCHIE",
                 self.results.get(
                     "SW_INDO",
-                    self.results.get("SW_SIMAN", pd.Series([1] * len(self.data))),
+                    self.results.get("SW_SIMAN", self._make_series(1)),
                 ),
             )
 
@@ -1597,26 +1613,37 @@ class PetrophysicsCalculator:
         """
         # Get data from results if not provided
         if phie is None:
-            phie = self.results.get("PHIE", pd.Series([0.15] * len(self.data)))
+            phie = self.results.get("PHIE", self._make_series(0.15))
         if sw is None:
-            sw = self.results.get("SW", pd.Series([0.5] * len(self.data)))
+            sw = self.results.get("SW", self._make_series(0.5))
         if depth is None:
             depth = self.data.get("DEPTH", pd.Series(range(len(self.data))))
         if net_res_flag is None:
-            net_res_flag = self.results.get(
-                "NET_RES_FLAG", pd.Series([1] * len(self.data))
-            )
+            net_res_flag = self.results.get("NET_RES_FLAG", self._make_series(1))
         if net_pay_flag is None:
-            net_pay_flag = self.results.get(
-                "NET_PAY_FLAG", pd.Series([1] * len(self.data))
-            )
+            net_pay_flag = self.results.get("NET_PAY_FLAG", self._make_series(1))
 
-        # Ensure proper types
-        phie = pd.Series(phie).reset_index(drop=True)
-        sw = pd.Series(sw).reset_index(drop=True)
-        depth = pd.Series(depth).reset_index(drop=True)
-        net_res_flag = pd.Series(net_res_flag).reset_index(drop=True)
-        net_pay_flag = pd.Series(net_pay_flag).reset_index(drop=True)
+        # Ensure proper types - preserve original index for DataFrame alignment
+        # BUG FIX: Using reset_index(drop=True) creates index 0,1,2,... which
+        # causes NaN when assigning to self.results (which has filtered index
+        # like 500,501,... in Per-Formation mode). Use .values to extract raw
+        # numpy arrays, then create Series with the correct original index.
+        original_index = self.data.index
+        phie = pd.Series(
+            phie.values if hasattr(phie, "values") else phie, index=original_index
+        )
+        sw = pd.Series(sw.values if hasattr(sw, "values") else sw, index=original_index)
+        depth = pd.Series(
+            depth.values if hasattr(depth, "values") else depth, index=original_index
+        )
+        net_res_flag = pd.Series(
+            net_res_flag.values if hasattr(net_res_flag, "values") else net_res_flag,
+            index=original_index,
+        )
+        net_pay_flag = pd.Series(
+            net_pay_flag.values if hasattr(net_pay_flag, "values") else net_pay_flag,
+            index=original_index,
+        )
 
         # Step 1: Calculate HCPV fraction (hydrocarbon fraction per depth)
         hcpv_frac = phie * (1 - sw)

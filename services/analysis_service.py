@@ -108,7 +108,7 @@ class AnalysisWorker(QRunnable):
                 )
                 vsh = calc.results["VSH"]
             else:
-                vsh = pd.Series([0.3] * len(data))
+                vsh = pd.Series([0.3] * len(data), index=data.index)
                 calc.results["VSH"] = vsh
 
             self.signals.progress.emit("Calculating porosity...", 35)
@@ -186,7 +186,9 @@ class AnalysisWorker(QRunnable):
                 if rsh_est:
                     rsh = rsh_est
 
-            phie = calc.results.get("PHIE", pd.Series([0.15] * len(data)))
+            phie = calc.results.get(
+                "PHIE", pd.Series([0.15] * len(data), index=data.index)
+            )
 
             if rt_curve and rt_curve != "None" and rt_curve in data.columns:
                 # Retrieve selected models (defaults if missing)
@@ -237,7 +239,9 @@ class AnalysisWorker(QRunnable):
                         calc.results["SW"] = calc.results[available[0]]
                         sw_primary_series = calc.results[available[0]]
                     else:
-                        calc.results["SW"] = pd.Series([1.0] * len(data))
+                        calc.results["SW"] = pd.Series(
+                            [1.0] * len(data), index=data.index
+                        )
                         sw_primary_series = calc.results["SW"]
 
             self.signals.progress.emit("Calculating Swirr...", 65)
@@ -247,7 +251,9 @@ class AnalysisWorker(QRunnable):
             k_buckles = self.model.k_buckles
 
             # Use Primary SW for Swirr logic (if it uses Sw input)
-            sw_for_swirr = calc.results.get("SW", pd.Series([0.5] * len(data)))
+            sw_for_swirr = calc.results.get(
+                "SW", pd.Series([0.5] * len(data), index=data.index)
+            )
 
             if swirr_method == "Hierarchical (Recommended)":
                 swirr, swirr_info = calc.calculate_swirr_hierarchical(
@@ -273,7 +279,9 @@ class AnalysisWorker(QRunnable):
                 )
                 swirr_actual_method = swirr_method
 
-            swirr = calc.results.get("SWIRR", pd.Series([0.2] * len(data)))
+            swirr = calc.results.get(
+                "SWIRR", pd.Series([0.2] * len(data), index=data.index)
+            )
             swirr_mean = swirr.mean()
 
             self.signals.progress.emit("Calculating permeability...", 75)
@@ -297,7 +305,9 @@ class AnalysisWorker(QRunnable):
             phi_cutoff = self.model.phi_cutoff
             sw_cutoff = self.model.sw_cutoff
 
-            sw_for_pay = calc.results.get("SW", pd.Series([1.0] * len(data)))
+            sw_for_pay = calc.results.get(
+                "SW", pd.Series([1.0] * len(data), index=data.index)
+            )
             summary = calc.calculate_net_pay(
                 vsh, phie, sw_for_pay, vsh_cutoff, phi_cutoff, sw_cutoff
             )
@@ -384,7 +394,11 @@ class AnalysisService(QObject):
 
     def _on_completed(self, results: pd.DataFrame, summary: dict):
         """Handle analysis completion."""
+        # print(f"[DEBUG AnalysisService] _on_completed called")
+        # print(f"[DEBUG AnalysisService] results.shape = {results.shape}")
+        # print(f"[DEBUG AnalysisService] Emitting completed signal...")
         self.completed.emit(results, summary)
+        # print(f"[DEBUG AnalysisService] Signal emitted")
 
     def calculate_rw_rsh(self, model) -> Optional[Dict]:
         """Calculate Rw and Rsh from log data (synchronous)."""
@@ -624,7 +638,8 @@ class AnalysisService(QObject):
         if len(methods_to_calc) == 1:
             key = key_map.get(methods_to_calc[0], "VSH_LINEAR")
             vsh_ref = calc.results.get(
-                key, calc.results.get("VSH", pd.Series([0.5] * len(data)))
+                key,
+                calc.results.get("VSH", pd.Series([0.5] * len(data), index=data.index)),
             )
             return vsh_ref, methods_to_calc[0]
         else:
@@ -636,7 +651,9 @@ class AnalysisService(QObject):
             if vsh_arrays:
                 vsh_ref = pd.concat(vsh_arrays, axis=1).max(axis=1)
             else:
-                vsh_ref = calc.results.get("VSH", pd.Series([0.5] * len(data)))
+                vsh_ref = calc.results.get(
+                    "VSH", pd.Series([0.5] * len(data), index=data.index)
+                )
             return vsh_ref, "max(" + ",".join(methods_to_calc) + ")"
 
     def _build_shale_mask(self, vsh_ref, threshold: float) -> Tuple[pd.Series, int]:
