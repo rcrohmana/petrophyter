@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 import traceback
+import threading
 
 import sys
 import os
@@ -170,7 +171,9 @@ class MainWindow(QMainWindow):
         # Analysis service signals
         self.analysis_service.started.connect(self._on_analysis_started)
         self.analysis_service.progress.connect(self._on_analysis_progress)
-        self.analysis_service.completed.connect(self._on_analysis_completed)
+        self.analysis_service.completed.connect(
+            self._on_analysis_completed, type=Qt.ConnectionType.QueuedConnection
+        )
         self.analysis_service.error.connect(self._on_analysis_error)
 
         # Merge service signals
@@ -458,6 +461,12 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_completed(self, results, summary):
         """Handle analysis completion."""
+        # print(
+        #     f"[DEBUG MainWindow] _on_analysis_completed called on Thread: {threading.current_thread().name}"
+        # )
+        # print(f"[DEBUG MainWindow] results.shape = {results.shape}")
+        # print(f"[DEBUG MainWindow] results.columns = {list(results.columns)[:10]}...")
+
         self.sidebar.set_progress(100, "Complete")
         self.sidebar.run_btn.setEnabled(True)
 
@@ -465,9 +474,17 @@ class MainWindow(QMainWindow):
         self.model.results = results
         self.model.summary = summary
 
+        # print(
+        #     f"[DEBUG MainWindow] After storing: model.calculated = {self.model.calculated}"
+        # )
+        # print(
+        #     f"[DEBUG MainWindow] After storing: model.results is None = {self.model.results is None}"
+        # )
+
         self.statusBar.showMessage("✅ Analysis complete!")
 
         # Explicitly update all tabs (in case signal doesn't propagate)
+        # print("[DEBUG MainWindow] Calling _update_all_tabs()")
         self._update_all_tabs()
 
         # Show success message

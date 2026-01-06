@@ -134,3 +134,66 @@ class TestHCPV:
         expected_dhcpv = 0.1 * expected_dz
 
         np.testing.assert_allclose(results["dHCPV"], expected_dhcpv, rtol=1e-5)
+
+    def test_hcpv_filtered_index_alignment(self):
+        """Test HCPV with filtered data (Per-Formation mode simulation).
+
+        This is a regression test for the index mismatch bug where
+        reset_index(drop=True) caused NaN values when DataFrame had
+        non-contiguous indices (e.g., from formation filtering).
+        """
+        # Simulate filtered data with non-contiguous index
+        # (like when Per-Formation filter is applied)
+        depth = np.array([1500.0, 1500.5, 1501.0, 1501.5, 1502.0])
+
+        data = pd.DataFrame(
+            {
+                "DEPTH": depth,
+                "PHIE": [0.20, 0.25, 0.15, 0.30, 0.22],
+                "SW": [0.40, 0.30, 0.50, 0.35, 0.45],
+            },
+            index=[500, 501, 502, 503, 504],  # Non-contiguous index!
+        )
+
+        calc = PetrophysicsCalculator(data)
+
+        # Create flags with matching index
+        net_res_flag = pd.Series([1, 1, 1, 1, 1], index=[500, 501, 502, 503, 504])
+        net_pay_flag = pd.Series([1, 1, 0, 1, 1], index=[500, 501, 502, 503, 504])
+
+        results = calc.calculate_hcpv(
+            phie=data["PHIE"],
+            sw=data["SW"],
+            depth=data["DEPTH"],
+            net_res_flag=net_res_flag,
+            net_pay_flag=net_pay_flag,
+        )
+
+        # Verify NO NaN values in results (the bug would cause NaN)
+        assert not results["HCPV_FRAC"].isna().any(), (
+            "HCPV_FRAC contains NaN - index alignment bug!"
+        )
+        assert not results["dHCPV"].isna().any(), (
+            "dHCPV contains NaN - index alignment bug!"
+        )
+        assert not results["HCPV_CUM"].isna().any(), (
+            "HCPV_CUM contains NaN - index alignment bug!"
+        )
+        assert not results["HCPV_NET_PAY"].isna().any(), (
+            "HCPV_NET_PAY contains NaN - index alignment bug!"
+        )
+
+        # Verify the index of results matches the original data index
+        assert list(calc.results.index) == [500, 501, 502, 503, 504]
+
+        # Verify results stored in calc.results are also correct (not NaN)
+        assert not calc.results["HCPV_FRAC"].isna().any()
+        assert not calc.results["dHCPV"].isna().any()
+
+        # Verify actual calculated values are reasonable
+        # HCPV_frac = PHIE * (1 - SW)
+        # Row 0: 0.20 * (1 - 0.40) = 0.12
+        expected_frac_0 = 0.20 * (1 - 0.40)
+        np.testing.assert_allclose(
+            results["HCPV_FRAC"].iloc[0], expected_frac_0, rtol=1e-5
+        )
