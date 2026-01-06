@@ -1,0 +1,49 @@
+Petrophyter - Third-Party Notices
+==================================
+
+This software includes the following third-party components:
+
+1. PyQt6 - GPL v3 / Commercial License
+   Copyright (c) Riverbank Computing Limited
+   https://www.riverbankcomputing.com/software/pyqt/
+
+2. Qt - LGPL v3 / GPL v3 / Commercial License
+   Copyright (c) The Qt Company Ltd.
+   https://www.qt.io/
+
+3. NumPy - BSD 3-Clause License
+   Copyright (c) NumPy Developers
+   https://numpy.org/
+
+4. pandas - BSD 3-Clause License
+   Copyright (c) pandas Development Team
+   https://pandas.pydata.org/
+
+5. SciPy - BSD 3-Clause License
+   Copyright (c) SciPy Developers
+   https://scipy.org/
+
+6. Matplotlib - PSF-based License
+   Copyright (c) Matplotlib Development Team
+   https://matplotlib.org/
+
+7. pyqtgraph - MIT License
+   Copyright (c) pyqtgraph contributors
+   https://www.pyqtgraph.org/
+
+8. lasio - MIT License
+   Copyright (c) lasio contributors
+   https://github.com/kinverarity1/lasio
+
+9. openpyxl - MIT License
+   Copyright (c) openpyxl contributors
+   https://openpyxl.readthedocs.io/
+
+10. PyOpenGL - BSD License
+    Copyright (c) PyOpenGL contributors
+    http://pyopengl.sourceforge.net/
+
+---
+
+For complete license texts of third-party components, please refer to their
+respective repositories or documentation.
