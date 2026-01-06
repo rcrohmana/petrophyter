@@ -7,6 +7,8 @@
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
 ![Version](https://img.shields.io/badge/Version-1.2_(Build_20260106)-orange.svg)
 
+![alt text](<icons/Screenshot 1.2.png>)
+
 ## Overview
 
 Petrophyter PyQt is a desktop application for petrophysical analysis, providing tools for:
