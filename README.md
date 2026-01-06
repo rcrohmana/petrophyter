@@ -261,7 +261,6 @@ petrophyter_pyqt/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
-| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
@@ -475,7 +474,7 @@ pip install PyOpenGL PyOpenGL_accelerate
 - Outlier detection (IQR method)
 
 **Export:**
-- Excel (.xlsx), CSV (.csv), LAS (.las) formats
+- Excel (.xlsx), CSV (.csv)
 
 ---
 
