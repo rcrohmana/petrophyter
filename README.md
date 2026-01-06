@@ -1,4 +1,4 @@
-# Petrophyter PyQt
+# Petrophyter
 
 **Desktop Petrophysics Application** - A comprehensive tool for well log analysis and petrophysical calculations.
 
