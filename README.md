@@ -521,9 +521,9 @@ This project is **dual-licensed** under your choice of:
 
 See [NOTICE](NOTICE) for complete list of third-party components and their licenses.
 
-## Authors
+## citation
 
-**Rian Cahya Rohmana** — Petroleum Engineering, Tanri Abeng University (Petrophysics TAU Research Group)
+Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.2). Petrophysics TAU Research Group. Petroleum Engineering, Tanri Abeng University.
 
 ---
 
