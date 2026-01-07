@@ -59,7 +59,7 @@ python main.py
 ## Project Structure
 
 ```
-petrophyter/
+petrophyter_pyqt/
 ├── main.py                 # Application entry point
 ├── requirements.txt        # Python dependencies
 ├── petrophyter_pyqt.bat    # Windows launcher
@@ -476,6 +476,34 @@ pip install PyOpenGL PyOpenGL_accelerate
 
 **Export:**
 - Excel (.xlsx), CSV (.csv), LAS (.las) formats
+
+---
+
+### Pre-Release History (Alpha - Beta)
+
+**Origins: Oktober 2024 - January 2025**
+
+Petrophyter started as an academic and research project aimed at simplifying petrophysics teaching and exploration workflows.
+
+| Phase | Period | Platform | Description |
+|-------|--------|----------|-------------|
+| **Concept & Research** | Dec 2024 | Jupyter Notebook | Initial idea development, algorithm prototyping with interactive cells |
+| **Alpha** | Jan 2025 | Jupyter Notebook | Integrated notebook with interactive widgets for petrophysical calculations |
+| **Beta** | Feb - Sep 2025 | Streamlit | Web-based prototype with improved UI/UX for user testing |
+| **v1.0 Development** | Oct 2025 | PyQt6 | Migration to desktop application |
+
+**Initial Features (Notebook & Streamlit Era):**
+- LAS file loading and parsing
+- Petrophysical calculations (Vsh, Porosity, Sw, Permeability)
+- Core data validation
+- Results export
+
+**Migration to PyQt6 (October 2025)**
+The transition from Streamlit to PyQt6 was driven by:
+- **Better performance** for handling large LAS files and complex calculations
+- **Easy compilation to executable (.exe)** for straightforward distribution and deployment
+
+> **Development Note:** The PyQt6 migration and subsequent feature development was significantly accelerated with the assistance of advanced AI coding agents, which helped with code generation, architecture design, and debugging throughout the development process.
 
 ---
 
