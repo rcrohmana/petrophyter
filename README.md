@@ -481,13 +481,13 @@ pip install PyOpenGL PyOpenGL_accelerate
 
 ### Pre-Release History (Alpha - Beta)
 
-**Origins: Oktober 2024 - January 2025**
+**Origins: October 2024 - January 2025**
 
 Petrophyter started as an academic and research project aimed at simplifying petrophysics teaching and exploration workflows.
 
 | Phase | Period | Platform | Description |
 |-------|--------|----------|-------------|
-| **Concept & Research** | Dec 2024 | Jupyter Notebook | Initial idea development, algorithm prototyping with interactive cells |
+| **Concept & Research** | Oct 2024 | Jupyter Notebook | Initial idea development, algorithm prototyping with interactive cells |
 | **Alpha** | Jan 2025 | Jupyter Notebook | Integrated notebook with interactive widgets for petrophysical calculations |
 | **Beta** | Feb - Sep 2025 | Streamlit | Web-based prototype with improved UI/UX for user testing |
 | **v1.0 Development** | Oct 2025 | PyQt6 | Migration to desktop application |
