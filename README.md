@@ -503,7 +503,7 @@ The transition from Streamlit to PyQt6 was driven by:
 - **Better performance** for handling large LAS files and complex calculations
 - **Easy compilation to executable (.exe)** for straightforward distribution and deployment
 
-> **Development Note:** The PyQt6 migration and subsequent feature development was significantly accelerated with the assistance of advanced AI coding agents, which helped with code generation, architecture design, and debugging throughout the development process.
+> **Development Note:** The PyQt6 migration and subsequent feature development was significantly accelerated with the assistance of advanced AI coding agents, which helped with architecture design and debugging throughout the development process.
 
 ---
 
