@@ -59,7 +59,7 @@ python main.py
 ## Project Structure
 
 ```
-petrophyter_pyqt/
+petrophyter/
 ├── main.py                    # Application entry point
 ├── requirements.txt           # Python dependencies
 ├── requirements-dev.txt       # Development dependencies (pytest, etc.)
