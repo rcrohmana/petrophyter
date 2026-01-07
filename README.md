@@ -1,4 +1,4 @@
-# Petrophyter
+# Petrophyter PyQt
 
 **Desktop Petrophysics Application** - A comprehensive tool for well log analysis and petrophysical calculations.
 
@@ -261,6 +261,7 @@ petrophyter_pyqt/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
+| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
@@ -474,7 +475,73 @@ pip install PyOpenGL PyOpenGL_accelerate
 - Outlier detection (IQR method)
 
 **Export:**
-- Excel (.xlsx), CSV (.csv)
+- Excel (.xlsx), CSV (.csv), LAS (.las) formats
+
+---
+
+## Build Windows Installer
+
+This section explains how to build a Windows installer (`setup.exe`) for distribution.
+
+### Prerequisites
+
+1. **Python Environment**: All dependencies from `requirements.txt` installed
+2. **PyInstaller**: Install with `pip install pyinstaller`
+3. **Inno Setup 6**: Download and install from [jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php)
+4. **Icon Conversion** (one-time): Install `pip install Pillow cairosvg`
+
+### One-Time Setup: Convert Icon
+
+Before the first build, convert the SVG icon to ICO format:
+
+```powershell
+# Install dependencies (if not already installed)
+pip install Pillow cairosvg
+
+# Run the conversion script
+python scripts\convert_svg_to_ico.py
+```
+
+This creates `icons/app_icon.ico` used by both PyInstaller and the installer.
+
+### Build Steps
+
+Run the PowerShell build script from the `petrophyter_pyqt` folder:
+
+```powershell
+# Full build (PyInstaller + Inno Setup)
+.\scripts\build-installer.ps1
+
+# Skip PyInstaller (use existing dist folder)
+.\scripts\build-installer.ps1 -SkipPyInstaller
+
+# Only run PyInstaller (don't create installer)
+.\scripts\build-installer.ps1 -SkipInnoSetup
+```
+
+### Output
+
+| Output | Location |
+|--------|----------|
+| **Installer** | `installer/Output/Petrophyter_Setup_1.2.exe` |
+| **Portable** | `dist/Petrophyter/` (can be copied directly) |
+
+### Custom Inno Setup Path
+
+If Inno Setup is installed in a non-default location, set the `ISCC_PATH` environment variable:
+
+```powershell
+$env:ISCC_PATH = "D:\Tools\Inno Setup 6\ISCC.exe"
+.\scripts\build-installer.ps1
+```
+
+### What the Installer Does
+
+- Installs application to `C:\Program Files\Petrophyter\`
+- Creates Start Menu shortcuts (Petrophyter + Uninstall)
+- Optional Desktop shortcut (user choice during installation)
+- Registers uninstall entry in Windows Settings > Apps
+- Offers to launch application after installation
 
 ---
 
@@ -521,9 +588,9 @@ This project is **dual-licensed** under your choice of:
 
 See [NOTICE](NOTICE) for complete list of third-party components and their licenses.
 
-## citation
+## Authors
 
-Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.2). Petrophysics TAU Research Group. Petroleum Engineering, Tanri Abeng University.
+**Rian Cahya Rohmana** — Petroleum Engineering, Tanri Abeng University (Petrophysics TAU Research Group)
 
 ---
 
