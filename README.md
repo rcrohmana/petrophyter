@@ -206,7 +206,6 @@ petrophyter/
 | **Buckles Number** | `Swirr = k_buckles / PHIE` | v1.0 |
 | **Clean Zone** | Minimum Sw in clean HC zones | v1.0 |
 | **Statistical** | P5 of Sw in clean zones | v1.0 |
-| **All Methods** | Calculate all for comparison | v1.0 |
 
 ### 6. Permeability Correlations
 
@@ -282,7 +281,6 @@ petrophyter/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
-| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
