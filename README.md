@@ -1,4 +1,4 @@
-# Petrophyter PyQt
+# Petrophyter
 
 **Desktop Petrophysics Application** - A comprehensive tool for well log analysis and petrophysical calculations.
 
@@ -59,7 +59,7 @@ python main.py
 ## Project Structure
 
 ```
-petrophyter_pyqt/
+petrophyter/
 ├── main.py                 # Application entry point
 ├── requirements.txt        # Python dependencies
 ├── petrophyter_pyqt.bat    # Windows launcher
@@ -488,21 +488,6 @@ This section explains how to build a Windows installer (`setup.exe`) for distrib
 1. **Python Environment**: All dependencies from `requirements.txt` installed
 2. **PyInstaller**: Install with `pip install pyinstaller`
 3. **Inno Setup 6**: Download and install from [jrsoftware.org/isinfo.php](https://jrsoftware.org/isinfo.php)
-4. **Icon Conversion** (one-time): Install `pip install Pillow cairosvg`
-
-### One-Time Setup: Convert Icon
-
-Before the first build, convert the SVG icon to ICO format:
-
-```powershell
-# Install dependencies (if not already installed)
-pip install Pillow cairosvg
-
-# Run the conversion script
-python scripts\convert_svg_to_ico.py
-```
-
-This creates `icons/app_icon.ico` used by both PyInstaller and the installer.
 
 ### Build Steps
 
@@ -588,9 +573,9 @@ This project is **dual-licensed** under your choice of:
 
 See [NOTICE](NOTICE) for complete list of third-party components and their licenses.
 
-## Authors
+## Citation
 
-**Rian Cahya Rohmana** — Petroleum Engineering, Tanri Abeng University (Petrophysics TAU Research Group)
+Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.2). Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
 
 ---
 
