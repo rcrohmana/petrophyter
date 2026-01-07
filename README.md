@@ -315,7 +315,7 @@ Saved parameters include:
 | **Summary** | Net pay analysis and HCPV summary |
 | **Export** | Download results in various formats |
 
-### Sidebar Parameter Groups (13 Collapsible Sections)
+### Sidebar Parameter Groups
 
 1. Analysis Mode
 2. Curve Mapping
