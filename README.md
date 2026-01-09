@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.2_(Build_20260106)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.3.0_(Build_20260109)-orange.svg)
 
 ![alt text](<icons/Screenshot 1.2.png>)
 
@@ -59,7 +59,7 @@ python main.py
 ## Project Structure
 
 ```
-petrophyter/
+petrophyter_pyqt/
 ├── main.py                    # Application entry point
 ├── requirements.txt           # Python dependencies
 ├── requirements-dev.txt       # Development dependencies (pytest, etc.)
@@ -206,6 +206,7 @@ petrophyter/
 | **Buckles Number** | `Swirr = k_buckles / PHIE` | v1.0 |
 | **Clean Zone** | Minimum Sw in clean HC zones | v1.0 |
 | **Statistical** | P5 of Sw in clean zones | v1.0 |
+| **All Methods** | Calculate all for comparison | v1.0 |
 
 ### 6. Permeability Correlations
 
@@ -281,6 +282,7 @@ petrophyter/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
+| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
@@ -315,7 +317,7 @@ Saved parameters include:
 | **Summary** | Net pay analysis and HCPV summary |
 | **Export** | Download results in various formats |
 
-### Sidebar Parameter Groups
+### Sidebar Parameter Groups (13 Collapsible Sections)
 
 1. Analysis Mode
 2. Curve Mapping
@@ -428,7 +430,24 @@ pip install PyOpenGL PyOpenGL_accelerate
 
 ## Version History
 
-### v1.2 (Build 20260106) - Current Release
+### v1.3.0 (Build 20260109) - Current Release
+**New Features:**
+- Added "New Project" button to reset application state and start fresh
+- Added Porosity Method selector in sidebar to choose primary PHIE method (PHIE_DN, PHIE_D, PHIE_N, PHIE_S, PHIE_GAS) with intelligent fallback logic
+
+**Improvements:**
+- Sw histogram in Diagnostics Tab now uses density mode with overlay support for multiple methods
+- Added count labels on histogram bars for single-method display
+- Consistent binning (0-1 range, 30 bins) for better visual comparison
+
+**Bug Fixes:**
+- Fixed "New Project" not clearing Top MD/Bottom MD spinboxes in Petrophysics and Export tabs
+- Fixed `calculated_shale` being cleared before Diagnostics Tab could display statistical values
+- Added `reset_ui()` method to all tabs for complete state reset on new project
+
+---
+
+### v1.2 (Build 20260106)
 **New Features:**
 - Added HCPV (Hydrocarbon Pore Volume) calculation module
 - Added Waxman-Smits water saturation model
@@ -622,7 +641,7 @@ See [NOTICE](NOTICE) for complete list of third-party components and their licen
 
 ## Citation
 
-Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.2) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG). 
+Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.3). Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
 
 ---
 
