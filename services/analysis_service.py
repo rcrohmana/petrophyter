@@ -145,6 +145,9 @@ class AnalysisWorker(QRunnable):
             gas_nphi_factor = getattr(self.model, "gas_nphi_factor", 0.30)
             gas_rhob_factor = getattr(self.model, "gas_rhob_factor", 0.15)
 
+            # Primary PHIE method
+            primary_phie_method = getattr(self.model, "primary_phie_method", "PHIE_DN")
+
             calc.calculate_all_phie(
                 vsh=vsh,
                 nphi_shale=nphi_shale,
@@ -157,6 +160,7 @@ class AnalysisWorker(QRunnable):
                 gas_correction=gas_correction,
                 gas_nphi_factor=gas_nphi_factor,
                 gas_rhob_factor=gas_rhob_factor,
+                primary_method=primary_phie_method,
             )
 
             self.signals.progress.emit("Calculating water saturation...", 55)

@@ -365,3 +365,40 @@ class QCTab(QWidget):
             self.tops_table_model.set_dataframe(tops_df)
         else:
             self.tops_group.setVisible(False)
+
+    def reset_ui(self):
+        """Reset UI to fresh state for New Project."""
+        # Reset metric cards
+        self.well_name_card.set_value("-")
+        self.depth_range_card.set_value("-")
+        self.total_points_card.set_value("-")
+        self.quality_score_card.set_value("-")
+
+        # Reset curve availability labels
+        self.available_label.setText("-")
+        self.missing_label.setText("-")
+        self.missing_label.setStyleSheet("")
+
+        # Clear QC table
+        self.qc_table_model.set_dataframe(pd.DataFrame())
+
+        # Reset null value info
+        self.null_value_label.setText("📌 Declared NULL value: -")
+
+        # Reset merge report section
+        self.files_merged_card.set_value("-")
+        self.depth_min_card.set_value("-")
+        self.depth_max_card.set_value("-")
+        self.depth_points_card.set_value("-")
+        self.merge_table_model.set_dataframe(pd.DataFrame())
+        self.merge_group.setVisible(False)
+
+        # Clear triple combo plot
+        self.triple_combo_plot.clear()
+
+        # Reset formation tops section
+        self.tops_table_model.set_dataframe(pd.DataFrame())
+        self.tops_group.setVisible(False)
+
+        # Show placeholder
+        self.placeholder.setVisible(True)

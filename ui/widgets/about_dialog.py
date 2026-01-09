@@ -68,7 +68,7 @@ class AboutDialog(QDialog):
         app_title = QLabel("Petrophyter")
         app_title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1E88E5;")
 
-        app_subtitle = QLabel("Petrophysics Master - v1.2 (Build 20260106)")
+        app_subtitle = QLabel("Petrophysics Master - v1.3.0 (Build 20260109)")
         app_subtitle.setStyleSheet("font-size: 14px; font-weight: bold; color: #555;")
 
         title_layout.addWidget(app_title)
@@ -96,7 +96,13 @@ class AboutDialog(QDialog):
         history_group = self._create_info_section("History & Development")
         history_text = (
             "<p style='margin-bottom: 8px;'><b>Version History:</b></p>"
-            "<p style='margin: 0 0 8px 0;'><b>v1.2 (Build 20260106) - Current Release</b></p>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.3.0 (Build 20260109) - Current Release</b></p>"
+            "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
+            "<li>New Project button to reset application state</li>"
+            "<li>Porosity Method selector in sidebar (choose primary PHIE)</li>"
+            "<li>Sw histogram overlay with density mode</li>"
+            "</ul>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.2 (Build 20260106)</b></p>"
             "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
             "<li>HCPV calculation with multiple display modes</li>"
             "<li>Waxman-Smits and Dual-Water saturation models</li>"
@@ -144,7 +150,7 @@ class AboutDialog(QDialog):
         citation_group = self._create_info_section("How to Cite")
         citation_text = (
             "Rohmana, R. C. (2026). Petrophyter: An Application for "
-            "Petrophysical Analysis (Version 1.2). "
+            "Petrophysical Analysis (Version 1.3). "
             "Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
         )
         citation_box = QTextEdit()

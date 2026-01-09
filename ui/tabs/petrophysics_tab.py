@@ -101,11 +101,15 @@ class PetrophysicsTab(QWidget):
         self.results_table.setMinimumHeight(350)
         self.results_table.setMaximumHeight(500)
         self.results_table.setAlternatingRowColors(True)
-        
+
         # Enable horizontal scroll on table itself
-        self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.results_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
+        self.results_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.results_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+
         # Header settings
         header = self.results_table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -212,7 +216,10 @@ class PetrophysicsTab(QWidget):
             self.sw_hist.plot_histogram(
                 results["SW_INDO"].dropna(), "Sw (Indonesian)", x_label="Sw"
             )
-        elif "SW_ARCHIE" in results.columns and results["SW_ARCHIE"].dropna().shape[0] > 0:
+        elif (
+            "SW_ARCHIE" in results.columns
+            and results["SW_ARCHIE"].dropna().shape[0] > 0
+        ):
             self.sw_hist.setVisible(True)
             self.sw_hist.plot_histogram(
                 results["SW_ARCHIE"].dropna(), "Sw (Archie)", x_label="Sw"
@@ -221,10 +228,15 @@ class PetrophysicsTab(QWidget):
             self.sw_hist.setVisible(False)
 
         # Permeability histogram
-        if "PERM_TIMUR" in results.columns and results["PERM_TIMUR"].dropna().shape[0] > 0:
+        if (
+            "PERM_TIMUR" in results.columns
+            and results["PERM_TIMUR"].dropna().shape[0] > 0
+        ):
             self.perm_hist.setVisible(True)
             self.perm_hist.plot_histogram(
-                results["PERM_TIMUR"].dropna(), "Permeability (Timur)", x_label="Perm (mD)"
+                results["PERM_TIMUR"].dropna(),
+                "Permeability (Timur)",
+                x_label="Perm (mD)",
             )
         elif "PERM_WR" in results.columns and results["PERM_WR"].dropna().shape[0] > 0:
             self.perm_hist.setVisible(True)
@@ -295,3 +307,31 @@ class PetrophysicsTab(QWidget):
             self.results_table.setVisible(False)
             self.placeholder.setVisible(True)
             self.placeholder.setText("No displayable columns found in results")
+
+    def reset_ui(self):
+        """Reset UI to fresh state for New Project."""
+        # Reset spinboxes to 0 so they get updated on next data load
+        self.top_md_spin.setValue(0)
+        self.bottom_md_spin.setValue(0)
+
+        # Reset metric cards
+        self.gr_min_card.set_value("- API")
+        self.gr_max_card.set_value("- API")
+        self.rw_card.set_value("- Ω.m")
+        self.rsh_card.set_value("- Ω.m")
+
+        # Clear table
+        self.results_model.set_dataframe(pd.DataFrame())
+        self.results_table.setVisible(False)
+
+        # Clear histograms
+        self.vsh_hist.clear()
+        self.phie_hist.clear()
+        self.sw_hist.clear()
+        self.perm_hist.clear()
+
+        # Show placeholder
+        self.placeholder.setVisible(True)
+        self.placeholder.setText(
+            "👈 Configure parameters in sidebar and click 'Run Analysis'"
+        )

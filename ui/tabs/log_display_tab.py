@@ -160,11 +160,11 @@ class LogDisplayTab(QWidget):
         self.xplot_group.setCheckable(True)
         self.xplot_group.setChecked(False)  # Collapsed by default
         xplot_main_layout = QVBoxLayout(self.xplot_group)
-        
+
         # Crossplot depth filter controls
         xplot_controls = QHBoxLayout()
         xplot_controls.addWidget(QLabel("Crossplot Depth Filter:"))
-        
+
         xplot_controls.addWidget(QLabel("Top:"))
         self.xplot_top_spin = QDoubleSpinBox()
         self.xplot_top_spin.setRange(0, 100000)
@@ -172,7 +172,7 @@ class LogDisplayTab(QWidget):
         self.xplot_top_spin.setSuffix(" ft")
         self.xplot_top_spin.setMinimumWidth(100)
         xplot_controls.addWidget(self.xplot_top_spin)
-        
+
         xplot_controls.addWidget(QLabel("Bottom:"))
         self.xplot_bottom_spin = QDoubleSpinBox()
         self.xplot_bottom_spin.setRange(0, 100000)
@@ -180,20 +180,20 @@ class LogDisplayTab(QWidget):
         self.xplot_bottom_spin.setSuffix(" ft")
         self.xplot_bottom_spin.setMinimumWidth(100)
         xplot_controls.addWidget(self.xplot_bottom_spin)
-        
+
         self.xplot_update_btn = QPushButton("Update Crossplots")
         self.xplot_update_btn.clicked.connect(self._update_crossplots)
         xplot_controls.addWidget(self.xplot_update_btn)
-        
+
         # Sync with log depth checkbox
         self.xplot_sync_check = QCheckBox("Sync with Log Depth")
         self.xplot_sync_check.setChecked(True)
         self.xplot_sync_check.stateChanged.connect(self._on_xplot_sync_changed)
         xplot_controls.addWidget(self.xplot_sync_check)
-        
+
         xplot_controls.addStretch()
         xplot_main_layout.addLayout(xplot_controls)
-        
+
         # Crossplot widgets
         xplot_layout = QHBoxLayout()
 
@@ -247,7 +247,7 @@ class LogDisplayTab(QWidget):
                     sub_item = item.layout().itemAt(j)
                     if sub_item.widget():
                         sub_item.widget().setVisible(checked)
-                        
+
         if checked:
             group_box.setTitle("Crossplots")
             group_box.setFixedHeight(400)  # Header + controls + plots
@@ -257,7 +257,7 @@ class LogDisplayTab(QWidget):
         else:
             group_box.setTitle("Crossplots (click to expand)")
             group_box.setMaximumHeight(30)
-            
+
     def _on_xplot_sync_changed(self, state: int):
         """Handle sync checkbox change."""
         if state and self.model.calculated:
@@ -297,7 +297,7 @@ class LogDisplayTab(QWidget):
             self._update_classic_log()
 
         # Sync crossplot depth if checkbox is checked
-        if hasattr(self, 'xplot_sync_check') and self.xplot_sync_check.isChecked():
+        if hasattr(self, "xplot_sync_check") and self.xplot_sync_check.isChecked():
             self.xplot_top_spin.setValue(top)
             self.xplot_bottom_spin.setValue(bottom)
             if self.xplot_group.isChecked():
@@ -467,7 +467,7 @@ class LogDisplayTab(QWidget):
             self.bottom_spin.setRange(depth_min, depth_max)
             self.top_spin.setValue(depth_min)
             self.bottom_spin.setValue(depth_max)
-            
+
             # Also set crossplot depth range
             self.xplot_top_spin.setRange(depth_min, depth_max)
             self.xplot_bottom_spin.setRange(depth_min, depth_max)
@@ -486,20 +486,20 @@ class LogDisplayTab(QWidget):
         """Update crossplots with depth filtering."""
         if not self.model.calculated or self.model.results is None:
             return
-            
+
         results = self.model.results
-        
+
         # Get depth range from crossplot controls
         top = self.xplot_top_spin.value()
         bottom = self.xplot_bottom_spin.value()
-        
+
         # Filter data by depth
         if "DEPTH" in results.columns and bottom > top:
             mask = (results["DEPTH"] >= top) & (results["DEPTH"] <= bottom)
             filtered = results[mask]
         else:
             filtered = results
-            
+
         # Check if we have data after filtering
         if len(filtered) == 0:
             return
@@ -568,3 +568,37 @@ class LogDisplayTab(QWidget):
     def is_interactive_mode(self) -> bool:
         """Check if interactive mode is active."""
         return HAS_PYQTGRAPH and self.plot_stack.currentIndex() == 0
+
+    def reset_ui(self):
+        """Reset UI to fresh state for New Project."""
+        # Reset depth spinboxes
+        self.top_spin.setValue(0)
+        self.bottom_spin.setValue(0)
+        self.top_spin.setRange(0, 100000)
+        self.bottom_spin.setRange(0, 100000)
+
+        # Reset crossplot depth spinboxes
+        self.xplot_top_spin.setValue(0)
+        self.xplot_bottom_spin.setValue(0)
+        self.xplot_top_spin.setRange(0, 100000)
+        self.xplot_bottom_spin.setRange(0, 100000)
+
+        # Clear interactive log if available
+        if hasattr(self, "interactive_log") and self.interactive_log:
+            self.interactive_log.clear()
+
+        # Clear static plot
+        if hasattr(self, "static_plot") and self.static_plot:
+            self.static_plot.clear()
+
+        # Clear crossplots
+        if hasattr(self, "nd_crossplot"):
+            self.nd_crossplot.clear()
+        if hasattr(self, "pk_crossplot"):
+            self.pk_crossplot.clear()
+
+        # Collapse crossplot group
+        self.xplot_group.setChecked(False)
+
+        # Show placeholder
+        self.placeholder.setVisible(True)

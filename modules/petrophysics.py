@@ -473,6 +473,7 @@ class PetrophysicsCalculator:
         gas_correction: bool = False,
         gas_nphi_factor: float = 0.30,
         gas_rhob_factor: float = 0.15,
+        primary_method: str = "PHIE_DN",
     ) -> Dict[str, pd.Series]:
         """
         Calculate all effective porosity methods.
@@ -489,6 +490,7 @@ class PetrophysicsCalculator:
             gas_correction: Enable gas correction for PHIE
             gas_nphi_factor: Neutron gas correction factor (0.2-0.4 typical)
             gas_rhob_factor: Density gas correction factor (0.1-0.2 typical)
+            primary_method: User's preferred PHIE method (PHIE_DN, PHIE_D, PHIE_N, PHIE_S, PHIE_GAS)
 
         Returns:
             Dictionary with all PHIE calculations
@@ -519,11 +521,27 @@ class PetrophysicsCalculator:
                 gas_nphi_factor=gas_nphi_factor,
                 gas_rhob_factor=gas_rhob_factor,
             )
-            # Set default PHIE to gas-corrected when enabled
-            self.results["PHIE"] = results["PHIE_GAS"]
+
+        # Determine available methods (those with valid data)
+        available = []
+        for col in ["PHIE_DN", "PHIE_N", "PHIE_D", "PHIE_S", "PHIE_GAS"]:
+            if col in results and results[col].notna().sum() > 0:
+                available.append(col)
+
+        # Select primary PHIE based on user choice with fallback
+        selected = None
+        if primary_method in available:
+            selected = primary_method
         else:
-            # Set default PHIE to PHIE_DN
-            self.results["PHIE"] = results["PHIE_DN"]
+            # Fallback priority: PHIE_DN > PHIE_N > PHIE_D > PHIE_S > PHIE_GAS
+            for fallback in ["PHIE_DN", "PHIE_N", "PHIE_D", "PHIE_S", "PHIE_GAS"]:
+                if fallback in available:
+                    selected = fallback
+                    break
+
+        if selected:
+            self.results["PHIE"] = results[selected]
+            self.phie_method_used = selected  # Store which method was used
 
         return results
 

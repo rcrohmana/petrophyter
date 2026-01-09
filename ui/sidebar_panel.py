@@ -27,6 +27,7 @@ from .widgets.parameter_groups import (
     AnalysisModeGroup,
     CurveMappingGroup,
     VShaleParamsGroup,
+    PorosityMethodGroup,
     MatrixParamsGroup,
     FluidParamsGroup,
     ShaleParamsGroup,
@@ -63,6 +64,7 @@ class SidebarPanel(QWidget):
     apply_perm_clicked = pyqtSignal()
 
     # Session signals (v1.2)
+    new_project_clicked = pyqtSignal()
     save_session_clicked = pyqtSignal()
     load_session_clicked = pyqtSignal()
 
@@ -127,6 +129,11 @@ class SidebarPanel(QWidget):
 
         # Session buttons (v1.2)
         session_layout = QHBoxLayout()
+        self.new_btn = QPushButton("📄 New")
+        self.new_btn.setToolTip("Clear all data and start fresh")
+        self.new_btn.clicked.connect(self.new_project_clicked.emit)
+        session_layout.addWidget(self.new_btn)
+
         self.save_session_btn = QPushButton("💾 Save")
         self.save_session_btn.setToolTip("Save current parameters to session file")
         self.save_session_btn.clicked.connect(self.save_session_clicked.emit)
@@ -293,6 +300,12 @@ class SidebarPanel(QWidget):
         vsh_group.set_content_widget(self.vsh_params_widget)
         self.params_layout.addWidget(vsh_group)
 
+        # Porosity Method
+        porosity_group = CollapsibleGroupBox("📊 Porosity Method", expanded=True)
+        self.porosity_method_widget = PorosityMethodGroup()
+        porosity_group.set_content_widget(self.porosity_method_widget)
+        self.params_layout.addWidget(porosity_group)
+
         # Matrix Parameters
         matrix_group = CollapsibleGroupBox("🪨 Matrix Parameters", expanded=False)
         self.matrix_params_widget = MatrixParamsGroup()
@@ -373,6 +386,7 @@ class SidebarPanel(QWidget):
         self.curve_mapping_widget.mapping_changed.connect(self._on_params_changed)
         self.analysis_mode_widget.mode_changed.connect(self._on_params_changed)
         self.vsh_params_widget.params_changed.connect(self._on_params_changed)
+        self.porosity_method_widget.params_changed.connect(self._on_params_changed)
         self.matrix_params_widget.params_changed.connect(self._on_params_changed)
         self.fluid_params_widget.params_changed.connect(self._on_params_changed)
         self.shale_params_widget.params_changed.connect(self._on_params_changed)
@@ -498,6 +512,10 @@ class SidebarPanel(QWidget):
         self.model.gr_max_manual = vsh["gr_max"]
         self.model.vsh_methods = vsh["methods"]
 
+        # Porosity method
+        porosity = self.porosity_method_widget.get_params()
+        self.model.primary_phie_method = porosity["primary_phie_method"]
+
         # Matrix params
         matrix = self.matrix_params_widget.get_params()
         self.model.rho_matrix = matrix["rho_matrix"]
@@ -580,3 +598,35 @@ class SidebarPanel(QWidget):
         self.model.gas_correction_enabled = gas["enabled"]
         self.model.gas_nphi_factor = gas["nphi_factor"]
         self.model.gas_rhob_factor = gas["rhob_factor"]
+
+    def reset_ui(self):
+        """Reset sidebar UI to fresh/initial state."""
+        # Reset LAS info
+        self.las_info_label.setText("")
+        self.las_info_label.setStyleSheet(
+            "color: #4A4540; background-color: transparent;"
+        )
+
+        # Hide merge controls
+        self.merge_frame.setVisible(False)
+        self.download_merged_btn.setVisible(False)
+
+        # Reset formation tops info
+        self.tops_info_label.setText("")
+
+        # Reset core data info
+        self.core_info_label.setText("")
+
+        # Hide parameters section and disable run button
+        self.params_frame.setVisible(False)
+        self.run_btn.setEnabled(False)
+
+        # Hide progress bar
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
+
+        # Clear curve mapping
+        self.curve_mapping_widget.set_available_curves([], None)
+
+        # Clear formations list
+        self.analysis_mode_widget.set_formations([])
