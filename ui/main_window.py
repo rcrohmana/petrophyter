@@ -164,6 +164,7 @@ class MainWindow(QMainWindow):
         self.sidebar.calculate_perm_clicked.connect(self._on_calculate_perm)
 
         # Session signals (v1.2)
+        self.sidebar.new_project_clicked.connect(self._on_new_project)
         self.sidebar.save_session_clicked.connect(self._on_save_session)
         self.sidebar.load_session_clicked.connect(self._on_load_session)
         self.sidebar.help_clicked.connect(self._on_about_triggered)
@@ -565,7 +566,8 @@ class MainWindow(QMainWindow):
                 self.model.calculated_shale["nphi_shale"],
             )
             self.model.shale_method_used = "statistical"
-            self.model.calculated_shale = None
+            # Keep calculated_shale for Diagnostics Tab reference
+            # (previously was set to None, causing Statistical Values to not display)
 
     def _on_calculate_perm(self):
         """Calculate permeability coefficients (with or without core data)."""
@@ -740,6 +742,41 @@ class MainWindow(QMainWindow):
                 )
             else:
                 QMessageBox.critical(self, "Error", "Failed to load session")
+
+    def _on_new_project(self):
+        """Handle new project button click - clear all data and reset to fresh state."""
+        # Confirm with user if data is loaded
+        if self.model.las_data is not None or self.model.results is not None:
+            reply = QMessageBox.question(
+                self,
+                "New Project",
+                "Are you sure you want to start a new project?\n\nAll current data will be cleared.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        # Reset model data
+        self.model.reset()
+
+        # Clear loaded parsers for merge
+        self._loaded_parsers = []
+        self._loaded_file_names = []
+
+        # Reset sidebar UI
+        self.sidebar.reset_ui()
+
+        # Reset all tabs UI to fresh state
+        self.qc_tab.reset_ui()
+        self.petro_tab.reset_ui()
+        self.log_tab.reset_ui()
+        self.diag_tab.reset_ui()
+        self.summary_tab.reset_ui()
+        self.export_tab.reset_ui()
+
+        # Reset status bar
+        self.statusBar.showMessage("Ready. Load a LAS file to begin.")
 
     def _update_ui_from_model(self):
         """Update UI widgets from model values after loading session."""

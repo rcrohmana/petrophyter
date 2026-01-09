@@ -251,3 +251,34 @@ class SummaryTab(QWidget):
         ax.tick_params(axis="x", rotation=15)
 
         self.bar_chart.refresh()
+
+    def reset_ui(self):
+        """Reset UI to fresh state for New Project."""
+        # Reset scope label
+        self.scope_label.setText("📍 Mode: - | Data Points: -")
+
+        # Reset net pay cards
+        self.gross_sand_card.set_value("- ft")
+        self.net_reservoir_card.set_value("- ft")
+        self.net_pay_card.set_value("- ft")
+        self.ng_reservoir_card.set_value("- %")
+        self.ng_pay_card.set_value("- %")
+        self.avg_phie_card.set_value("- %")
+        self.avg_sw_card.set_value("- %")
+        self.avg_vsh_card.set_value("- %")
+
+        # Reset HCPV cards
+        self.hcpv_gross_card.set_value("- ft")
+        self.hcpv_net_res_card.set_value("- ft")
+        self.hcpv_net_pay_card.set_value("- ft")
+
+        # Clear bar chart
+        self.bar_chart.clear()
+
+        # Reset cutoff labels
+        self.vsh_cutoff_label.setText("Vsh cutoff: -")
+        self.phi_cutoff_label.setText("PHIE cutoff: -")
+        self.sw_cutoff_label.setText("Sw cutoff: -")
+
+        # Show placeholder
+        self.placeholder.setVisible(True)

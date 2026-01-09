@@ -255,3 +255,20 @@ class ExportTab(QWidget):
     def show_export_error(self, message: str):
         """Show export error message."""
         QMessageBox.critical(self, "Export Error", message)
+
+    def reset_ui(self):
+        """Reset UI to fresh state for New Project."""
+        # Reset spinboxes to 0 so they get updated on next data load
+        self.top_md_spin.setValue(0)
+        self.bottom_md_spin.setValue(0)
+
+        # Clear table
+        self.preview_model.set_dataframe(pd.DataFrame())
+        self.preview_table.setVisible(False)
+
+        # Disable export buttons
+        self.csv_btn.setEnabled(False)
+        self.excel_btn.setEnabled(False)
+
+        # Show placeholder
+        self.placeholder.setVisible(True)
