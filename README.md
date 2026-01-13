@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.3.0_(Build_20260109)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.4.0_(Build_20260113)-orange.svg)
 
 ![alt text](<icons/Screenshot 1.2.png>)
 
