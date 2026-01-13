@@ -56,71 +56,6 @@ python main.py
 | lasio | ≥0.30 | LAS File Parsing |
 | openpyxl | ≥3.1.0 | Excel Export |
 
-## Project Structure
-
-```
-petrophyter_pyqt/
-├── main.py                    # Application entry point
-├── requirements.txt           # Python dependencies
-├── requirements-dev.txt       # Development dependencies (pytest, etc.)
-├── petrophyter_pyqt.bat       # Windows launcher
-├── petrophyter_pyqt_2.spec    # PyInstaller spec file
-├── build_2.bat                # Windows build script
-├── LICENSE                    # License file (dual-license)
-├── LICENSE-APACHE-2.0         # Apache 2.0 license text
-├── LICENSE-GPL-3.0            # GPL 3.0 license text
-├── NOTICE                     # Third-party notices
-├── icons/                     # UI icons
-│   ├── app_icon.svg           # Application icon (vector)
-│   ├── app_icon.ico           # Application icon (Windows)
-│   └── *.svg                  # Various UI icons (zoom, pan, save, etc.)
-├── installer/                 # Inno Setup files (v1.2)
-│   └── Petrophyter.iss        # Inno Setup script
-├── scripts/                   # Build automation (v1.2)
-│   ├── build-installer.ps1    # PowerShell installer script
-│   └── convert_svg_to_ico.py  # Icon converter utility
-├── models/                    # Data models
-│   └── app_model.py           # Application state model
-├── modules/                   # Core calculation modules
-│   ├── core_handler.py        # Core data validation
-│   ├── formation_tops.py      # Formation top management
-│   ├── las_handler.py         # LAS file merging
-│   ├── las_parser.py          # LAS file parsing
-│   ├── petrophysics.py        # Petrophysical calculations
-│   ├── qc_module.py           # Quality control
-│   ├── statistics_utils.py    # Statistical utilities
-│   └── visualization.py       # Plotting utilities
-├── services/                  # Business logic services
-│   ├── analysis_service.py    # Background analysis (v1.1)
-│   ├── merge_service.py       # LAS merge service
-│   ├── export_service.py      # Export service
-│   └── session_service.py     # Session management (v1.1)
-├── tests/                     # Unit tests
-│   ├── conftest.py            # Pytest configuration
-│   ├── test_petrophysics.py   # Petrophysics tests
-│   ├── test_session.py        # Session tests
-│   ├── test_hcpv.py           # HCPV calculation tests (v1.2)
-│   ├── test_sw_models.py      # Sw model tests (v1.2)
-│   ├── test_shale_params.py   # Shale parameter tests
-│   ├── test_shale_selection_mode.py  # Shale mode tests
-│   └── test_hybrid_log_viewer.py     # Log viewer tests
-└── ui/                        # User interface components
-    ├── main_window.py         # Main application window
-    ├── sidebar_panel.py       # Parameter input panel
-    ├── tabs/                  # Tab widgets
-    │   ├── log_display_tab.py
-    │   ├── petrophysics_tab.py
-    │   ├── qc_tab.py
-    │   ├── diagnostics_tab.py
-    │   ├── summary_tab.py
-    │   └── export_tab.py
-    └── widgets/               # Reusable widgets
-        ├── plot_widget.py
-        ├── interactive_log.py # (v1.1)
-        ├── parameter_groups.py
-        └── about_dialog.py
-```
-
 ## Features
 
 ### 1. Data Loading
@@ -296,7 +231,6 @@ petrophyter_pyqt/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
-| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
@@ -311,41 +245,6 @@ Saved parameters include:
 - Cutoff values
 - Gas correction settings *(v1.1)*
 - Merge and core settings
-
-### 14. Background Processing *(v1.1)*
-
-- **Async Calculations**: Prevent UI freeze during analysis
-- **Progress Indicators**: Real-time progress feedback
-- **Cancellable Operations**: Stop long-running tasks
-
-## User Interface
-
-### Tab System (6 Tabs)
-
-| Tab | Purpose |
-|-----|---------|
-| **Data QC** | Input data quality control and curve statistics |
-| **Petrophysics** | Calculation results and histograms |
-| **Log Display** | Composite log visualization (interactive/classic) |
-| **Diagnostics** | Cross-validation, core comparison, warnings |
-| **Summary** | Net pay analysis and HCPV summary |
-| **Export** | Download results in various formats |
-
-### Sidebar Parameter Groups (13 Collapsible Sections)
-
-1. Analysis Mode
-2. Curve Mapping
-3. VShale Parameters
-4. Matrix Parameters
-5. Fluid Parameters
-6. Shale Parameters
-7. Archie Parameters
-8. Sw Models
-9. Resistivity Parameters
-10. Permeability Coefficients
-11. Swirr Estimation
-12. Cutoff Parameters
-13. Gas Correction (PHIE) *(v1.1)*
 
 ## Usage
 
@@ -388,46 +287,9 @@ Saved parameters include:
 | `Ctrl+E` | Export results |
 | `Ctrl+Q` | Quit application |
 
-## Configuration
-
-### Recommended Shale Parameters
-
-| Lithology | ρ shale (g/cc) | NPHI shale | DT shale (µs/ft) |
-|-----------|----------------|------------|------------------|
-| Shale | 2.45-2.65 | 0.30-0.45 | 90-120 |
-| Clay-rich | 2.35-2.50 | 0.35-0.50 | 100-140 |
-
-### Cutoff Guidelines
-
-| Parameter | Typical Clean Sand | Pay Zone |
-|-----------|-------------------|----------|
-| Vsh | < 0.40 | < 0.30 |
-| PHIE | > 0.08 | > 0.10 |
-| Sw | - | < 0.60 |
-
-### Buckles Number Presets
-
-| Lithology | k_buckles |
-|-----------|-----------|
-| Sandstone (Clean) | 0.02 |
-| Sandstone (Shaly) | 0.03 |
-| Carbonate | 0.04 |
-
 ## Troubleshooting
 
 ### Common Issues
-
-**Application won't start**
-```bash
-# Ensure PyQt6 is properly installed
-pip install --upgrade PyQt6 PyQt6-Qt6
-```
-
-**PyQtGraph OpenGL errors** *(v1.1+)*
-```bash
-# Install PyOpenGL for GPU acceleration
-pip install PyOpenGL PyOpenGL_accelerate
-```
 
 **LAS file not loading**
 - Check file encoding (UTF-8 recommended)
@@ -437,10 +299,6 @@ pip install PyOpenGL PyOpenGL_accelerate
 - Verify input curve units (check LAS header)
 - Check shale parameter values
 - Ensure depth is in correct units (ft or m)
-
-**Interactive plot is slow** *(v1.1+)*
-- Ensure PyOpenGL is installed
-- GPU acceleration requires compatible graphics driver
 
 ## Version History
 
