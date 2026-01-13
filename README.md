@@ -148,6 +148,20 @@ petrophyter_pyqt/
 - Automatic depth matching and interpolation
 - Porosity unit conversion (% to fraction)
 
+#### Core and Formation File Format
+- Supported files: `.txt` or `.csv`; tab-separated preferred. Core loader falls back to comma; formation tops expect a tab separator.
+- Column names are trimmed and matched case-insensitively using aliases.
+- Core data:
+  - Required depth column (aliases: depth, depth (m), depth_m, md, tvd, depth_md).
+  - Need at least one property column: porosity (aliases: porosity, porosity (%), por, phi, core_por, core porosity) or permeability (aliases: perm, permeability, k, kh, hor.perm, perm (md), permeability (md), horizontal perm).
+  - Optional grain density (aliases: grain density, grain_density, rhog, rho_grain, matrix density).
+  - Depth units detected from header (`(m)`/`_m` or `(ft)`/`_ft`); defaults to meters and auto-converted to feet to match logs. Porosity values >1 are auto-converted from % to fraction; permeability assumed in mD.
+  - Non-numeric values are coerced to NaN; rows without depth are dropped; data are sorted by depth before use.
+- Formation tops:
+  - Required formation name column (aliases: stratigrafical unit, stratigraphical unit, formation, unit, name, fm).
+  - Required top depth column (aliases: top (m), top, top_md, top_depth); optional bottom depth (bottom (m), bottom, bottom_md, bottom_depth) and anomaly/code/remarks column.
+  - Depths should be in meters; the app converts to feet after loading. Thickness is calculated from top–bottom and formations are sorted by top depth.
+
 ### 2. Shale Volume (Vsh) Methods
 
 | Method | Description | Version |
@@ -430,7 +444,23 @@ pip install PyOpenGL PyOpenGL_accelerate
 
 ## Version History
 
-### v1.3.0 (Build 20260109) - Current Release
+### v1.4.0 (Build 20260113) - Current Release
+**New Features:**
+- Added Light and Dark themes, with your selection saved for future launches
+- Theme switching now updates the entire app instantly without requiring a restart
+
+**Improvements:**
+- Advanced Parameters groups now expand and collapse smoothly and remain reliably visible
+- The About dialog is fully consistent with both themes, with improved license table readability
+- Sidebar toolbar and helper buttons now use more consistent colors for better visual clarity
+
+**Bug Fixes:**
+- Fixed a crash when opening the About dialog
+- Fixed cases where Advanced Parameters could appear blank due to collapsed container sizing
+
+---
+
+### v1.3.0 (Build 20260109)
 **New Features:**
 - Added "New Project" button to reset application state and start fresh
 - Added Porosity Method selector in sidebar to choose primary PHIE method (PHIE_DN, PHIE_D, PHIE_N, PHIE_S, PHIE_GAS) with intelligent fallback logic

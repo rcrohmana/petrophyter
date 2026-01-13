@@ -22,6 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..widgets.plot_widget import CompositeLogPlot, CrossPlot
 from ..widgets.interactive_log import InteractiveLogPlot, HAS_PYQTGRAPH
+from themes.colors import get_color
 
 
 class LogDisplayTab(QWidget):
@@ -217,7 +218,7 @@ class LogDisplayTab(QWidget):
         # Placeholder
         self.placeholder = QLabel("👈 Run analysis first to view log display")
         self.placeholder.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-size: 14px;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.placeholder)
@@ -233,8 +234,14 @@ class LogDisplayTab(QWidget):
         self.top_spin.valueChanged.connect(self._on_spinbox_depth_changed)
         self.bottom_spin.valueChanged.connect(self._on_spinbox_depth_changed)
 
+    def refresh_theme(self):
+        self.placeholder.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
+        )
+
     def _toggle_crossplots(self, group_box, checked: bool):
         """Toggle visibility of crossplots content."""
+
         # Get the main layout of the group box
         main_layout = group_box.layout()
         for i in range(main_layout.count()):

@@ -6,15 +6,31 @@ The main application window.
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
-    QHBoxLayout,
     QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QLabel,
     QTabWidget,
     QStatusBar,
-    QMessageBox,
-    QProgressDialog,
-    QDockWidget,
+    QSizePolicy,
     QSplitter,
+    QMessageBox,
 )
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
+
+from themes.colors import get_color
+
+from .sidebar_panel import SidebarPanel
+from .tabs import (
+    QCTab,
+    PetrophysicsTab,
+    LogDisplayTab,
+    DiagnosticsTab,
+    SummaryTab,
+    ExportTab,
+)
+
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 import traceback
@@ -50,8 +66,11 @@ class MainWindow(QMainWindow):
     Main application window for Petrophyter PyQt.
     """
 
-    def __init__(self):
+    def __init__(self, theme_manager=None):
         super().__init__()
+
+        # Store theme manager
+        self.theme_manager = theme_manager
 
         # Initialize model
         self.model = AppModel()
@@ -70,10 +89,20 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_connections()
 
+        # Listen for theme changes
+        if self.theme_manager:
+            self.theme_manager.on_theme_changed(self._handle_theme_change)
+
         # Set window properties
-        self.setWindowTitle("🪨 Petrophyter - Petrophysics Master")
+        self.setWindowTitle("Petrophyter - Petrophysics Master")
+
         self.setMinimumSize(1400, 900)
         self.showMaximized()
+
+        # Set initial theme button state
+        if self.theme_manager:
+            self.sidebar.update_theme_button(self.theme_manager.is_dark())
+            self._handle_theme_change(self.theme_manager.get_current_theme())
 
     def _setup_ui(self):
         """Setup the main UI layout."""
@@ -84,7 +113,10 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Create splitter with proper configuration
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(6)  # Visible handle for resizing
+        splitter.setChildrenCollapsible(False)  # Prevent accidental collapse
 
         # =====================================================================
         # LEFT SIDEBAR
@@ -102,17 +134,17 @@ class MainWindow(QMainWindow):
         # Title
         from PyQt6.QtWidgets import QLabel
 
-        title = QLabel(
-            "<h1 style='color: #1E88E5; text-align: center;'>🪨 Petrophyter</h1>"
+        self.title_label = QLabel(
+            f"<h1 style='color: {get_color('primary')}; text-align: center;'>Petrophyter</h1>"
         )
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(title)
+        self.subtitle_label = QLabel(
+            f"<p style='color: {get_color('text_secondary')}; background-color: transparent; text-align: center;'>Petrophysics Master: Semi-Automatic LAS QC & Analysis</p>"
+        )
 
-        subtitle = QLabel(
-            "<p style='color: #333333; background-color: transparent; text-align: center;'>Petrophysics Master - Semi-Automatic LAS QC & Analysis</p>"
-        )
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(subtitle)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        content_layout.addWidget(self.title_label)
+        content_layout.addWidget(self.subtitle_label)
 
         # Tab widget
         self.tab_widget = QTabWidget()
@@ -137,8 +169,15 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(content_widget)
 
-        # Set splitter sizes (sidebar : content = 1 : 3)
-        splitter.setSizes([350, 1050])
+        # Use stretch factors for responsive sizing
+        splitter.setStretchFactor(0, 0)  # Sidebar: fixed width, don't stretch
+        splitter.setStretchFactor(1, 1)  # Content: stretch to fill available space
+
+        # Set initial sizes (sidebar : content)
+        splitter.setSizes([360, 1040])
+
+        # Store reference for potential later use
+        self.main_splitter = splitter
 
         main_layout.addWidget(splitter)
 
@@ -169,6 +208,9 @@ class MainWindow(QMainWindow):
         self.sidebar.load_session_clicked.connect(self._on_load_session)
         self.sidebar.help_clicked.connect(self._on_about_triggered)
 
+        # Theme toggle signal
+        self.sidebar.theme_toggle_clicked.connect(self._on_theme_toggle)
+
         # Analysis service signals
         self.analysis_service.started.connect(self._on_analysis_started)
         self.analysis_service.progress.connect(self._on_analysis_progress)
@@ -197,6 +239,36 @@ class MainWindow(QMainWindow):
         """Show the About dialog."""
         dialog = AboutDialog(self)
         dialog.exec()
+
+    def _on_theme_toggle(self):
+        """Handle theme toggle button click."""
+        if self.theme_manager:
+            self.theme_manager.toggle_theme()
+
+    def _handle_theme_change(self, theme: str):
+        """Refresh widgets when theme changes."""
+        is_dark = self.theme_manager.is_dark() if self.theme_manager else False
+        if hasattr(self, "sidebar"):
+            self.sidebar.update_theme_button(is_dark)
+            self.sidebar.refresh_theme()
+        for tab in [
+            getattr(self, "qc_tab", None),
+            getattr(self, "petrophysics_tab", None),
+            getattr(self, "log_display_tab", None),
+            getattr(self, "diagnostics_tab", None),
+            getattr(self, "summary_tab", None),
+            getattr(self, "export_tab", None),
+        ]:
+            if tab and hasattr(tab, "refresh_theme"):
+                tab.refresh_theme()
+        if hasattr(self, "title_label"):
+            self.title_label.setText(
+                f"<h1 style='color: {get_color('primary')}; text-align: center;'>Petrophyter</h1>"
+            )
+        if hasattr(self, "subtitle_label"):
+            self.subtitle_label.setText(
+                f"<p style='color: {get_color('text_secondary')}; background-color: transparent; text-align: center;'>Petrophysics Master: Semi-Automatic LAS QC & Analysis</p>"
+            )
 
     # =========================================================================
     # LAS FILE HANDLING
