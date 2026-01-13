@@ -529,7 +529,7 @@ See [NOTICE](NOTICE) for complete list of third-party components and their licen
 
 ## Citation
 
-Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.3). Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
+Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.4) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 
