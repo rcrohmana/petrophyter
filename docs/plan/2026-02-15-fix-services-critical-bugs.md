@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Fix 6 bugs (3 critical, 2 medium, 1 low) found in the `services/` layer that cause silent data corruption, crashes, and ignored safety validations.
+**Goal:** Fix 6 bugs in the `services/` layer with clear priority bands: 2x P0 (critical correctness), 1x P1 (high robustness), 1x P2 (user-safety visibility), and 2x P3 (low-risk cleanup/efficiency).
 
 **Architecture:** Surgical fixes to existing service files. Each bug is an independent task. Tests are written first (TDD) to prove the bug exists, then the fix is applied. No new classes/modules needed — only edits to `services/analysis_service.py`, `services/merge_service.py`, and related test files.
 
@@ -12,18 +12,18 @@
 
 ## Bug Summary
 
-| # | Severity | File | Line | Problem |
+| # | Priority | File | Line | Problem |
 |---|----------|------|------|---------|
-| 1 | CRITICAL | `analysis_service.py` | 610 | `NameError` — `sweep_summary` undefined in quantile mode |
-| 2 | CRITICAL | `analysis_service.py` | 46 | No null-check on `las_data` in `AnalysisWorker.run()` |
-| 3 | CRITICAL | `analysis_service.py` | 183 | Reference to `"PHIE"` column that doesn't exist yet in raw data |
-| 4 | MEDIUM | `analysis_service.py` | 134 | `calculate_phit_neutron_density()` called unconditionally |
-| 5 | MEDIUM | `merge_service.py` | 48 | `validate_same_well` result is ignored |
-| 6 | LOW | 3 files | — | `sys.path.insert` pollution at module-level |
+| 1 | P0 (CRITICAL) | `analysis_service.py` | 610 | `NameError` — `sweep_summary` undefined in quantile mode |
+| 2 | P0 (CRITICAL) | `analysis_service.py` | 183 | Reference to `"PHIE"`/`"PHIT"` columns that are unavailable in raw data |
+| 3 | P1 (HIGH) | `analysis_service.py` | 46 | No explicit null-check on `las_data` in `AnalysisWorker.run()` |
+| 4 | P2 (MEDIUM) | `merge_service.py` | 48 | `validate_same_well` result is not surfaced to user progress/warning flow |
+| 5 | P3 (LOW) | `analysis_service.py` | 134 | `calculate_phit_neutron_density()` called unconditionally |
+| 6 | P3 (LOW) | 3 files | — | `sys.path.insert` pollution at module-level |
 
 ---
 
-## Task 1: Fix `sweep_summary` NameError in quantile mode (CRITICAL)
+## Task 1: Fix `sweep_summary` NameError in quantile mode (P0 - CRITICAL)
 
 ### Problem
 In `AnalysisService.calculate_shale_parameters()`, when `selection_mode == "quantile"` (line 542–547), the variable `sweep_summary` is never assigned. But it is referenced later at line 610:
@@ -44,9 +44,9 @@ Missing `sweep_summary = None` assignment in the `quantile` branch.
 - Modify: `services/analysis_service.py:542-547`
 - Test: `tests/test_shale_selection_mode.py` (existing file — add regression test)
 
-**Step 1: Write the failing test**
+**Step 1: Add regression test**
 
-Open `tests/test_shale_selection_mode.py` and add this test at the end of the file:
+In `tests/test_shale_selection_mode.py`, add this test at the end of the file:
 
 ```python
 class TestQuantileSweepSummaryBug:
@@ -101,12 +101,12 @@ class TestQuantileSweepSummaryBug:
 
 > **Note:** This test requires a `MockModel` class and proper imports. Check if the existing `test_shale_selection_mode.py` already has them — reuse if available.
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run focused test (expected FAIL)**
 
 Run: `pytest tests/test_shale_selection_mode.py::TestQuantileSweepSummaryBug -v`
 Expected: FAIL with assertion `method == 'fallback'` (because the NameError was caught)
 
-**Step 3: Apply the fix**
+**Step 3: Apply fix**
 
 In `services/analysis_service.py`, add `sweep_summary = None` to the quantile branch:
 
@@ -129,7 +129,7 @@ if selection_mode == "quantile":
     sweep_summary = None                          # <-- FIX
 ```
 
-**Step 4: Run test to verify it passes**
+**Step 4: Re-run focused test (expected PASS)**
 
 Run: `pytest tests/test_shale_selection_mode.py::TestQuantileSweepSummaryBug -v`
 Expected: PASS
@@ -147,102 +147,7 @@ caught by the try/except, returning incorrect fallback values."
 
 ---
 
-## Task 2: Add null-check for `las_data` in `AnalysisWorker.run()` (CRITICAL)
-
-### Problem
-`AnalysisWorker.run()` line 46 does `self.model.las_data.copy()` without checking if `las_data` is `None`. The `AppModel` initializes `las_data = None` and only sets it after a LAS file is loaded. Other methods (`calculate_rw_rsh` at line 409, `calculate_shale_parameters` at line 472) already have this guard.
-
-### Root Cause
-Missing guard clause at the top of `AnalysisWorker.run()`.
-
-**Files:**
-- Modify: `services/analysis_service.py:40-46`
-- Test: `tests/test_services_bugs.py` (new file for service-layer regression tests)
-
-**Step 1: Write the failing test**
-
-Create `tests/test_services_bugs.py`:
-
-```python
-"""
-Regression tests for services/ bug fixes.
-"""
-
-import pytest
-import pandas as pd
-import numpy as np
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-class MockModelNullData:
-    """Model with las_data = None to test null-safety."""
-    las_data = None
-
-
-class TestAnalysisWorkerNullData:
-    """AnalysisWorker.run() should emit error signal when las_data is None."""
-
-    def test_worker_emits_error_when_las_data_is_none(self):
-        from services.analysis_service import AnalysisWorker
-
-        model = MockModelNullData()
-        worker = AnalysisWorker(model)
-
-        errors = []
-        worker.signals.error.connect(lambda msg: errors.append(msg))
-
-        worker.run()
-
-        assert len(errors) == 1
-        assert "no data" in errors[0].lower() or "las_data" in errors[0].lower()
-```
-
-**Step 2: Run test to verify it fails**
-
-Run: `pytest tests/test_services_bugs.py::TestAnalysisWorkerNullData -v`
-Expected: FAIL — crashes with `AttributeError: 'NoneType' object has no attribute 'copy'` (caught by generic except, but error message won't contain "no data")
-
-**Step 3: Apply the fix**
-
-In `services/analysis_service.py`, add guard at the top of `AnalysisWorker.run()`:
-
-```python
-    def run(self):
-        """Execute the analysis."""
-        try:
-            self.signals.started.emit()
-            self.signals.progress.emit("Preparing data...", 5)
-
-            # --- FIX: Guard against None las_data ---
-            if self.model.las_data is None:
-                self.signals.error.emit("No data loaded. Please load a LAS file first.")
-                return
-            # --- END FIX ---
-
-            data = self.model.las_data.copy()
-```
-
-**Step 4: Run test to verify it passes**
-
-Run: `pytest tests/test_services_bugs.py::TestAnalysisWorkerNullData -v`
-Expected: PASS
-
-**Step 5: Commit**
-
-```bash
-git add services/analysis_service.py tests/test_services_bugs.py
-git commit -m "fix: guard against None las_data in AnalysisWorker.run()
-
-Add early return with error signal when las_data is None, matching
-the pattern used in calculate_rw_rsh() and calculate_shale_parameters()."
-```
-
----
-
-## Task 3: Fix incorrect column reference `"PHIE"` in Rw estimation (CRITICAL)
+## Task 2: Fix incorrect column reference `"PHIE"` in Rw estimation (P0 - CRITICAL)
 
 ### Problem
 At line 182–184 in `analysis_service.py`:
@@ -264,11 +169,11 @@ Note: Line 440 (`calculate_rw_rsh` method) has a similar pattern using `"PHIT"` 
 
 **Files:**
 - Modify: `services/analysis_service.py:182-184` and `services/analysis_service.py:439-441`
-- Test: `tests/test_services_bugs.py` (append to file from Task 2)
+- Test: `tests/test_services_bugs.py` (create in this task, append in subsequent tasks)
 
-**Step 1: Write the failing test**
+**Step 1: Add regression test**
 
-Add to `tests/test_services_bugs.py`:
+In `tests/test_services_bugs.py` (create if missing), add:
 
 ```python
 class TestRwEstimationColumnReference:
@@ -309,12 +214,12 @@ class TestRwEstimationColumnReference:
         assert rw_with_nphi is not None or True  # may return None in some data configs
 ```
 
-**Step 2: Run test to verify baseline behavior**
+**Step 2: Run focused test (baseline check)**
 
 Run: `pytest tests/test_services_bugs.py::TestRwEstimationColumnReference -v`
 Expected: PASS (this test validates the fix direction, not the bug itself)
 
-**Step 3: Apply the fix**
+**Step 3: Apply fix**
 
 In `services/analysis_service.py`, change `"PHIE"` to the NPHI curve reference:
 
@@ -346,7 +251,7 @@ rw_est = stats_util.estimate_rw_from_rt_water_zone(
 )
 ```
 
-**Step 4: Run test to verify it passes**
+**Step 4: Run verification tests**
 
 Run: `pytest tests/test_services_bugs.py -v`
 Expected: PASS
@@ -364,88 +269,89 @@ don't exist in raw LAS data, causing silent fallback to hardcoded values."
 
 ---
 
-## Task 4: Guard `calculate_phit_neutron_density()` call (MEDIUM)
+## Task 3: Add null-check for `las_data` in `AnalysisWorker.run()` (P1 - HIGH)
 
 ### Problem
-At line 134, `calc.calculate_phit_neutron_density()` is called unconditionally, even when neither RHOB nor NPHI curves are available. The method handles this gracefully (returns NaN series), but it wastes computation and causes all-NaN PHIT to propagate downstream without any user warning.
+`AnalysisWorker.run()` line 46 does `self.model.las_data.copy()` without checking if `las_data` is `None`. The `AppModel` initializes `las_data = None` and only sets it after a LAS file is loaded. Other methods (`calculate_rw_rsh` at line 409, `calculate_shale_parameters` at line 472) already have this guard.
 
 ### Root Cause
-Missing conditional check before the call.
+Missing guard clause at the top of `AnalysisWorker.run()`.
 
 **Files:**
-- Modify: `services/analysis_service.py:133-134`
+- Modify: `services/analysis_service.py:40-46`
+- Test: `tests/test_services_bugs.py` (append to existing regression file, or create if missing)
 
-**Step 1: Write the failing test**
+**Step 1: Add regression test**
 
-Add to `tests/test_services_bugs.py`:
-
-```python
-class TestPhitConditionalCall:
-    """PHIT should only be calculated when at least one porosity input exists."""
-
-    def test_phit_not_calculated_when_no_porosity_curves(self):
-        """
-        When neither RHOB nor NPHI are available, PHIT should not be
-        populated with NaN — it should be skipped entirely.
-        """
-        from modules.petrophysics import PetrophysicsCalculator
-
-        data = pd.DataFrame({
-            'DEPTH': np.linspace(1000, 1050, 50),
-            'GR': 50 + 30 * np.random.random(50),
-            'RT': 10 + 90 * np.random.random(50),
-            # No RHOB, NPHI, or DT
-        })
-
-        calc = PetrophysicsCalculator(data)
-        # Don't calculate any porosity
-        # Now call phit — should return NaN series (acceptable)
-        phit = calc.calculate_phit_neutron_density()
-
-        # Verify it returns NaN (graceful degradation) — no crash
-        assert phit.isna().all()
-```
-
-**Step 2: Run test**
-
-Run: `pytest tests/test_services_bugs.py::TestPhitConditionalCall -v`
-Expected: PASS (confirms graceful degradation exists already)
-
-**Step 3: Apply the fix**
-
-In `services/analysis_service.py`, wrap the PHIT call in a conditional:
+In `tests/test_services_bugs.py`, add this test block (reuse existing imports if file already exists):
 
 ```python
-# Line 133-134: BEFORE
-# Total porosity (N-D crossplot)
-phit = calc.calculate_phit_neutron_density()
+class MockModelNullData:
+    """Model with las_data = None to test null-safety."""
+    las_data = None
 
-# AFTER
-# Total porosity (N-D crossplot) — only if at least one porosity was computed
-has_density = rhob_curve and rhob_curve != "None" and rhob_curve in data.columns
-has_neutron = nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
-if has_density or has_neutron:
-    phit = calc.calculate_phit_neutron_density()
+
+class TestAnalysisWorkerNullData:
+    """AnalysisWorker.run() should emit error signal when las_data is None."""
+
+    def test_worker_emits_error_when_las_data_is_none(self):
+        from services.analysis_service import AnalysisWorker
+
+        model = MockModelNullData()
+        worker = AnalysisWorker(model)
+
+        errors = []
+        worker.signals.error.connect(lambda msg: errors.append(msg))
+
+        worker.run()
+
+        assert len(errors) == 1
+        assert "no data" in errors[0].lower() or "las_data" in errors[0].lower()
 ```
 
-**Step 4: Run full test suite**
+**Step 2: Run focused test (expected FAIL)**
 
-Run: `pytest tests/ -v`
-Expected: All PASS
+Run: `pytest tests/test_services_bugs.py::TestAnalysisWorkerNullData -v`
+Expected: FAIL — crashes with `AttributeError: 'NoneType' object has no attribute 'copy'` (caught by generic except, but error message won't contain "no data")
+
+**Step 3: Apply fix**
+
+In `services/analysis_service.py`, add guard at the top of `AnalysisWorker.run()`:
+
+```python
+    def run(self):
+        """Execute the analysis."""
+        try:
+            self.signals.started.emit()
+            self.signals.progress.emit("Preparing data...", 5)
+
+            # --- FIX: Guard against None las_data ---
+            if self.model.las_data is None:
+                self.signals.error.emit("No data loaded. Please load a LAS file first.")
+                return
+            # --- END FIX ---
+
+            data = self.model.las_data.copy()
+```
+
+**Step 4: Re-run focused test (expected PASS)**
+
+Run: `pytest tests/test_services_bugs.py::TestAnalysisWorkerNullData -v`
+Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
 git add services/analysis_service.py tests/test_services_bugs.py
-git commit -m "fix: only calculate PHIT when porosity curves are available
+git commit -m "fix: guard against None las_data in AnalysisWorker.run()
 
-Guard calculate_phit_neutron_density() call with check for RHOB/NPHI
-availability. Prevents unnecessary NaN propagation downstream."
+Add early return with error signal when las_data is None, matching
+the pattern used in calculate_rw_rsh() and calculate_shale_parameters()."
 ```
 
 ---
 
-## Task 5: Use `validate_same_well` result in MergeWorker (MEDIUM)
+## Task 4: Use `validate_same_well` result in MergeWorker (P2 - MEDIUM)
 
 ### Problem
 At `merge_service.py:48`, the result of `validate_same_well()` is captured but never used. The merge proceeds silently even when files are from different wells, which could produce nonsensical merged data.
@@ -455,10 +361,11 @@ The validation result is ignored — no warning emitted to user.
 
 **Files:**
 - Modify: `services/merge_service.py:47-50`
+- Test: `tests/test_services_bugs.py` (append regression test)
 
-**Step 1: Write the failing test**
+**Step 1: Add regression test**
 
-Add to `tests/test_services_bugs.py`:
+In `tests/test_services_bugs.py`, add:
 
 ```python
 class TestMergeWellValidation:
@@ -493,12 +400,12 @@ class TestMergeWellValidation:
         )
 ```
 
-**Step 2: Run test to verify it fails**
+**Step 2: Run focused test (expected FAIL)**
 
 Run: `pytest tests/test_services_bugs.py::TestMergeWellValidation -v`
 Expected: FAIL
 
-**Step 3: Apply the fix**
+**Step 3: Apply fix**
 
 In `services/merge_service.py`, add warning logic after validation:
 
@@ -522,7 +429,7 @@ if not is_same_well:
 self.signals.progress.emit("Merging files...", 30)
 ```
 
-**Step 4: Run test to verify it passes**
+**Step 4: Re-run focused test (expected PASS)**
 
 Run: `pytest tests/test_services_bugs.py::TestMergeWellValidation -v`
 Expected: PASS
@@ -539,7 +446,89 @@ when LAS files appear to come from different wells."
 
 ---
 
-## Task 6: Replace `sys.path.insert` with proper imports (LOW)
+## Task 5: Guard `calculate_phit_neutron_density()` call (P3 - LOW)
+
+### Problem
+At line 134, `calc.calculate_phit_neutron_density()` is called unconditionally, even when neither RHOB nor NPHI curves are available. The method handles this gracefully (returns NaN series), but it wastes computation and causes all-NaN PHIT to propagate downstream without any user warning.
+
+### Root Cause
+Missing conditional check before the call.
+
+**Files:**
+- Modify: `services/analysis_service.py:133-134`
+- Test: `tests/test_services_bugs.py` (append regression test)
+
+**Step 1: Add regression test**
+
+In `tests/test_services_bugs.py`, add:
+
+```python
+class TestPhitConditionalCall:
+    """PHIT should only be calculated when at least one porosity input exists."""
+
+    def test_phit_not_calculated_when_no_porosity_curves(self):
+        """
+        When neither RHOB nor NPHI are available, PHIT should not be
+        populated with NaN — it should be skipped entirely.
+        """
+        from modules.petrophysics import PetrophysicsCalculator
+
+        data = pd.DataFrame({
+            'DEPTH': np.linspace(1000, 1050, 50),
+            'GR': 50 + 30 * np.random.random(50),
+            'RT': 10 + 90 * np.random.random(50),
+            # No RHOB, NPHI, or DT
+        })
+
+        calc = PetrophysicsCalculator(data)
+        # Don't calculate any porosity
+        # Now call phit — should return NaN series (acceptable)
+        phit = calc.calculate_phit_neutron_density()
+
+        # Verify it returns NaN (graceful degradation) — no crash
+        assert phit.isna().all()
+```
+
+**Step 2: Run focused test (baseline check)**
+
+Run: `pytest tests/test_services_bugs.py::TestPhitConditionalCall -v`
+Expected: PASS (confirms graceful degradation exists already)
+
+**Step 3: Apply fix**
+
+In `services/analysis_service.py`, wrap the PHIT call in a conditional:
+
+```python
+# Line 133-134: BEFORE
+# Total porosity (N-D crossplot)
+phit = calc.calculate_phit_neutron_density()
+
+# AFTER
+# Total porosity (N-D crossplot) — only if at least one porosity was computed
+has_density = rhob_curve and rhob_curve != "None" and rhob_curve in data.columns
+has_neutron = nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
+if has_density or has_neutron:
+    phit = calc.calculate_phit_neutron_density()
+```
+
+**Step 4: Run verification test suite**
+
+Run: `pytest tests/ -v`
+Expected: All PASS
+
+**Step 5: Commit**
+
+```bash
+git add services/analysis_service.py tests/test_services_bugs.py
+git commit -m "fix: only calculate PHIT when porosity curves are available
+
+Guard calculate_phit_neutron_density() call with check for RHOB/NPHI
+availability. Prevents unnecessary NaN propagation downstream."
+```
+
+---
+
+## Task 6: Replace `sys.path.insert` with proper imports (P3 - LOW)
 
 ### Problem
 Three service files (`analysis_service.py:15`, `export_service.py:13`, `merge_service.py:13`) do `sys.path.insert(0, ...)` at module level. This pollutes the global Python path on every import and can cause import conflicts.
@@ -552,7 +541,7 @@ Historical workaround — project wasn't set up as a proper Python package.
 - Modify: `services/export_service.py:11-13`
 - Modify: `services/merge_service.py:11-13`
 
-**Step 1: Verify current imports work without sys.path hack**
+**Step 1: Verify import behavior without `sys.path` hack**
 
 Before fixing, verify that the project's `main.py` or entry point already has the right path setup so that removing `sys.path.insert` doesn't break imports. Check:
 
@@ -562,7 +551,7 @@ python -c "from services.analysis_service import AnalysisService; print('OK')"
 
 If this works from the project root, the `sys.path.insert` lines are redundant.
 
-**Step 2: Apply the fix (conditional)**
+**Step 2: Apply fix (conditional)**
 
 **Only if Step 1 passes**, remove the `sys.path` lines from all three files:
 
@@ -591,7 +580,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ```
 
-**Step 3: Run full test suite**
+**Step 3: Run verification test suite**
 
 Run: `pytest tests/ -v`
 Expected: All PASS
@@ -612,14 +601,14 @@ Reduces sys.path pollution on import."
 
 ## Execution Order
 
-Tasks are independent but should be done in priority order:
+Task sections below are already ordered by implementation priority:
 
-1. **Task 1** — `sweep_summary` NameError (fastest fix, highest impact)
-2. **Task 2** — `las_data` null-check (one-line guard)
-3. **Task 3** — `"PHIE"` column reference (data quality impact)
-4. **Task 4** — PHIT conditional guard (minor)
-5. **Task 5** — Well validation warning (user safety)
-6. **Task 6** — sys.path cleanup (deferred if risky)
+1. **Task 1** (P0) — `sweep_summary` NameError
+2. **Task 2** (P0) — `"PHIE"`/`"PHIT"` raw-data mismatch
+3. **Task 3** (P1) — `las_data` null-check and explicit user-facing error
+4. **Task 4** (P2) — surface cross-well merge warning in progress flow
+5. **Task 5** (P3) — PHIT conditional guard
+6. **Task 6** (P3) — `sys.path` cleanup (conditional/defer if risky)
 
 ## Post-Fix Verification
 
