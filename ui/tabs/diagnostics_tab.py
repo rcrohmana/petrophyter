@@ -22,6 +22,7 @@ import numpy as np
 
 from .qc_tab import MetricCard, PandasTableModel
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
+from themes.colors import get_color
 
 
 class DiagnosticsTab(QWidget):
@@ -81,38 +82,6 @@ class DiagnosticsTab(QWidget):
         self.shale_warnings = QLabel("")
         self.shale_warnings.setWordWrap(True)
         content_layout.addWidget(self.shale_warnings)
-
-        # =====================================================================
-        # SHALE ZONE DIAGNOSTICS (v2.1)
-        # =====================================================================
-        shale_diag_group = QGroupBox("📊 Shale Zone Diagnostics")
-        shale_diag_layout = QVBoxLayout(shale_diag_group)
-
-        # Summary info
-        self.shale_diag_summary = QLabel("-")
-        self.shale_diag_summary.setWordWrap(True)
-        shale_diag_layout.addWidget(self.shale_diag_summary)
-
-        # Statistics table
-        shale_stats_layout = QHBoxLayout()
-
-        self.shale_zone_stats_table = QTableView()
-        self.shale_zone_stats_model = PandasTableModel()
-        self.shale_zone_stats_table.setModel(self.shale_zone_stats_model)
-        self.shale_zone_stats_table.setMaximumHeight(180)
-        shale_stats_layout.addWidget(self.shale_zone_stats_table, stretch=2)
-
-        # Sweep summary (for stability_sweep mode)
-        self.sweep_summary_label = QLabel("")
-        self.sweep_summary_label.setWordWrap(True)
-        self.sweep_summary_label.setMaximumWidth(250)
-        shale_stats_layout.addWidget(self.sweep_summary_label, stretch=1)
-
-        shale_diag_layout.addLayout(shale_stats_layout)
-
-        self.shale_diag_group = shale_diag_group
-        self.shale_diag_group.setVisible(False)
-        content_layout.addWidget(shale_diag_group)
 
         # =====================================================================
         # POROSITY CROSS-VALIDATION
@@ -209,6 +178,12 @@ class DiagnosticsTab(QWidget):
         self.gross_sand_card = MetricCard("Gross Sand", "- ft")
         self.ng_pay_card = MetricCard("N/G Pay", "- %")
 
+        self.metric_cards = [
+            self.net_pay_card,
+            self.gross_sand_card,
+            self.ng_pay_card,
+        ]
+
         pay_layout.addWidget(self.net_pay_card)
         pay_layout.addWidget(self.gross_sand_card)
         pay_layout.addWidget(self.ng_pay_card)
@@ -232,9 +207,14 @@ class DiagnosticsTab(QWidget):
         self.core_depth_card = MetricCard("Core Depth Range", "-")
         self.core_props_card = MetricCard("Properties", "-")
 
+        self.metric_cards.extend(
+            [self.core_samples_card, self.core_depth_card, self.core_props_card]
+        )
+
         core_metrics.addWidget(self.core_samples_card)
         core_metrics.addWidget(self.core_depth_card)
         core_metrics.addWidget(self.core_props_card)
+
         core_layout.addLayout(core_metrics)
 
         # Porosity validation
@@ -293,7 +273,7 @@ class DiagnosticsTab(QWidget):
         # Placeholder
         self.placeholder = QLabel("👈 Run analysis first to view diagnostics")
         self.placeholder.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-size: 14px;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
@@ -303,8 +283,16 @@ class DiagnosticsTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+    def refresh_theme(self):
+        for card in getattr(self, "metric_cards", []):
+            card.refresh_theme()
+        self.placeholder.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
+        )
+
     def update_display(self):
         """Update display with analysis results."""
+
         if not self.model.calculated or self.model.results is None:
             self.placeholder.setVisible(True)
             return
@@ -373,67 +361,6 @@ class DiagnosticsTab(QWidget):
             self.shale_dev_label.setText("-")
             self.shale_warnings.setText("✅ Shale parameters set")
             self.shale_warnings.setStyleSheet("color: green;")
-
-        # =====================================================================
-        # SHALE ZONE DIAGNOSTICS (v2.1)
-        # =====================================================================
-        calculated_shale = getattr(self.model, "calculated_shale", None)
-        if calculated_shale and isinstance(calculated_shale, dict):
-            self.shale_diag_group.setVisible(True)
-
-            # Summary info
-            mode = calculated_shale.get("shale_selection_mode", "fixed")
-            threshold = calculated_shale.get(
-                "shale_threshold_used", calculated_shale.get("threshold", 0)
-            )
-            before = calculated_shale.get(
-                "shale_points_before", calculated_shale.get("shale_points", "?")
-            )
-            after = calculated_shale.get("shale_points_after", before)
-            vsh_method = calculated_shale.get("vsh_method_used", "-")
-
-            summary_text = (
-                f"<b>Mode:</b> {mode}<br>"
-                f"<b>Final Threshold:</b> {threshold:.3f}<br>"
-                f"<b>Shale Points:</b> {before} → {after} (after gate/filter)<br>"
-                f"<b>VSH Method:</b> {vsh_method}"
-            )
-            self.shale_diag_summary.setText(summary_text)
-
-            # Statistics table
-            shale_stats = calculated_shale.get("shale_stats", {})
-            if shale_stats:
-                stats_rows = []
-                for curve, stats in shale_stats.items():
-                    if isinstance(stats, dict):
-                        stats_rows.append(
-                            {
-                                "Curve": curve,
-                                "Mean": f"{stats.get('mean', 0):.3f}",
-                                "Median": f"{stats.get('median', 0):.3f}",
-                                "Std": f"{stats.get('std', 0):.3f}",
-                                "Min": f"{stats.get('min', 0):.3f}",
-                                "Max": f"{stats.get('max', 0):.3f}",
-                                "N": stats.get("count", 0),
-                            }
-                        )
-                if stats_rows:
-                    self.shale_zone_stats_model.set_dataframe(pd.DataFrame(stats_rows))
-
-            # Sweep summary (if stability_sweep mode)
-            sweep_summary = calculated_shale.get("sweep_summary", [])
-            if sweep_summary and mode == "stability_sweep":
-                sweep_text = "<b>Top 5 Stable Thresholds:</b><br>"
-                for i, s in enumerate(sweep_summary[:5], 1):
-                    t = s.get("threshold", 0)
-                    n = s.get("n_points", 0)
-                    score = s.get("score", 0)
-                    sweep_text += f"{i}. T={t:.2f} (n={n}, s={score:.3f})<br>"
-                self.sweep_summary_label.setText(sweep_text)
-            else:
-                self.sweep_summary_label.setText("")
-        else:
-            self.shale_diag_group.setVisible(False)
 
         # =====================================================================
         # POROSITY VALIDATION
@@ -969,12 +896,6 @@ class DiagnosticsTab(QWidget):
         self.shale_stat_label.setText("-")
         self.shale_dev_label.setText("-")
         self.shale_warnings.setText("")
-
-        # Reset shale zone diagnostics
-        self.shale_diag_summary.setText("-")
-        self.shale_zone_stats_model.set_dataframe(pd.DataFrame())
-        self.sweep_summary_label.setText("")
-        self.shale_diag_group.setVisible(False)
 
         # Reset porosity section
         self.phie_method_combo.clear()

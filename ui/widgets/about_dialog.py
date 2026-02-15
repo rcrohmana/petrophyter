@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap, QFont
 import os
+from themes.colors import get_color
 
 
 class AboutDialog(QDialog):
@@ -34,7 +35,7 @@ class AboutDialog(QDialog):
         # --- Header Section (Logo & Title) ---
         header = QFrame()
         header.setStyleSheet(
-            "background-color: #E0DBD1; border-bottom: 1px solid #C9C0B0;"
+            f"background-color: {get_color('bg_surface_alt')}; border-bottom: 1px solid {get_color('border')};"
         )
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(20, 20, 20, 20)
@@ -66,10 +67,14 @@ class AboutDialog(QDialog):
         title_layout.setContentsMargins(10, 0, 0, 0)
 
         app_title = QLabel("Petrophyter")
-        app_title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1E88E5;")
+        app_title.setStyleSheet(
+            f"font-size: 24px; font-weight: bold; color: {get_color('primary')};"
+        )
 
-        app_subtitle = QLabel("Petrophysics Master - v1.3.0 (Build 20260109)")
-        app_subtitle.setStyleSheet("font-size: 14px; font-weight: bold; color: #555;")
+        app_subtitle = QLabel("Petrophysics Master - v1.4.0 (Build 20260113)")
+        app_subtitle.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {get_color('text_secondary')};"
+        )
 
         title_layout.addWidget(app_title)
         title_layout.addWidget(app_subtitle)
@@ -96,7 +101,13 @@ class AboutDialog(QDialog):
         history_group = self._create_info_section("History & Development")
         history_text = (
             "<p style='margin-bottom: 8px;'><b>Version History:</b></p>"
-            "<p style='margin: 0 0 8px 0;'><b>v1.3.0 (Build 20260109) - Current Release</b></p>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.4.0 (Build 20260113) - Current Release</b></p>"
+            "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
+            "<li>Added Light and Dark themes</li>"
+            "<li>Theme-aware refresh for sidebar, tabs, metric cards, and export buttons</li>"
+            "<li>Collapsible parameter groups fixed to show Advanced Parameters content</li>"
+            "</ul>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.3.0 (Build 20260109)</b></p>"
             "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
             "<li>New Project button to reset application state</li>"
             "<li>Porosity Method selector in sidebar (choose primary PHIE)</li>"
@@ -160,8 +171,8 @@ class AboutDialog(QDialog):
         citation_box.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         citation_box.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         citation_box.setStyleSheet(
-            "font-size: 12px; font-family: 'Consolas', monospace; "
-            "background-color: #f5f5f5; border: 1px solid #ddd; padding: 8px;"
+            f"font-size: 12px; font-family: 'Consolas', monospace; "
+            f"background-color: {get_color('bg_surface')}; border: 1px solid {get_color('border')}; padding: 8px;"
         )
         citation_group.layout().addWidget(citation_box)
 
@@ -176,12 +187,12 @@ class AboutDialog(QDialog):
         license_group = self._create_info_section("License")
         license_text = (
             "<p><b>This project is dual-licensed under your choice of:</b></p>"
-            "<table style='border-collapse: collapse; margin: 10px 0; width: 100%;'>"
+            "<table style='border-collapse: collapse; margin: 10px 0; width: 100%; background-color: transparent;'>"
             "<thead>"
-            "<tr style='background-color: #E0DBD1;'>"
-            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left;'>License</th>"
-            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left;'>File</th>"
-            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left;'>Use Case</th>"
+            "<tr style='background-color: transparent;'>"
+            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left; background-color: transparent;'>License</th>"
+            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left; background-color: transparent;'>File</th>"
+            "<th style='padding: 8px; border: 1px solid #C9C0B0; text-align: left; background-color: transparent;'>Use Case</th>"
             "</tr>"
             "</thead>"
             "<tbody>"
@@ -219,7 +230,9 @@ class AboutDialog(QDialog):
             "<i>© 2024-2026 Rian Cahya Rohmana. All rights reserved.</i>"
         )
         footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer_label.setStyleSheet("color: #777; font-size: 11px; margin-top: 10px;")
+        footer_label.setStyleSheet(
+            f"color: {get_color('text_tertiary')}; font-size: 11px; margin-top: 10px;"
+        )
         content_layout.addWidget(footer_label)
 
         content_layout.addStretch()
@@ -242,19 +255,21 @@ class AboutDialog(QDialog):
     def _create_info_section(self, title):
         """Helper to create a styled section group."""
         group = QFrame()
-        group.setStyleSheet("""
-            QFrame {
-                background-color: #F0EBE1;
-                border: 1px solid #C9C0B0;
+        group.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {get_color("bg_surface")};
+                border: 1px solid {get_color("border")};
                 border-radius: 6px;
-            }
-        """)
+            }}
+            """
+        )
         layout = QVBoxLayout(group)
         layout.setContentsMargins(15, 15, 15, 15)
 
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet(
-            "font-weight: bold; font-size: 14px; color: #333; margin-bottom: 5px;"
+            f"font-weight: bold; font-size: 14px; color: {get_color('text_primary')}; margin-bottom: 5px;"
         )
         layout.addWidget(title_lbl)
 
@@ -262,7 +277,9 @@ class AboutDialog(QDialog):
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
-        line.setStyleSheet("background-color: #D5CFC4; margin-bottom: 10px;")
+        line.setStyleSheet(
+            f"background-color: {get_color('border_light')}; margin-bottom: 10px;"
+        )
         layout.addWidget(line)
 
         return group

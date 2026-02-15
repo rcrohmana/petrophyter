@@ -25,37 +25,208 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
 from typing import List, Dict, Optional
 
 
-class CollapsibleGroupBox(QGroupBox):
+class CollapsibleGroupBox(QWidget):
     """
-    A simple group box (always expanded).
-    No checkbox - content is always visible.
+    True collapsible group box with smooth animation.
+    Click header to expand/collapse content.
     """
 
     toggled = pyqtSignal(bool)
 
     def __init__(self, title: str, parent=None, expanded: bool = True):
-        super().__init__(title, parent)
-        # Not checkable - always expanded
-        self.setCheckable(False)
+        super().__init__(parent)
+        self._is_expanded = expanded
+        self._animation_duration = 150  # milliseconds
+        self._title = title
         self._content_widget = None
+        self._content_height = 0
+
+        self._setup_ui()
+
+    def _setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 2)
+        main_layout.setSpacing(0)
+
+        # === HEADER (clickable) ===
+        self.header = QFrame()
+        self.header.setObjectName("collapsibleHeader")
+        self.header.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+
+        # Toggle indicator
+        self.toggle_icon = QLabel("▼" if self._is_expanded else "▶")
+        self.toggle_icon.setFixedWidth(16)
+
+        # Title
+        self.title_label = QLabel(self._title)
+        self.title_label.setStyleSheet("font-weight: bold; background: transparent;")
+
+        header_layout.addWidget(self.toggle_icon)
+        header_layout.addWidget(self.title_label)
+        header_layout.addStretch()
+
+        # Click handler
+        self.header.mousePressEvent = self._on_header_clicked
+
+        main_layout.addWidget(self.header)
+
+        # === CONTENT CONTAINER ===
+        self.content_container = QFrame()
+        self.content_container.setObjectName("collapsibleContent")
+
+        self.content_layout = QVBoxLayout(self.content_container)
+        self.content_layout.setContentsMargins(8, 8, 8, 8)
+
+        main_layout.addWidget(self.content_container)
+
+        # Setup animation
+        self.animation = QPropertyAnimation(self.content_container, b"maximumHeight")
+        self.animation.setDuration(self._animation_duration)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        # Apply theme-aware styles
+        self._apply_theme_styles()
+
+        # Initial state
+        if not self._is_expanded:
+            self.content_container.setMaximumHeight(0)
+            self.content_container.setVisible(False)
+
+    def _apply_theme_styles(self):
+        """Apply current theme colors to widget."""
+        from themes.colors import get_color
+
+        header_bg = get_color("collapsible_header")
+        header_hover = get_color("collapsible_header_hover")
+        content_bg = get_color("collapsible_content")
+        border = get_color("collapsible_border")
+        toggle_color = get_color("collapsible_toggle")
+
+        self.header.setStyleSheet(f"""
+            #collapsibleHeader {{
+                background-color: {header_bg};
+                border: 1px solid {border};
+                border-radius: 4px;
+                padding: 6px 8px;
+            }}
+            #collapsibleHeader:hover {{
+                background-color: {header_hover};
+            }}
+        """)
+
+        self.content_container.setStyleSheet(f"""
+            #collapsibleContent {{
+                border: 1px solid {border};
+                border-top: none;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+                background-color: {content_bg};
+            }}
+        """)
+
+        self.toggle_icon.setStyleSheet(
+            f"font-size: 10px; color: {toggle_color}; background: transparent;"
+        )
 
     def set_content_widget(self, widget: QWidget):
-        """Set the content widget."""
+        """Set the content widget inside the collapsible area."""
         self._content_widget = widget
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.addWidget(widget)
-        # Always visible
-        widget.setVisible(True)
+        self.content_layout.addWidget(widget)
+
+        # Calculate content height after widget is set
+        widget.adjustSize()
+        self._content_height = widget.sizeHint().height() + 20  # padding
+
+        if self._is_expanded:
+            self.content_container.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
+        else:
+            self.content_container.setMaximumHeight(0)
+
+    def _on_header_clicked(self, event):
+        """Handle header click to toggle collapse state."""
+        self._toggle()
+
+    def _toggle(self):
+        """Toggle between expanded and collapsed states with animation."""
+        self._is_expanded = not self._is_expanded
+
+        # Update icon
+        self.toggle_icon.setText("▼" if self._is_expanded else "▶")
+
+        # Disconnect previous finished handlers to avoid stacking
+        try:
+            self.animation.finished.disconnect(self._on_expand_finished)
+        except Exception:
+            pass
+        try:
+            self.animation.finished.disconnect(self._on_collapse_finished)
+        except Exception:
+            pass
+
+        # Calculate target heights based on current content size
+        current_height = self.content_container.height()
+        content_height = self.content_layout.sizeHint().height() + 20
+
+        if self._is_expanded:
+            self.content_container.setVisible(True)
+            self.content_container.setMaximumHeight(content_height)
+            self.animation.finished.connect(self._on_expand_finished)
+            self.animation.setStartValue(current_height)
+            self.animation.setEndValue(content_height)
+        else:
+            self.animation.finished.connect(self._on_collapse_finished)
+            self.animation.setStartValue(current_height)
+            self.animation.setEndValue(0)
+
+        self.animation.start()
+
+        self.toggled.emit(self._is_expanded)
+
+    def refresh_theme(self):
+        """Re-apply theme colors (called on theme toggle)."""
+        self._apply_theme_styles()
+
+    def _on_expand_finished(self):
+        """Called when expand animation finishes."""
+        self.content_container.setMaximumHeight(16777215)
+        try:
+            self.animation.finished.disconnect(self._on_expand_finished)
+        except Exception:
+            pass
+
+    def _on_collapse_finished(self):
+        """Called when collapse animation finishes."""
+        self.content_container.setVisible(False)
+        self.content_container.setMaximumHeight(0)
+        try:
+            self.animation.finished.disconnect(self._on_collapse_finished)
+        except Exception:
+            pass
+
+    def expand(self):
+        """Programmatically expand the group."""
+        if not self._is_expanded:
+            self._toggle()
+
+    def collapse(self):
+        """Programmatically collapse the group."""
+        if self._is_expanded:
+            self._toggle()
+
+    def is_expanded(self) -> bool:
+        return self._is_expanded
 
     def expand_all(self):
         """Expand the group (for compatibility)."""
-        if self._content_widget:
-            self._content_widget.setVisible(True)
+        if not self._is_expanded:
+            self.expand()
 
 
 class AnalysisModeGroup(QWidget):
@@ -225,7 +396,11 @@ class VShaleParamsGroup(QWidget):
 
         # Info label for auto mode
         self.auto_info = QLabel("📈 GRmin/GRmax from P5/P95")
-        self.auto_info.setStyleSheet("color: #4A4540; background-color: transparent;")
+        from themes.colors import get_color
+
+        self.auto_info.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
+        )
         layout.addWidget(self.auto_info)
 
         # VShale methods
@@ -623,7 +798,11 @@ class ArchieParamsGroup(QWidget):
 
         # Preset info
         self.preset_info = QLabel("a=0.62, m=2.15, n=2.0")
-        self.preset_info.setStyleSheet("color: #4A4540; background-color: transparent;")
+        from themes.colors import get_color
+
+        self.preset_info.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
+        )
         layout.addWidget(self.preset_info)
 
         # Custom input frame
@@ -783,8 +962,10 @@ class PermParamsGroup(QWidget):
 
         # Formula label
         formula = QLabel("Wyllie-Rose: K = C × φ^P / Swi^Q")
+        from themes.colors import get_color
+
         formula.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-style: italic;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-style: italic;"
         )
         layout.addWidget(formula)
 
@@ -815,7 +996,11 @@ class PermParamsGroup(QWidget):
 
         # Info label
         info = QLabel("💡 Timur defaults: C=8581, P=4.4, Q=2.0")
-        info.setStyleSheet("color: #4A4540; background-color: transparent;")
+        from themes.colors import get_color
+
+        info.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
+        )
         layout.addWidget(info)
 
         # Calculate button
@@ -915,8 +1100,10 @@ class SwirEstimationGroup(QWidget):
         buckles_layout.addRow("K_buckles:", self.k_buckles_spin)
 
         self.buckles_info = QLabel("K_buckles = 0.02")
+        from themes.colors import get_color
+
         self.buckles_info.setStyleSheet(
-            "color: #4A4540; background-color: transparent;"
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
         )
         buckles_layout.addRow("", self.buckles_info)
 
@@ -924,7 +1111,9 @@ class SwirEstimationGroup(QWidget):
 
         # Method info
         self.method_info = QLabel("✓ Best for no-core calibration")
-        self.method_info.setStyleSheet("color: green;")
+        from themes.colors import get_color
+
+        self.method_info.setStyleSheet(f"color: {get_color('success_text')};")
         layout.addWidget(self.method_info)
 
         # Connect signals
@@ -1073,8 +1262,10 @@ class GasCorrectionGroup(QWidget):
 
         # Info label
         info_label = QLabel("⛽ Corrects N-D crossover in gas zones")
+        from themes.colors import get_color
+
         info_label.setStyleSheet(
-            "color: #4A4540; font-style: italic; background-color: transparent;"
+            f"color: {get_color('text_secondary')}; font-style: italic; background-color: transparent;"
         )
         params_layout.addRow(info_label)
 
@@ -1335,12 +1526,18 @@ class PorosityMethodGroup(QWidget):
 
         # Info label
         self.info_label = QLabel("Used for Sw, Perm, HCPV calculations")
-        self.info_label.setStyleSheet("color: #666; font-size: 11px;")
+        from themes.colors import get_color
+
+        self.info_label.setStyleSheet(
+            f"color: {get_color('text_tertiary')}; font-size: 11px;"
+        )
         layout.addWidget(self.info_label)
 
         # Fallback info (shown when selected method not available)
         self.fallback_label = QLabel("")
-        self.fallback_label.setStyleSheet("color: #FF8C00; font-size: 11px;")
+        self.fallback_label.setStyleSheet(
+            f"color: {get_color('warning')}; font-size: 11px;"
+        )
         self.fallback_label.setWordWrap(True)
         self.fallback_label.setVisible(False)
         layout.addWidget(self.fallback_label)

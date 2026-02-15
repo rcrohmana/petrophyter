@@ -16,6 +16,7 @@ import numpy as np
 
 from .qc_tab import MetricCard
 from ..widgets.plot_widget import PlotWidget
+from themes.colors import get_color
 
 
 class SummaryTab(QWidget):
@@ -63,22 +64,22 @@ class SummaryTab(QWidget):
         self.net_reservoir_card = MetricCard("Net Reservoir", "- ft")
         self.net_pay_card = MetricCard("Net Pay", "- ft")
 
-        pay_layout.addWidget(self.gross_sand_card, 0, 0)
-        pay_layout.addWidget(self.net_reservoir_card, 0, 1)
-        pay_layout.addWidget(self.net_pay_card, 0, 2)
-
         # Row 2
         self.ng_reservoir_card = MetricCard("N/G Reservoir", "- %")
         self.ng_pay_card = MetricCard("N/G Pay", "- %")
         self.avg_phie_card = MetricCard("Avg PHIE (Pay)", "- %")
 
-        pay_layout.addWidget(self.ng_reservoir_card, 1, 0)
-        pay_layout.addWidget(self.ng_pay_card, 1, 1)
-        pay_layout.addWidget(self.avg_phie_card, 1, 2)
-
         # Row 3
         self.avg_sw_card = MetricCard("Avg Sw (Pay)", "- %")
         self.avg_vsh_card = MetricCard("Avg Vsh (Pay)", "- %")
+
+        pay_layout.addWidget(self.gross_sand_card, 0, 0)
+        pay_layout.addWidget(self.net_reservoir_card, 0, 1)
+        pay_layout.addWidget(self.net_pay_card, 0, 2)
+
+        pay_layout.addWidget(self.ng_reservoir_card, 1, 0)
+        pay_layout.addWidget(self.ng_pay_card, 1, 1)
+        pay_layout.addWidget(self.avg_phie_card, 1, 2)
 
         pay_layout.addWidget(self.avg_sw_card, 2, 0)
         pay_layout.addWidget(self.avg_vsh_card, 2, 1)
@@ -100,6 +101,20 @@ class SummaryTab(QWidget):
         hcpv_layout.addWidget(self.hcpv_net_pay_card, 0, 2)
 
         content_layout.addWidget(hcpv_group)
+
+        self.metric_cards = [
+            self.gross_sand_card,
+            self.net_reservoir_card,
+            self.net_pay_card,
+            self.ng_reservoir_card,
+            self.ng_pay_card,
+            self.avg_phie_card,
+            self.avg_sw_card,
+            self.avg_vsh_card,
+            self.hcpv_gross_card,
+            self.hcpv_net_res_card,
+            self.hcpv_net_pay_card,
+        ]
 
         # =====================================================================
         # BAR CHART
@@ -133,7 +148,7 @@ class SummaryTab(QWidget):
         # Placeholder
         self.placeholder = QLabel("👈 Run analysis first to view summary")
         self.placeholder.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-size: 14px;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
@@ -143,8 +158,16 @@ class SummaryTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+    def refresh_theme(self):
+        for card in getattr(self, "metric_cards", []):
+            card.refresh_theme()
+        self.placeholder.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
+        )
+
     def update_display(self):
         """Update display with analysis results."""
+
         if not self.model.calculated or self.model.summary is None:
             self.placeholder.setVisible(True)
             return

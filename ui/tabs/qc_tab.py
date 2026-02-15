@@ -18,50 +18,53 @@ from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPalette, QColor
 import pandas as pd
 
 from ..widgets.plot_widget import TripleComboPlot
-
-# Theme colors - DARKER THEME
-_THEME_SURFACE = QColor("#F0EBE1")
-_THEME_BG = QColor("#E8E3D9")
+from themes.colors import get_color
 
 
 class MetricCard(QFrame):
-    """A metric display card."""
+    """A metric display card with theme-aware styling."""
 
     def __init__(self, label: str, value: str = "", parent=None):
         super().__init__(parent)
         self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
-
-        # Set palette to theme color (fixes debug mode detection)
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, _THEME_SURFACE)
-        palette.setColor(QPalette.ColorRole.Base, _THEME_SURFACE)
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
-
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #F0EBE1;
-                border: 1px solid #C9C0B0;
-                border-radius: 8px;
-                padding: 5px;
-            }
-        """)
+        self._apply_theme()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(2)
 
         self.label = QLabel(label)
         self.label.setStyleSheet(
-            "color: #4A4540; font-size: 11px; background-color: transparent;"
+            f"color: {get_color('text_secondary')}; font-size: 11px; background-color: transparent;"
         )
 
         self.value_label = QLabel(value)
         self.value_label.setStyleSheet(
-            "color: #000000; font-size: 16px; font-weight: bold; background-color: transparent;"
+            f"color: {get_color('text_primary')}; font-size: 16px; font-weight: bold; background-color: transparent;"
         )
 
         layout.addWidget(self.label)
         layout.addWidget(self.value_label)
+
+    def _apply_theme(self):
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {get_color("bg_surface")};
+                border: 1px solid {get_color("border")};
+                border-radius: 8px;
+                padding: 5px;
+            }}
+            """
+        )
+
+    def refresh_theme(self):
+        self._apply_theme()
+        self.label.setStyleSheet(
+            f"color: {get_color('text_secondary')}; font-size: 11px; background-color: transparent;"
+        )
+        self.value_label.setStyleSheet(
+            f"color: {get_color('text_primary')}; font-size: 16px; font-weight: bold; background-color: transparent;"
+        )
 
     def set_value(self, value: str):
         self.value_label.setText(value)
@@ -144,6 +147,13 @@ class QCTab(QWidget):
         self.depth_range_card = MetricCard("Depth Range", "-")
         self.total_points_card = MetricCard("Total Points", "-")
         self.quality_score_card = MetricCard("Quality Score", "-")
+
+        self.metric_cards = [
+            self.well_name_card,
+            self.depth_range_card,
+            self.total_points_card,
+            self.quality_score_card,
+        ]
 
         metrics_layout.addWidget(self.well_name_card)
         metrics_layout.addWidget(self.depth_range_card)
@@ -266,7 +276,7 @@ class QCTab(QWidget):
             "👈 Please load a LAS file using the sidebar to begin."
         )
         self.placeholder.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-size: 14px;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
@@ -276,8 +286,16 @@ class QCTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+    def refresh_theme(self):
+        for card in getattr(self, "metric_cards", []):
+            card.refresh_theme()
+        self.placeholder.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
+        )
+
     def update_display(self):
         """Update display with current model data."""
+
         qc = self.model.qc_report
 
         if qc is None:
