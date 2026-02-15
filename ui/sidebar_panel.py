@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 import os
+from themes.colors import get_color
 
 from .widgets.parameter_groups import (
     CollapsibleGroupBox,
@@ -71,11 +72,14 @@ class SidebarPanel(QWidget):
     # Help signal
     help_clicked = pyqtSignal()
 
+    # Theme signal
+    theme_toggle_clicked = pyqtSignal()
+
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
-        self.setMinimumWidth(320)
-        self.setMaximumWidth(400)
+        self.setMinimumWidth(340)  # Slightly wider for better readability
+        self.setMaximumWidth(420)  # Increased max width
         self._setup_ui()
         self._connect_signals()
 
@@ -83,6 +87,35 @@ class SidebarPanel(QWidget):
         """Setup the sidebar UI."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
+
+        # === TOP TOOLBAR (New/Save/Load + Theme) ===
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(6)
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Session buttons (icon-only)
+        self.new_btn = self._create_toolbar_button("📄", "New Project - Clear all data")
+        self.new_btn.clicked.connect(self.new_project_clicked.emit)
+        toolbar_layout.addWidget(self.new_btn)
+        toolbar_layout.setStretchFactor(self.new_btn, 1)
+
+        self.save_session_btn = self._create_toolbar_button("💾", "Save Session")
+        self.save_session_btn.clicked.connect(self.save_session_clicked.emit)
+        toolbar_layout.addWidget(self.save_session_btn)
+        toolbar_layout.setStretchFactor(self.save_session_btn, 1)
+
+        self.load_session_btn = self._create_toolbar_button("📂", "Load Session")
+        self.load_session_btn.clicked.connect(self.load_session_clicked.emit)
+        toolbar_layout.addWidget(self.load_session_btn)
+        toolbar_layout.setStretchFactor(self.load_session_btn, 1)
+
+        # Theme toggle button (auto icon based on current theme)
+        self.theme_btn = self._create_toolbar_button("🌙", "Switch to Dark Theme")
+        self.theme_btn.clicked.connect(self._on_theme_toggle)
+        toolbar_layout.addWidget(self.theme_btn)
+        toolbar_layout.setStretchFactor(self.theme_btn, 1)
+
+        main_layout.addLayout(toolbar_layout)
 
         # Create scroll area
         scroll = QScrollArea()
@@ -103,21 +136,7 @@ class SidebarPanel(QWidget):
         # RUN ANALYSIS BUTTON (after data input)
         # =====================================================================
         self.run_btn = QPushButton("🚀 Run Analysis")
-        self.run_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1E88E5;
-                color: white;
-                font-weight: bold;
-                padding: 10px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:disabled {
-                background-color: #90CAF9;
-            }
-        """)
+        self.run_btn.setStyleSheet(self._get_run_button_style())
         self.run_btn.setEnabled(False)
         self.run_btn.clicked.connect(self.run_analysis_clicked.emit)
         self.content_layout.addWidget(self.run_btn)
@@ -126,24 +145,6 @@ class SidebarPanel(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.content_layout.addWidget(self.progress_bar)
-
-        # Session buttons (v1.2)
-        session_layout = QHBoxLayout()
-        self.new_btn = QPushButton("📄 New")
-        self.new_btn.setToolTip("Clear all data and start fresh")
-        self.new_btn.clicked.connect(self.new_project_clicked.emit)
-        session_layout.addWidget(self.new_btn)
-
-        self.save_session_btn = QPushButton("💾 Save")
-        self.save_session_btn.setToolTip("Save current parameters to session file")
-        self.save_session_btn.clicked.connect(self.save_session_clicked.emit)
-        session_layout.addWidget(self.save_session_btn)
-
-        self.load_session_btn = QPushButton("📂 Load")
-        self.load_session_btn.setToolTip("Load parameters from session file")
-        self.load_session_btn.clicked.connect(self.load_session_clicked.emit)
-        session_layout.addWidget(self.load_session_btn)
-        self.content_layout.addLayout(session_layout)
 
         # =====================================================================
         # FORMATION TOPS SECTION
@@ -172,12 +173,64 @@ class SidebarPanel(QWidget):
         main_layout.addWidget(scroll)
 
         # Help Button (Bottom Left)
-        help_btn = QPushButton("❓ About Petrophyter")
-        help_btn.setFlat(True)
-        help_btn.setStyleSheet("text-align: left; padding: 5px; color: #555;")
-        help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        help_btn.clicked.connect(self.help_clicked.emit)
-        main_layout.addWidget(help_btn)
+        self.help_btn = QPushButton("❓ About Petrophyter")
+        self.help_btn.setFlat(True)
+        self.help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._apply_help_style()
+        self.help_btn.clicked.connect(self.help_clicked.emit)
+        main_layout.addWidget(self.help_btn)
+
+    def _create_toolbar_button(self, icon: str, tooltip: str) -> QPushButton:
+        """Create a styled toolbar button with icon and tooltip."""
+        from themes.colors import get_color
+
+        btn = QPushButton(icon)
+        btn.setMinimumHeight(32)
+        btn.setToolTip(tooltip)
+        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._apply_toolbar_style(btn)
+        return btn
+
+    def _apply_toolbar_style(self, btn: QPushButton):
+        from themes.colors import get_color
+
+        btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                border: 1px solid {get_color("border")};
+                border-radius: 6px;
+                background-color: {get_color("bg_surface_alt")};
+                font-size: 14px;
+                min-width: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_color("bg_surface_hover")};
+            }}
+            QPushButton:pressed {{
+                background-color: {get_color("bg_surface_pressed")};
+            }}
+            """
+        )
+
+    def _get_run_button_style(self) -> str:
+        """Get stylesheet for Run Analysis button."""
+        from themes.colors import get_color
+
+        return f"""
+            QPushButton {{
+                background-color: {get_color("primary")};
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {get_color("primary_dark")};
+            }}
+            QPushButton:disabled {{
+                background-color: {get_color("primary_light")};
+            }}
+        """
 
     def _create_data_input_section(self):
         """Create the data input section."""
@@ -193,7 +246,7 @@ class SidebarPanel(QWidget):
         self.las_info_label = QLabel("")
         self.las_info_label.setWordWrap(True)
         self.las_info_label.setStyleSheet(
-            "color: #4A4540; background-color: transparent;"
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
         )
         layout.addWidget(self.las_info_label)
 
@@ -221,7 +274,9 @@ class SidebarPanel(QWidget):
         merge_layout.addLayout(settings_layout)
 
         self.merge_btn = QPushButton("🔄 Merge LAS Files")
-        self.merge_btn.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.merge_btn.setStyleSheet(
+            f"background-color: {get_color('success')}; color: white;"
+        )
         self.merge_btn.clicked.connect(self.merge_requested.emit)
         merge_layout.addWidget(self.merge_btn)
 
@@ -281,67 +336,100 @@ class SidebarPanel(QWidget):
         self.content_layout.addWidget(group)
 
     def _create_parameters_section(self):
-        """Create all parameter groups."""
+        """Create reorganized parameter groups for better UX."""
+
+        # =========================================================
+        # 📊 ANALYSIS SETTINGS (Always expanded)
+        # =========================================================
+        analysis_section = CollapsibleGroupBox("📊 Analysis Settings", expanded=True)
+        analysis_container = QWidget()
+        analysis_layout = QVBoxLayout(analysis_container)
+        analysis_layout.setContentsMargins(0, 0, 0, 0)
+        analysis_layout.setSpacing(8)
+
         # Analysis Mode
-        analysis_group = CollapsibleGroupBox("🎯 Analysis Mode", expanded=True)
         self.analysis_mode_widget = AnalysisModeGroup()
-        analysis_group.set_content_widget(self.analysis_mode_widget)
-        self.params_layout.addWidget(analysis_group)
+        analysis_layout.addWidget(self._create_subsection_label("🎯 Analysis Mode"))
+        analysis_layout.addWidget(self.analysis_mode_widget)
 
         # Curve Mapping
-        curve_group = CollapsibleGroupBox("🔗 Curve Mapping", expanded=True)
         self.curve_mapping_widget = CurveMappingGroup()
-        curve_group.set_content_widget(self.curve_mapping_widget)
-        self.params_layout.addWidget(curve_group)
+        analysis_layout.addWidget(self._create_subsection_label("🔗 Curve Mapping"))
+        analysis_layout.addWidget(self.curve_mapping_widget)
 
-        # VShale Parameters
-        vsh_group = CollapsibleGroupBox("📊 VShale Parameters", expanded=True)
-        self.vsh_params_widget = VShaleParamsGroup()
-        vsh_group.set_content_widget(self.vsh_params_widget)
-        self.params_layout.addWidget(vsh_group)
+        analysis_section.set_content_widget(analysis_container)
+        self.params_layout.addWidget(analysis_section)
+
+        # =========================================================
+        # 🔧 BASIC PARAMETERS (Expanded - for beginners)
+        # =========================================================
+        basic_section = CollapsibleGroupBox("🔧 Basic Parameters", expanded=True)
+        basic_container = QWidget()
+        basic_layout = QVBoxLayout(basic_container)
+        basic_layout.setContentsMargins(0, 0, 0, 0)
+        basic_layout.setSpacing(8)
 
         # Porosity Method
-        porosity_group = CollapsibleGroupBox("📊 Porosity Method", expanded=True)
         self.porosity_method_widget = PorosityMethodGroup()
-        porosity_group.set_content_widget(self.porosity_method_widget)
-        self.params_layout.addWidget(porosity_group)
+        basic_layout.addWidget(self._create_subsection_label("📊 Porosity Method"))
+        basic_layout.addWidget(self.porosity_method_widget)
 
-        # Matrix Parameters
-        matrix_group = CollapsibleGroupBox("🪨 Matrix Parameters", expanded=False)
+        # VShale Parameters
+        self.vsh_params_widget = VShaleParamsGroup()
+        basic_layout.addWidget(self._create_subsection_label("📊 VShale Parameters"))
+        basic_layout.addWidget(self.vsh_params_widget)
+
+        # Cutoff Parameters
+        self.cutoff_params_widget = CutoffParamsGroup()
+        basic_layout.addWidget(self._create_subsection_label("✂️ Cutoff Parameters"))
+        basic_layout.addWidget(self.cutoff_params_widget)
+
+        basic_section.set_content_widget(basic_container)
+        self.params_layout.addWidget(basic_section)
+
+        # =========================================================
+        # 📐 ADVANCED PARAMETERS (Collapsed - for experienced users)
+        # =========================================================
+        advanced_section = CollapsibleGroupBox("📐 Advanced Parameters", expanded=False)
+        advanced_container = QWidget()
+        advanced_layout = QVBoxLayout(advanced_container)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(4)
+
+        # --- Rock Properties (Nested Collapsible) ---
+        rock_group = CollapsibleGroupBox("🪨 Rock Properties", expanded=False)
+        rock_container = QWidget()
+        rock_layout = QVBoxLayout(rock_container)
+        rock_layout.setContentsMargins(0, 0, 0, 0)
+        rock_layout.setSpacing(6)
+
         self.matrix_params_widget = MatrixParamsGroup()
-        matrix_group.set_content_widget(self.matrix_params_widget)
-        self.params_layout.addWidget(matrix_group)
-
-        # Fluid Parameters
-        fluid_group = CollapsibleGroupBox("💧 Fluid Parameters", expanded=False)
         self.fluid_params_widget = FluidParamsGroup()
-        fluid_group.set_content_widget(self.fluid_params_widget)
-        self.params_layout.addWidget(fluid_group)
-
-        # Shale Parameters
-        shale_group = CollapsibleGroupBox("📐 Shale Parameters", expanded=False)
         self.shale_params_widget = ShaleParamsGroup()
         self.shale_params_widget.calculate_clicked.connect(
             self.calculate_shale_clicked.emit
         )
         self.shale_params_widget.apply_clicked.connect(self.apply_shale_clicked.emit)
-        shale_group.set_content_widget(self.shale_params_widget)
-        self.params_layout.addWidget(shale_group)
 
-        # Archie Parameters
-        archie_group = CollapsibleGroupBox("📊 Archie Parameters", expanded=False)
+        rock_layout.addWidget(self._create_mini_label("Matrix:"))
+        rock_layout.addWidget(self.matrix_params_widget)
+        rock_layout.addWidget(self._create_mini_label("Fluid:"))
+        rock_layout.addWidget(self.fluid_params_widget)
+        rock_layout.addWidget(self._create_mini_label("Shale:"))
+        rock_layout.addWidget(self.shale_params_widget)
+
+        rock_group.set_content_widget(rock_container)
+        advanced_layout.addWidget(rock_group)
+
+        # --- Saturation Models (Nested Collapsible) ---
+        sat_group = CollapsibleGroupBox("💧 Saturation Models", expanded=False)
+        sat_container = QWidget()
+        sat_layout = QVBoxLayout(sat_container)
+        sat_layout.setContentsMargins(0, 0, 0, 0)
+        sat_layout.setSpacing(6)
+
         self.archie_params_widget = ArchieParamsGroup()
-        archie_group.set_content_widget(self.archie_params_widget)
-        self.params_layout.addWidget(archie_group)
-
-        # Sw Models
         self.sw_models_widget = SwModelsGroup()
-        self.sw_models_group = CollapsibleGroupBox("💧 Sw Models", expanded=True)
-        self.sw_models_group.set_content_widget(self.sw_models_widget)
-        self.params_layout.addWidget(self.sw_models_group)
-
-        # Resistivity Parameters
-        res_group = CollapsibleGroupBox("🔌 Resistivity Parameters", expanded=False)
         self.res_params_widget = ResistivityParamsGroup()
         self.res_params_widget.calculate_clicked.connect(
             self.calculate_rw_rsh_clicked.emit
@@ -349,36 +437,85 @@ class SidebarPanel(QWidget):
         self.res_params_widget.apply_clicked.connect(
             self.res_params_widget.apply_calculated
         )
-        res_group.set_content_widget(self.res_params_widget)
-        self.params_layout.addWidget(res_group)
 
-        # Permeability Coefficients
-        perm_group = CollapsibleGroupBox("📈 Permeability Coefficients", expanded=False)
+        sat_layout.addWidget(self._create_mini_label("Archie:"))
+        sat_layout.addWidget(self.archie_params_widget)
+        sat_layout.addWidget(self._create_mini_label("Sw Models:"))
+        sat_layout.addWidget(self.sw_models_widget)
+        sat_layout.addWidget(self._create_mini_label("Resistivity:"))
+        sat_layout.addWidget(self.res_params_widget)
+
+        sat_group.set_content_widget(sat_container)
+        advanced_layout.addWidget(sat_group)
+
+        # Keep reference for backward compatibility
+        self.sw_models_group = sat_group
+
+        # --- Permeability (Nested Collapsible) ---
+        perm_group = CollapsibleGroupBox("📈 Permeability", expanded=False)
+        perm_container = QWidget()
+        perm_layout = QVBoxLayout(perm_container)
+        perm_layout.setContentsMargins(0, 0, 0, 0)
+        perm_layout.setSpacing(6)
+
         self.perm_params_widget = PermParamsGroup()
         self.perm_params_widget.calculate_clicked.connect(
             self.calculate_perm_clicked.emit
         )
         self.perm_params_widget.apply_clicked.connect(self._apply_perm_values)
-        perm_group.set_content_widget(self.perm_params_widget)
-        self.params_layout.addWidget(perm_group)
-
-        # Swirr Estimation
-        swir_group = CollapsibleGroupBox("💧 Swirr Estimation", expanded=False)
         self.swir_params_widget = SwirEstimationGroup()
-        swir_group.set_content_widget(self.swir_params_widget)
-        self.params_layout.addWidget(swir_group)
 
-        # Cutoff Parameters
-        cutoff_group = CollapsibleGroupBox("✂️ Cutoff Parameters", expanded=False)
-        self.cutoff_params_widget = CutoffParamsGroup()
-        cutoff_group.set_content_widget(self.cutoff_params_widget)
-        self.params_layout.addWidget(cutoff_group)
+        perm_layout.addWidget(self._create_mini_label("Coefficients:"))
+        perm_layout.addWidget(self.perm_params_widget)
+        perm_layout.addWidget(self._create_mini_label("Swirr Estimation:"))
+        perm_layout.addWidget(self.swir_params_widget)
 
-        # Gas Correction (v1.2)
-        gas_group = CollapsibleGroupBox("⛽ Gas Correction (PHIE)", expanded=False)
+        perm_group.set_content_widget(perm_container)
+        advanced_layout.addWidget(perm_group)
+
+        advanced_section.set_content_widget(advanced_container)
+        self.params_layout.addWidget(advanced_section)
+
+        # =========================================================
+        # ⚡ CORRECTIONS (Collapsed)
+        # =========================================================
+        corrections_section = CollapsibleGroupBox("⚡ Corrections", expanded=False)
+        corrections_container = QWidget()
+        corrections_layout = QVBoxLayout(corrections_container)
+        corrections_layout.setContentsMargins(0, 0, 0, 0)
+
         self.gas_correction_widget = GasCorrectionGroup()
-        gas_group.set_content_widget(self.gas_correction_widget)
-        self.params_layout.addWidget(gas_group)
+        corrections_layout.addWidget(self.gas_correction_widget)
+
+        corrections_section.set_content_widget(corrections_container)
+        self.params_layout.addWidget(corrections_section)
+
+    def _create_subsection_label(self, text: str) -> QLabel:
+        """Create a styled subsection label."""
+        label = QLabel(text)
+        label.setStyleSheet(f"""
+            font-weight: 600;
+            color: {get_color("text_secondary")};
+            padding: 4px 0px 2px 0px;
+            border-bottom: 1px solid {get_color("border_light")};
+            margin-top: 8px;
+            background: transparent;
+        """)
+
+        return label
+
+    def _create_mini_label(self, text: str) -> QLabel:
+        """Create a mini label for nested parameters."""
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"""
+            font-weight: 500;
+            font-size: 11px;
+            color: {get_color("text_secondary")};
+            background: transparent;
+        """
+        )
+        return label
 
     def _connect_signals(self):
         """Connect internal signals."""
@@ -437,13 +574,13 @@ class SidebarPanel(QWidget):
         """Update LAS file info display."""
         if is_merged:
             self.las_info_label.setText(f"✅ Merged: {rows:,} rows, {curves} curves")
-            self.las_info_label.setStyleSheet("color: green;")
+            self.las_info_label.setStyleSheet(f"color: {get_color('success')};")
             self.download_merged_btn.setVisible(True)
         else:
             self.las_info_label.setText(
                 f"✅ Loaded: {os.path.basename(filename)}\n📊 {rows:,} rows, {curves} curves"
             )
-            self.las_info_label.setStyleSheet("color: green;")
+            self.las_info_label.setStyleSheet(f"color: {get_color('success')};")
 
         # Show parameters section
         self.params_frame.setVisible(True)
@@ -452,7 +589,7 @@ class SidebarPanel(QWidget):
     def update_multiple_files_info(self, count: int):
         """Show multiple files selected info."""
         self.las_info_label.setText(f"📁 {count} files selected")
-        self.las_info_label.setStyleSheet("color: #1976D2;")
+        self.las_info_label.setStyleSheet(f"color: {get_color('primary')};")
         self.merge_frame.setVisible(True)
 
     def update_tops_info(self, count: int):
@@ -604,7 +741,7 @@ class SidebarPanel(QWidget):
         # Reset LAS info
         self.las_info_label.setText("")
         self.las_info_label.setStyleSheet(
-            "color: #4A4540; background-color: transparent;"
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
         )
 
         # Hide merge controls
@@ -630,3 +767,47 @@ class SidebarPanel(QWidget):
 
         # Clear formations list
         self.analysis_mode_widget.set_formations([])
+
+    def _on_theme_toggle(self):
+        """Handle theme toggle button click."""
+        self.theme_toggle_clicked.emit()
+
+    def update_theme_button(self, is_dark: bool):
+        """Update theme button icon based on current theme."""
+        if is_dark:
+            self.theme_btn.setText("☀️")  # Show sun = click to go light
+            self.theme_btn.setToolTip("Switch to Light Theme")
+        else:
+            self.theme_btn.setText("🌙")  # Show moon = click to go dark
+            self.theme_btn.setToolTip("Switch to Dark Theme")
+
+    def _apply_help_style(self):
+        self.help_btn.setStyleSheet(
+            f"text-align: left; padding: 5px; color: {get_color('text_secondary')};"
+        )
+
+    def refresh_theme(self):
+        """Refresh widget styling when theme changes."""
+        # Refresh toolbar buttons
+        for btn in [
+            self.new_btn,
+            self.save_session_btn,
+            self.load_session_btn,
+            self.theme_btn,
+        ]:
+            self._apply_toolbar_style(btn)
+
+        # Refresh collapsible groups
+        for group in self.findChildren(CollapsibleGroupBox):
+            if hasattr(group, "refresh_theme"):
+                group.refresh_theme()
+
+        # Refresh Run Analysis button
+        self.run_btn.setStyleSheet(self._get_run_button_style())
+
+        # Refresh info labels/help color
+        self.las_info_label.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent;"
+        )
+        if hasattr(self, "help_btn"):
+            self._apply_help_style()

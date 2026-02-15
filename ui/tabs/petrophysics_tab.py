@@ -21,6 +21,7 @@ import pandas as pd
 
 from .qc_tab import MetricCard, PandasTableModel
 from ..widgets.plot_widget import HistogramPlot
+from themes.colors import get_color
 
 
 class PetrophysicsTab(QWidget):
@@ -57,6 +58,13 @@ class PetrophysicsTab(QWidget):
         self.gr_max_card = MetricCard("GR max", "- API")
         self.rw_card = MetricCard("Rw", "- Ω.m")
         self.rsh_card = MetricCard("Rsh", "- Ω.m")
+
+        self.metric_cards = [
+            self.gr_min_card,
+            self.gr_max_card,
+            self.rw_card,
+            self.rsh_card,
+        ]
 
         params_layout.addWidget(self.gr_min_card)
         params_layout.addWidget(self.gr_max_card)
@@ -144,7 +152,7 @@ class PetrophysicsTab(QWidget):
             "👈 Configure parameters in sidebar and click 'Run Analysis'"
         )
         self.placeholder.setStyleSheet(
-            "color: #4A4540; background-color: transparent; font-size: 14px;"
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
@@ -154,8 +162,16 @@ class PetrophysicsTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+    def refresh_theme(self):
+        for card in getattr(self, "metric_cards", []):
+            card.refresh_theme()
+        self.placeholder.setStyleSheet(
+            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
+        )
+
     def update_display(self):
         """Update display with analysis results."""
+
         # DEBUG: Print state
         # print(f"[DEBUG PetroTab] update_display called")
         # print(f"[DEBUG PetroTab] model.calculated = {self.model.calculated}")

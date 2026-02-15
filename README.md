@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.3.0_(Build_20260109)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.4.0_(Build_20260113)-orange.svg)
 
 ![alt text](<icons/Screenshot 1.2.png>)
 
@@ -56,71 +56,6 @@ python main.py
 | lasio | ≥0.30 | LAS File Parsing |
 | openpyxl | ≥3.1.0 | Excel Export |
 
-## Project Structure
-
-```
-petrophyter_pyqt/
-├── main.py                    # Application entry point
-├── requirements.txt           # Python dependencies
-├── requirements-dev.txt       # Development dependencies (pytest, etc.)
-├── petrophyter_pyqt.bat       # Windows launcher
-├── petrophyter_pyqt_2.spec    # PyInstaller spec file
-├── build_2.bat                # Windows build script
-├── LICENSE                    # License file (dual-license)
-├── LICENSE-APACHE-2.0         # Apache 2.0 license text
-├── LICENSE-GPL-3.0            # GPL 3.0 license text
-├── NOTICE                     # Third-party notices
-├── icons/                     # UI icons
-│   ├── app_icon.svg           # Application icon (vector)
-│   ├── app_icon.ico           # Application icon (Windows)
-│   └── *.svg                  # Various UI icons (zoom, pan, save, etc.)
-├── installer/                 # Inno Setup files (v1.2)
-│   └── Petrophyter.iss        # Inno Setup script
-├── scripts/                   # Build automation (v1.2)
-│   ├── build-installer.ps1    # PowerShell installer script
-│   └── convert_svg_to_ico.py  # Icon converter utility
-├── models/                    # Data models
-│   └── app_model.py           # Application state model
-├── modules/                   # Core calculation modules
-│   ├── core_handler.py        # Core data validation
-│   ├── formation_tops.py      # Formation top management
-│   ├── las_handler.py         # LAS file merging
-│   ├── las_parser.py          # LAS file parsing
-│   ├── petrophysics.py        # Petrophysical calculations
-│   ├── qc_module.py           # Quality control
-│   ├── statistics_utils.py    # Statistical utilities
-│   └── visualization.py       # Plotting utilities
-├── services/                  # Business logic services
-│   ├── analysis_service.py    # Background analysis (v1.1)
-│   ├── merge_service.py       # LAS merge service
-│   ├── export_service.py      # Export service
-│   └── session_service.py     # Session management (v1.1)
-├── tests/                     # Unit tests
-│   ├── conftest.py            # Pytest configuration
-│   ├── test_petrophysics.py   # Petrophysics tests
-│   ├── test_session.py        # Session tests
-│   ├── test_hcpv.py           # HCPV calculation tests (v1.2)
-│   ├── test_sw_models.py      # Sw model tests (v1.2)
-│   ├── test_shale_params.py   # Shale parameter tests
-│   ├── test_shale_selection_mode.py  # Shale mode tests
-│   └── test_hybrid_log_viewer.py     # Log viewer tests
-└── ui/                        # User interface components
-    ├── main_window.py         # Main application window
-    ├── sidebar_panel.py       # Parameter input panel
-    ├── tabs/                  # Tab widgets
-    │   ├── log_display_tab.py
-    │   ├── petrophysics_tab.py
-    │   ├── qc_tab.py
-    │   ├── diagnostics_tab.py
-    │   ├── summary_tab.py
-    │   └── export_tab.py
-    └── widgets/               # Reusable widgets
-        ├── plot_widget.py
-        ├── interactive_log.py # (v1.1)
-        ├── parameter_groups.py
-        └── about_dialog.py
-```
-
 ## Features
 
 ### 1. Data Loading
@@ -147,6 +82,20 @@ petrophyter_pyqt/
 - Load core data (TXT/CSV) with flexible column detection
 - Automatic depth matching and interpolation
 - Porosity unit conversion (% to fraction)
+
+#### Core and Formation File Format
+- Supported files: `.txt` or `.csv`; tab-separated preferred. Core loader falls back to comma; formation tops expect a tab separator.
+- Column names are trimmed and matched case-insensitively using aliases.
+- Core data:
+  - Required depth column (aliases: depth, depth (m), depth_m, md, tvd, depth_md).
+  - Need at least one property column: porosity (aliases: porosity, porosity (%), por, phi, core_por, core porosity) or permeability (aliases: perm, permeability, k, kh, hor.perm, perm (md), permeability (md), horizontal perm).
+  - Optional grain density (aliases: grain density, grain_density, rhog, rho_grain, matrix density).
+  - Depth units detected from header (`(m)`/`_m` or `(ft)`/`_ft`); defaults to meters and auto-converted to feet to match logs. Porosity values >1 are auto-converted from % to fraction; permeability assumed in mD.
+  - Non-numeric values are coerced to NaN; rows without depth are dropped; data are sorted by depth before use.
+- Formation tops:
+  - Required formation name column (aliases: stratigrafical unit, stratigraphical unit, formation, unit, name, fm).
+  - Required top depth column (aliases: top (m), top, top_md, top_depth); optional bottom depth (bottom (m), bottom, bottom_md, bottom_depth) and anomaly/code/remarks column.
+  - Depths should be in meters; the app converts to feet after loading. Thickness is calculated from top–bottom and formations are sorted by top depth.
 
 ### 2. Shale Volume (Vsh) Methods
 
@@ -282,7 +231,6 @@ petrophyter_pyqt/
 |--------|-------------|---------|
 | **Excel (.xlsx)** | Multi-sheet workbook with results and summary | v1.0 |
 | **CSV (.csv)** | Full results DataFrame | v1.0 |
-| **LAS (.las)** | Merged LAS file with calculated curves | v1.0 |
 
 ### 13. Session Management *(v1.1)*
 
@@ -297,41 +245,6 @@ Saved parameters include:
 - Cutoff values
 - Gas correction settings *(v1.1)*
 - Merge and core settings
-
-### 14. Background Processing *(v1.1)*
-
-- **Async Calculations**: Prevent UI freeze during analysis
-- **Progress Indicators**: Real-time progress feedback
-- **Cancellable Operations**: Stop long-running tasks
-
-## User Interface
-
-### Tab System (6 Tabs)
-
-| Tab | Purpose |
-|-----|---------|
-| **Data QC** | Input data quality control and curve statistics |
-| **Petrophysics** | Calculation results and histograms |
-| **Log Display** | Composite log visualization (interactive/classic) |
-| **Diagnostics** | Cross-validation, core comparison, warnings |
-| **Summary** | Net pay analysis and HCPV summary |
-| **Export** | Download results in various formats |
-
-### Sidebar Parameter Groups (13 Collapsible Sections)
-
-1. Analysis Mode
-2. Curve Mapping
-3. VShale Parameters
-4. Matrix Parameters
-5. Fluid Parameters
-6. Shale Parameters
-7. Archie Parameters
-8. Sw Models
-9. Resistivity Parameters
-10. Permeability Coefficients
-11. Swirr Estimation
-12. Cutoff Parameters
-13. Gas Correction (PHIE) *(v1.1)*
 
 ## Usage
 
@@ -374,46 +287,9 @@ Saved parameters include:
 | `Ctrl+E` | Export results |
 | `Ctrl+Q` | Quit application |
 
-## Configuration
-
-### Recommended Shale Parameters
-
-| Lithology | ρ shale (g/cc) | NPHI shale | DT shale (µs/ft) |
-|-----------|----------------|------------|------------------|
-| Shale | 2.45-2.65 | 0.30-0.45 | 90-120 |
-| Clay-rich | 2.35-2.50 | 0.35-0.50 | 100-140 |
-
-### Cutoff Guidelines
-
-| Parameter | Typical Clean Sand | Pay Zone |
-|-----------|-------------------|----------|
-| Vsh | < 0.40 | < 0.30 |
-| PHIE | > 0.08 | > 0.10 |
-| Sw | - | < 0.60 |
-
-### Buckles Number Presets
-
-| Lithology | k_buckles |
-|-----------|-----------|
-| Sandstone (Clean) | 0.02 |
-| Sandstone (Shaly) | 0.03 |
-| Carbonate | 0.04 |
-
 ## Troubleshooting
 
 ### Common Issues
-
-**Application won't start**
-```bash
-# Ensure PyQt6 is properly installed
-pip install --upgrade PyQt6 PyQt6-Qt6
-```
-
-**PyQtGraph OpenGL errors** *(v1.1+)*
-```bash
-# Install PyOpenGL for GPU acceleration
-pip install PyOpenGL PyOpenGL_accelerate
-```
 
 **LAS file not loading**
 - Check file encoding (UTF-8 recommended)
@@ -424,13 +300,25 @@ pip install PyOpenGL PyOpenGL_accelerate
 - Check shale parameter values
 - Ensure depth is in correct units (ft or m)
 
-**Interactive plot is slow** *(v1.1+)*
-- Ensure PyOpenGL is installed
-- GPU acceleration requires compatible graphics driver
-
 ## Version History
 
-### v1.3.0 (Build 20260109) - Current Release
+### v1.4.0 (Build 20260113) - Current Release
+**New Features:**
+- Added Light and Dark themes, with your selection saved for future launches
+- Theme switching now updates the entire app instantly without requiring a restart
+
+**Improvements:**
+- Advanced Parameters groups now expand and collapse smoothly and remain reliably visible
+- The About dialog is fully consistent with both themes, with improved license table readability
+- Sidebar toolbar and helper buttons now use more consistent colors for better visual clarity
+
+**Bug Fixes:**
+- Fixed a crash when opening the About dialog
+- Fixed cases where Advanced Parameters could appear blank due to collapsed container sizing
+
+---
+
+### v1.3.0 (Build 20260109)
 **New Features:**
 - Added "New Project" button to reset application state and start fresh
 - Added Porosity Method selector in sidebar to choose primary PHIE method (PHIE_DN, PHIE_D, PHIE_N, PHIE_S, PHIE_GAS) with intelligent fallback logic
@@ -641,7 +529,7 @@ See [NOTICE](NOTICE) for complete list of third-party components and their licen
 
 ## Citation
 
-Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.3). Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
+Rohmana, R. C. (2026). Petrophyter: An Application for Petrophysical Analysis (Version 1.4) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 
