@@ -1,6 +1,6 @@
 # Fix Critical Bugs in `services/` — Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **For agent:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Fix 6 bugs in the `services/` layer with clear priority bands: 2x P0 (critical correctness), 1x P1 (high robustness), 1x P2 (user-safety visibility), and 2x P3 (low-risk cleanup/efficiency).
 
