@@ -321,6 +321,10 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(
                     f"Loaded: {os.path.basename(file_path)} ({len(parser.data)} rows)"
                 )
+
+                # Surface an ambiguous depth-unit instead of silently (mis)converting.
+                if getattr(parser, "depth_unit_warning", None):
+                    QMessageBox.warning(self, "Depth Unit", parser.depth_unit_warning)
             else:
                 QMessageBox.critical(self, "Error", "Failed to load LAS file")
                 self.statusBar.showMessage("Failed to load LAS file")
@@ -451,6 +455,8 @@ class MainWindow(QMainWindow):
             tops = FormationTops()
             with open(file_path, "r") as f:
                 if tops.read_tops_from_buffer(f):
+                    # convert_to_feet() only converts when the unit was detected
+                    # as meters; feet/undetected files are left unchanged.
                     tops.convert_to_feet()
                     self.model.formation_tops = tops
 
@@ -460,6 +466,9 @@ class MainWindow(QMainWindow):
                     self.statusBar.showMessage(
                         f"Loaded {len(tops.formations)} formations"
                     )
+
+                    if getattr(tops, "depth_unit_warning", None):
+                        QMessageBox.warning(self, "Depth Unit", tops.depth_unit_warning)
 
                     # Update QC tab
                     self.qc_tab.update_display()
@@ -495,6 +504,9 @@ class MainWindow(QMainWindow):
                     self.statusBar.showMessage(
                         f"Loaded {summary['n_samples']} core samples"
                     )
+
+                    if getattr(handler, "depth_unit_warning", None):
+                        QMessageBox.warning(self, "Depth Unit", handler.depth_unit_warning)
                 else:
                     QMessageBox.warning(
                         self, "Warning", "Failed to parse core data file"

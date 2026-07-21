@@ -25,8 +25,11 @@ CURVE_RANGES = {
     'PEF': (0, 10),
 }
 
-# Common null values to replace
-COMMON_NULL_VALUES = [-999.25, -999, -9999, -999.0, -9999.0, -999999, 999.25]
+# Common null values to replace.
+# NOTE: only negative sentinels. A positive 999.25 was previously present (a
+# typo for -999.25) and silently destroyed valid high curve readings. Keep this
+# list identical to las_parser.COMMON_NULL_VALUES.
+COMMON_NULL_VALUES = [-999.25, -999, -9999, -999.0, -9999.0, -999999]
 
 
 @dataclass
@@ -143,11 +146,23 @@ class LASHandler:
         
         # 4. Sort by depth
         df = df.sort_values('DEPTH').reset_index(drop=True)
-        
-        # 5. Handle duplicate depths (take median)
+
+        # 5. Handle duplicate depths.
+        #    A plain groupby('DEPTH').median() raises TypeError on pandas 2.x
+        #    when non-numeric (discrete/string) curves are present. Aggregate
+        #    numeric curves with median and non-numeric curves with 'first' so
+        #    discrete-curve data is preserved instead of crashing the merge.
         if df['DEPTH'].duplicated().any():
-            df = df.groupby('DEPTH').median().reset_index()
-        
+            original_cols = list(df.columns)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            agg_map = {}
+            for col in df.columns:
+                if col == 'DEPTH':
+                    continue
+                agg_map[col] = 'median' if col in numeric_cols else 'first'
+            df = df.groupby('DEPTH', as_index=False).agg(agg_map)
+            df = df[original_cols]  # restore original column order
+
         return df
     
     def build_master_depth(self, files_dfs: List[pd.DataFrame], 
@@ -180,9 +195,13 @@ class LASHandler:
         # Round to step
         min_depth = np.floor(global_min / step_ft) * step_ft
         max_depth = np.ceil(global_max / step_ft) * step_ft
-        
-        master_depth = np.arange(min_depth, max_depth + step_ft, step_ft)
-        
+
+        # Use linspace with a computed point count instead of np.arange with a
+        # float step: arange accumulates floating-point drift over long wells
+        # and can drop/add the final point. linspace is deterministic.
+        num_points = int(round((max_depth - min_depth) / step_ft)) + 1
+        master_depth = np.linspace(min_depth, max_depth, num_points)
+
         return master_depth
     
     def curve_qc_score(self, series: pd.Series, 
@@ -558,9 +577,13 @@ class LASHandler:
                             total_gaps_filled += filled
                             secondary_sources.append(sec_file)
             
-            # Update with gap fill info
+            # Update with gap fill info. Record ALL secondary sources that
+            # actually contributed (a curve's gaps can be filled from several
+            # files), not just the first, so the merge report is accurate.
             curve_sources[curve]['coverage'] = float(merged_df[curve].notna().sum() / len(merged_df))
-            curve_sources[curve]['gaps_filled_from'] = secondary_sources[0] if secondary_sources else None
+            curve_sources[curve]['gaps_filled_from'] = (
+                ", ".join(secondary_sources) if secondary_sources else None
+            )
             curve_sources[curve]['gaps_count'] = total_gaps_filled
         
         # Create merge report
@@ -666,7 +689,9 @@ def export_merged_las(merged_df: pd.DataFrame,
     content = "\n".join(lines)
     
     if output_path:
-        with open(output_path, 'w') as f:
+        # Write UTF-8 explicitly; the Windows default (CP1252) can fail on
+        # well names containing non-ASCII characters.
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(content)
-    
+
     return content

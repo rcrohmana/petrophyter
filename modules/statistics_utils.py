@@ -3,11 +3,14 @@ Statistical Utilities Module for Petrophyter
 Provides data-driven parameter estimation for petrophysics calculations
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, Tuple, Optional, List
 from scipy import stats
 from scipy.optimize import curve_fit
+
+logger = logging.getLogger(__name__)
 
 
 class StatisticsUtils:
@@ -131,8 +134,10 @@ class StatisticsUtils:
         if len(sp) == 0:
             return None
         
-        # Find the most negative SP (maximum deflection in water zone)
-        ssp = float(sp.min())  # Static SP
+        # Find the most negative SP (maximum deflection in water zone).
+        # Use a low percentile (P1) rather than the raw minimum so a single
+        # noise/washout spike cannot bias the whole Rw estimate.
+        ssp = float(np.percentile(sp, 1))  # Static SP
         
         if ssp >= 0:  # No negative SP deflection
             return None
@@ -176,22 +181,30 @@ class StatisticsUtils:
             return None
             
         rt = self.data[rt_curve].dropna()
-        
+
         if len(rt) == 0:
             return None
-        
+
         if phi_curve in self.data.columns:
-            phi = self.data[phi_curve]
-            # Water zones: high porosity, low Rt
-            water_mask = (phi > porosity_threshold) & (rt < np.percentile(rt, 25))
-            if water_mask.sum() > 0:
-                rt_water = rt[water_mask].median()
-                phi_water = phi[water_mask].median()
-                
-                # Rw = Rt * phi^m / a (assuming Sw = 1)
-                rw = rt_water * (phi_water ** m) / a
-                return max(0.01, min(float(rw), 5.0))
-        
+            # Drop NaN jointly so RT and PHI share a common index. Dropping
+            # only RT (as before) left PHI on the full index; ANDing the two
+            # masks then aligned on the union index and silently produced a
+            # wrong water-zone selection whenever RT (or PHI) had NaN gaps.
+            valid = self.data[[rt_curve, phi_curve]].dropna()
+            if len(valid) > 0:
+                rt_valid = valid[rt_curve]
+                phi_valid = valid[phi_curve]
+                # Water zones: high porosity, low Rt
+                water_mask = (phi_valid > porosity_threshold) & \
+                             (rt_valid < np.percentile(rt_valid, 25))
+                if water_mask.sum() > 0:
+                    rt_water = rt_valid[water_mask].median()
+                    phi_water = phi_valid[water_mask].median()
+
+                    # Rw = Rt * phi^m / a (assuming Sw = 1)
+                    rw = rt_water * (phi_water ** m) / a
+                    return max(0.01, min(float(rw), 5.0))
+
         # Fallback: use minimum Rt with typical porosity
         rt_min = float(np.percentile(rt, 5))
         phi_assumed = 0.20
@@ -327,8 +340,10 @@ class StatisticsUtils:
                     'P': float(np.clip(P, 3, 6)),
                     'Q': float(np.clip(Q, 1, 3))
                 }
-            except:
-                pass
+            except Exception as e:
+                logger.warning(
+                    "Permeability multi-regression failed, using defaults: %s", e
+                )
         else:
             # Simple regression: log(K) = log(C) + P*log(PHI)
             try:
@@ -343,9 +358,11 @@ class StatisticsUtils:
                     'P': float(np.clip(P, 3, 6)),
                     'Q': 2.0  # Default
                 }
-            except:
-                pass
-        
+            except Exception as e:
+                logger.warning(
+                    "Permeability simple regression failed, using defaults: %s", e
+                )
+
         return defaults
     
     def estimate_swi(self, sw_series: pd.Series,
@@ -360,13 +377,13 @@ class StatisticsUtils:
         Returns:
             Estimated Swi (fraction)
         """
-        sw = sw_series.dropna()
-        
         if vsh_series is not None:
             # Focus on clean zones
             clean_mask = vsh_series < 0.3
             sw = sw_series[clean_mask].dropna()
-        
+        else:
+            sw = sw_series.dropna()
+
         if len(sw) == 0:
             return 0.2  # Default
         
@@ -465,8 +482,10 @@ class StatisticsUtils:
         
         Returns mean, std, min, max for each shale parameter.
         """
-        stats = {}
-        
+        # Named zone_stats (not stats) to avoid shadowing the module-level
+        # scipy.stats import used elsewhere in this class.
+        zone_stats = {}
+
         if gr_curve in self.data.columns:
             gr = self.data[gr_curve]
             gr_valid = gr.dropna()
@@ -478,23 +497,23 @@ class StatisticsUtils:
                 shale_mask = (igr > vsh_threshold) & (gr.notna())
                 
                 if shale_mask.sum() > 0:
-                    stats['shale_points'] = int(shale_mask.sum())
-                    
+                    zone_stats['shale_points'] = int(shale_mask.sum())
+
                     # Get shale zone indices
                     shale_indices = shale_mask[shale_mask].index
-                    
+
                     for curve_name, curve_key in [(rhob_curve, 'RHOB'), (nphi_curve, 'NPHI'), (dt_curve, 'DT')]:
                         if curve_name in self.data.columns:
                             values = self.data.loc[shale_indices, curve_name].dropna()
                             if len(values) > 0:
-                                stats[curve_key] = {
+                                zone_stats[curve_key] = {
                                     'mean': float(values.mean()),
                                     'std': float(values.std()),
                                     'min': float(values.min()),
                                     'max': float(values.max()),
                                     'median': float(values.median())
                                 }
-        return stats
+        return zone_stats
 
 
 def get_humble_parameters() -> Dict[str, float]:
