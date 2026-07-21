@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from petrophyter_pyqt.modules.petrophysics import PetrophysicsCalculator
+from modules.petrophysics import PetrophysicsCalculator
 
 
 class TestHCPV:

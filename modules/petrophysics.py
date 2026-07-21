@@ -20,6 +20,24 @@ class PetrophysicsCalculator:
     - Permeability (Wyllie-Rose, Timur)
     """
 
+    # Minimum GR separation (API units) required between the clean-sand and
+    # pure-shale baselines. If the auto-derived P5/P95 baselines are closer than
+    # this, we widen to the full min/max range so Vshale is not compressed into a
+    # tiny GR window.
+    MIN_GR_SEPARATION = 10.0
+
+    # A per-sample depth increment larger than GAP_STEP_FACTOR x the median
+    # logging step is treated as a non-physical depth gap (e.g. Per-Formation
+    # mode selecting non-adjacent formations) and neutralized in HCPV
+    # integration. Chosen > 2 so legitimate variable sampling (e.g. a 0.5 ft ->
+    # 1.0 ft transition) is preserved.
+    GAP_STEP_FACTOR = 3.0
+
+    # Minimum fraction of valid (non-NaN) samples a PHIE method must have before
+    # it can be selected as the primary porosity. Guards against a mostly-broken
+    # curve (e.g. partial DT) being chosen and leaving PHIE almost entirely NaN.
+    MIN_METHOD_VALID_FRACTION = 0.5
+
     def __init__(self, data: pd.DataFrame):
         """
         Initialize calculator with log data.
@@ -31,6 +49,9 @@ class PetrophysicsCalculator:
         self.results = pd.DataFrame(index=data.index)
         if "DEPTH" in data.columns:
             self.results["DEPTH"] = data["DEPTH"]
+        # Per-method counts of solver fallbacks/failures, so callers can surface
+        # how many points did not converge instead of failing silently.
+        self.solver_diagnostics = {}
 
     def _make_series(self, fill_value) -> pd.Series:
         """
@@ -80,9 +101,17 @@ class PetrophysicsCalculator:
             gr_max = float(np.nanpercentile(gr, 95))
 
         # Ensure minimum separation
-        if gr_max - gr_min < 10:
+        if gr_max - gr_min < self.MIN_GR_SEPARATION:
             gr_min = float(np.nanmin(gr))
             gr_max = float(np.nanmax(gr))
+
+        # Guard against zero (or inverted) separation, e.g. constant GR. Without
+        # GR contrast Vshale is undefined, so return NaN rather than dividing by
+        # zero (which would otherwise emit a silent warning and NaN result).
+        if gr_max - gr_min <= 0:
+            vsh = self._make_series(np.nan)
+            self.results["VSH"] = vsh
+            return vsh
 
         # Calculate Vshale
         vsh = (gr - gr_min) / (gr_max - gr_min)
@@ -166,9 +195,21 @@ class PetrophysicsCalculator:
             results["VSH_LARIO_OLD"] = vsh_older
             self.results["VSH_LARIO_OLD"] = vsh_older
 
-        # Set default VSH (linear by default, can be overridden)
-        if "linear" in methods:
-            self.results["VSH"] = results["VSH_LINEAR"]
+        # Set the default VSH from the FIRST selected method rather than relying
+        # on the linear side-effect inside calculate_vshale_linear. Previously VSH
+        # stayed Linear/IGR even when the user selected only Larionov, silently
+        # feeding the wrong Vshale into every downstream PHIE/Sw/net-pay/HCPV
+        # calculation.
+        method_to_result_key = {
+            "linear": "VSH_LINEAR",
+            "larionov_tertiary": "VSH_LARIO_TERT",
+            "larionov_older": "VSH_LARIO_OLD",
+        }
+        for method in methods:
+            key = method_to_result_key.get(method)
+            if key and key in results:
+                self.results["VSH"] = results[key].copy()
+                break
 
         return results
 
@@ -522,11 +563,32 @@ class PetrophysicsCalculator:
                 gas_rhob_factor=gas_rhob_factor,
             )
 
-        # Determine available methods (those with valid data)
-        available = []
-        for col in ["PHIE_DN", "PHIE_N", "PHIE_D", "PHIE_S", "PHIE_GAS"]:
-            if col in results and results[col].notna().sum() > 0:
-                available.append(col)
+        # Determine available methods. A method needs a meaningful fraction of
+        # valid points (not just 1 of thousands) before it can be selected as
+        # primary; otherwise a mostly-broken curve could make PHIE almost
+        # entirely NaN with no warning.
+        candidates = ["PHIE_DN", "PHIE_N", "PHIE_D", "PHIE_S", "PHIE_GAS"]
+
+        def _valid_fraction(col):
+            s = results.get(col)
+            if s is None or len(s) == 0:
+                return 0.0
+            return float(s.notna().sum()) / float(len(s))
+
+        available = [
+            col
+            for col in candidates
+            if col in results and _valid_fraction(col) >= self.MIN_METHOD_VALID_FRACTION
+        ]
+
+        # Safety net: if no method clears the fraction bar but some has any valid
+        # data, fall back to the old "any valid point" rule so PHIE is still set.
+        if not available:
+            available = [
+                col
+                for col in candidates
+                if col in results and results[col].notna().sum() > 0
+            ]
 
         # Select primary PHIE based on user choice with fallback
         selected = None
@@ -534,7 +596,7 @@ class PetrophysicsCalculator:
             selected = primary_method
         else:
             # Fallback priority: PHIE_DN > PHIE_N > PHIE_D > PHIE_S > PHIE_GAS
-            for fallback in ["PHIE_DN", "PHIE_N", "PHIE_D", "PHIE_S", "PHIE_GAS"]:
+            for fallback in candidates:
                 if fallback in available:
                     selected = fallback
                     break
@@ -598,9 +660,9 @@ class PetrophysicsCalculator:
         phid_corr = phid.copy()
         phin_corr = phin.copy()
 
-        # Apply gas correction only in gas zones
-        # Neutron reads low in gas, so we increase it
-        # Density reads high in gas (low PHID), so we increase PHID
+        # Apply gas correction only in gas zones.
+        # Gas has low hydrogen index, so the neutron tool reads too LOW -> raise PHIN.
+        # Gas lowers RHOB, so the density tool reads too HIGH (PHID over-read) -> reduce PHID.
         phin_corr = np.where(
             gas_zone,
             phin / (1 - gas_nphi_factor),  # Increase neutron in gas zones
@@ -609,7 +671,7 @@ class PetrophysicsCalculator:
 
         phid_corr = np.where(
             gas_zone,
-            phid / (1 - gas_rhob_factor),  # Increase density porosity in gas zones
+            phid * (1 - gas_rhob_factor),  # Reduce over-read density porosity in gas
             phid,
         )
 
@@ -726,38 +788,37 @@ class PetrophysicsCalculator:
         if vsh is None:
             vsh = self.results.get("VSH", self._make_series(0.2))
 
-        sw_list = []
+        # The Indonesian (Poupon-Leveaux) equation factorizes as
+        #   1/sqrt(Rt) = (term1 + term2) * Sw^(n/2)
+        # so it has an exact closed form:  Sw = (lhs / (term1 + term2))^(2/n).
+        # This replaces a per-row brentq solve whose fixed [0.001, 1.5] bracket
+        # could fail (same-sign endpoints for very low Rt) and then silently fall
+        # back to plain Archie -- dropping the Vsh term exactly where it matters.
+        phie_v = np.asarray(phie, dtype=float)
+        vsh_v = np.asarray(vsh, dtype=float)
+        rt_v = np.asarray(rt, dtype=float)
 
-        for i in range(len(rt)):
-            rt_i = rt.iloc[i] if hasattr(rt, "iloc") else rt[i]
-            phie_i = phie.iloc[i] if hasattr(phie, "iloc") else phie[i]
-            vsh_i = vsh.iloc[i] if hasattr(vsh, "iloc") else vsh[i]
+        # Clip Vsh to [0, 1] so the fractional power stays well-defined.
+        vsh_clip = np.clip(vsh_v, 0.0, 1.0)
 
-            if np.isnan(rt_i) or np.isnan(phie_i) or phie_i <= 0.001 or rt_i <= 0:
-                sw_list.append(np.nan)
-                continue
+        with np.errstate(invalid="ignore", divide="ignore"):
+            term1 = np.sqrt(np.power(phie_v, m) / (a * rw))
+            term2 = np.power(vsh_clip, (1 - vsh_clip / 2)) / np.sqrt(rsh)
+            lhs = 1.0 / np.sqrt(rt_v)
+            sw = np.power(lhs / (term1 + term2), 2.0 / n)
 
-            # Indonesian equation terms
-            term1 = np.sqrt(np.power(phie_i, m) / (a * rw))
-            term2 = np.power(vsh_i, (1 - vsh_i / 2)) / np.sqrt(rsh)
+        sw = np.clip(sw, 0, 1)
 
-            lhs = 1 / np.sqrt(rt_i)
+        # Invalidate non-physical inputs (match previous NaN semantics).
+        invalid = (
+            np.isnan(rt_v)
+            | np.isnan(phie_v)
+            | (phie_v <= 0.001)
+            | (rt_v <= 0)
+        )
+        sw = np.where(invalid, np.nan, sw)
 
-            # Solve for Sw iteratively
-            def indonesian_func(sw):
-                return (term1 * np.power(sw, n / 2) + term2 * np.power(sw, n / 2)) - lhs
-
-            try:
-                sw_solved = brentq(indonesian_func, 0.001, 1.5)
-                sw_solved = np.clip(sw_solved, 0, 1)
-            except:
-                # Fallback to Archie
-                sw_solved = np.power((a * rw) / (rt_i * np.power(phie_i, m)), 1 / n)
-                sw_solved = np.clip(sw_solved, 0, 1)
-
-            sw_list.append(sw_solved)
-
-        sw = pd.Series(sw_list, index=self.data.index)
+        sw = pd.Series(sw, index=self.data.index)
         self.results["SW_INDO"] = sw
         return sw
 
@@ -800,12 +861,10 @@ class PetrophysicsCalculator:
         if vsh is None:
             vsh = self.results.get("VSH", self._make_series(0.2))
 
-        # Simandoux with n=2 is a quadratic in Sw
-        # A = PHIE^m / (a*Rw)
-        # B = Vsh / Rsh
-        # C = 1 / Rt
-        # A*Sw^2 + B*Sw - C = 0
-
+        # Simandoux:  1/Rt = A*Sw^n + B*Sw   with
+        #   A = PHIE^m / (a*Rw)   (coefficient on Sw^n)
+        #   B = Vsh / Rsh         (coefficient on Sw)
+        #   C = 1 / Rt            (constant)
         phie_safe = np.maximum(phie, 0.001)
         rt_safe = np.maximum(rt, 0.001)
 
@@ -813,13 +872,40 @@ class PetrophysicsCalculator:
         B = vsh / rsh
         C = 1 / rt_safe
 
-        # Quadratic formula: Sw = (-B + sqrt(B^2 + 4AC)) / (2A)
-        discriminant = B**2 + 4 * A * C
-        discriminant = np.maximum(discriminant, 0)  # Ensure non-negative
+        if abs(n - 2.0) < 1e-9:
+            # n == 2: closed-form quadratic  A*Sw^2 + B*Sw - C = 0
+            discriminant = B**2 + 4 * A * C
+            discriminant = np.maximum(discriminant, 0)  # Ensure non-negative
+            sw = (-B + np.sqrt(discriminant)) / (2 * A)
+        else:
+            # General n: f(Sw) = A*Sw^n + B*Sw - C is strictly increasing for
+            # Sw > 0 (A > 0, B >= 0), so it has a unique root. Solve per row.
+            # Previously the n argument was ignored and n=2 was always used.
+            A_arr = np.asarray(A, dtype=float)
+            B_arr = np.asarray(B, dtype=float)
+            C_arr = np.asarray(C, dtype=float)
 
-        sw = (-B + np.sqrt(discriminant)) / (2 * A)
+            sw_list = []
+            for i in range(len(rt_safe)):
+                A_i, B_i, C_i = A_arr[i], B_arr[i], C_arr[i]
+                if np.isnan(A_i) or np.isnan(B_i) or np.isnan(C_i):
+                    sw_list.append(np.nan)
+                    continue
 
-        # For n != 2, need iterative solution
+                def simandoux_func(sw_val):
+                    return A_i * np.power(sw_val, n) + B_i * sw_val - C_i
+
+                # f(0) = -C_i <= 0. If f(1) <= 0 the root is >= 1 (fully wet).
+                if simandoux_func(1.0) <= 0:
+                    sw_list.append(1.0)
+                    continue
+                try:
+                    sw_list.append(brentq(simandoux_func, 0.0, 1.0))
+                except Exception:
+                    sw_list.append(np.nan)
+
+            sw = pd.Series(sw_list, index=self.data.index)
+
         # Clip to 0-1 range
         sw = np.clip(sw, 0, 1)
 
@@ -869,6 +955,8 @@ class PetrophysicsCalculator:
             phie = self.results.get("PHIE", self._make_series(0.15))
 
         sw_list = []
+        no_root_count = 0
+        fail_count = 0
 
         # Pre-calculate constants where possible
         cw = 1.0 / rw if rw > 0 else 0
@@ -904,14 +992,20 @@ class PetrophysicsCalculator:
                     sw_solved = np.clip(sw_solved, 0, 1)
                 else:
                     # Fallback if no root in range (rare)
+                    no_root_count += 1
                     sw_solved = 1.0 if ws_func(1.0) < 0 else 0.0
-            except:
+            except Exception:
+                fail_count += 1
                 sw_solved = np.nan
 
             sw_list.append(sw_solved)
 
         sw = pd.Series(sw_list, index=self.data.index)
         self.results["SW_WS"] = sw
+        self.solver_diagnostics["SW_WS"] = {
+            "no_root": no_root_count,
+            "failed": fail_count,
+        }
         return sw
 
     def calculate_sw_dual_water(
@@ -963,6 +1057,8 @@ class PetrophysicsCalculator:
             )
 
         sw_list = []
+        no_root_count = 0
+        fail_count = 0
 
         cw = 1.0 / rw if rw > 0 else 0
         cwb = 1.0 / rwb if rwb > 0 else 0
@@ -1001,21 +1097,27 @@ class PetrophysicsCalculator:
                 if val_low * val_high < 0:
                     sw_solved = brentq(dw_func, lower_bound, 1.0)
                 else:
+                    no_root_count += 1
                     # If measured cond is very high, Sw -> 1
                     if abs(val_high) < abs(val_low):
                         sw_solved = 1.0
                     else:
                         # If measured cond is very low, Sw -> Swb
-                        sw_solved = variable_swb = swb
+                        sw_solved = swb
 
                 sw_solved = np.clip(sw_solved, 0, 1)
-            except:
+            except Exception:
+                fail_count += 1
                 sw_solved = np.nan
 
             sw_list.append(sw_solved)
 
         sw = pd.Series(sw_list, index=self.data.index)
         self.results["SW_DW"] = sw
+        self.solver_diagnostics["SW_DW"] = {
+            "no_root": no_root_count,
+            "failed": fail_count,
+        }
         return sw
 
     # =========================================================================
@@ -1309,14 +1411,14 @@ class PetrophysicsCalculator:
 
         # Estimate Swi if not provided
         if swi is None:
-            # Use Sw as proxy, assuming hydrocarbon zones are at Swi
-            sw = self.results.get("SW_ARCHIE", None)
+            # Use the primary Sw (whatever method the user selected) as a proxy,
+            # falling back to Archie only if no primary Sw is present. Previously
+            # this looked up SW_ARCHIE specifically, so with Simandoux/Indonesian/
+            # etc. it silently fell through to a flat 0.2 constant.
+            sw = self.results.get("SW", self.results.get("SW_ARCHIE", None))
             if sw is not None:
-                # Minimum Sw in clean zones
-                vsh = self.results.get("VSH", self._make_series(0))
-                swi = sw.copy()
                 # In clean zones with hydrocarbons, Sw ~ Swi
-                swi = np.clip(swi, 0.05, 0.9)
+                swi = np.clip(sw.copy(), 0.05, 0.9)
             else:
                 swi = self._make_series(0.2)
 
@@ -1357,7 +1459,8 @@ class PetrophysicsCalculator:
             phie = self.results.get("PHIE", self._make_series(0.15))
 
         if swi is None:
-            sw = self.results.get("SW_ARCHIE", None)
+            # Prefer the primary Sw; fall back to Archie, then a flat default.
+            sw = self.results.get("SW", self.results.get("SW_ARCHIE", None))
             if sw is not None:
                 swi = np.clip(sw, 0.05, 0.9)
             else:
@@ -1669,6 +1772,19 @@ class PetrophysicsCalculator:
 
         # Step 2: Calculate depth increment (dz) in feet
         dz = np.abs(depth.diff())
+
+        # Neutralize non-physical depth gaps. In Per-Formation mode with
+        # non-adjacent formations, the boundary sample would otherwise carry a dz
+        # equal to the full inter-formation distance (hundreds/thousands of ft),
+        # inflating HCPV ~1000x. Any dz far larger than the median logging step is
+        # a gap, not a real interval, so cap it to the median step.
+        valid_dz = dz.dropna()
+        valid_dz = valid_dz[valid_dz > 0]
+        median_step = float(np.median(valid_dz)) if len(valid_dz) > 0 else 0.0
+        if median_step > 0:
+            gap_mask = dz > (self.GAP_STEP_FACTOR * median_step)
+            dz = dz.where(~gap_mask, median_step)
+
         dz.iloc[0] = dz.iloc[1] if len(dz) > 1 else 0  # Handle first row
 
         # Step 3: Incremental HCPV (gross)
