@@ -6,16 +6,19 @@ Handles reading and parsing LAS 2.0 format files
 import logging
 import lasio
 import pandas as pd
-import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
+
+from .las_utils import (
+    COMMON_NULL_VALUES,
+    DEPTH_COLUMN_CANDIDATES,
+    replace_null_values,
+)
 
 logger = logging.getLogger(__name__)
 
-# Common null sentinel values that may not be declared in the LAS header.
-# NOTE: only negative sentinels here. A positive 999.25 was previously in this
-# list (a typo for -999.25) and silently destroyed valid high curve readings
-# (e.g. extreme RT/GR). Keep this list identical to las_handler.COMMON_NULL_VALUES.
-COMMON_NULL_VALUES = [-999.25, -999, -9999, -999.0, -9999.0, -999999]
+# COMMON_NULL_VALUES is imported from las_utils and re-exported here so existing
+# callers/tests can keep importing it from this module. las_parser and
+# las_handler now share the one definition, so their null lists cannot drift.
 
 # Depth-unit tokens.
 _METER_UNITS = {'M', 'METER', 'METERS', 'METRE', 'METRES'}
@@ -205,16 +208,15 @@ class LASParser:
             
         self.data = self.las.df().reset_index()
         
-        # Find the depth column
-        depth_cols = ['DEPT', 'DEPTH', 'MD', 'TVD', 'TDEP']
-        for col in depth_cols:
+        # Find the depth column (candidates shared with las_handler via las_utils)
+        for col in DEPTH_COLUMN_CANDIDATES:
             if col in self.data.columns:
                 self.data = self.data.rename(columns={col: 'DEPTH'})
                 break
 
         # If depth is still in index
         if 'DEPTH' not in self.data.columns:
-            if self.data.index.name in depth_cols or self.data.index.name is None:
+            if self.data.index.name in DEPTH_COLUMN_CANDIDATES or self.data.index.name is None:
                 self.data = self.data.reset_index()
                 first_col = self.data.columns[0]
                 # Only force-rename the first column to DEPTH if it is numeric;
@@ -252,25 +254,11 @@ class LASParser:
             )
             logger.warning(self.depth_unit_warning)
 
-        # Replace null values with NaN
-        # 1. Replace the declared null value from LAS header
-        null_val = self.null_value
-        if null_val is not None:
-            # Use tolerance for float comparison
-            for col in self.data.columns:
-                if col != 'DEPTH' and self.data[col].dtype in ['float64', 'float32', 'int64']:
-                    # Replace values close to null value (within tolerance)
-                    mask = np.abs(self.data[col] - null_val) < 0.01
-                    self.data.loc[mask, col] = np.nan
-
-        # 2. Replace common null values that might not be declared.
-        #    dtype set kept identical to las_handler.normalize_las_dataframe so
-        #    single-load and merge paths null-handle consistently (incl. int64).
-        for null in COMMON_NULL_VALUES:
-            for col in self.data.columns:
-                if col != 'DEPTH' and self.data[col].dtype in ['float64', 'float32', 'int64']:
-                    mask = np.abs(self.data[col] - null) < 0.01
-                    self.data.loc[mask, col] = np.nan
+        # Replace null values with NaN. Both the declared header NULL and the
+        # common undeclared sentinels are handled by the shared helper (same
+        # dtype set and tolerance as the merge path in las_handler), so a file
+        # null-handles identically whether it is loaded singly or merged.
+        replace_null_values(self.data, [self.null_value] + COMMON_NULL_VALUES)
 
         # Store null value info
         self.null_values_replaced = True

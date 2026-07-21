@@ -9,11 +9,17 @@ import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 
+from .las_utils import (
+    COMMON_NULL_VALUES,
+    DEPTH_COLUMN_CANDIDATES,
+    replace_null_values,
+)
+
 
 # Discrete curves tokens that should NOT be interpolated
 DISCRETE_CURVE_TOKENS = ['LITH', 'FACIES', 'FLAG', 'ZONE', 'CODE', 'TYPE', 'CLASS']
 
-# Expected curve ranges for QC scoring
+# Expected curve ranges for QC scoring (used by curve_qc_score below).
 CURVE_RANGES = {
     'GR': (0, 300),
     'RHOB': (1.0, 3.0),
@@ -25,11 +31,9 @@ CURVE_RANGES = {
     'PEF': (0, 10),
 }
 
-# Common null values to replace.
-# NOTE: only negative sentinels. A positive 999.25 was previously present (a
-# typo for -999.25) and silently destroyed valid high curve readings. Keep this
-# list identical to las_parser.COMMON_NULL_VALUES.
-COMMON_NULL_VALUES = [-999.25, -999, -9999, -999.0, -9999.0, -999999]
+# COMMON_NULL_VALUES is imported from las_utils and re-exported here so existing
+# callers/tests can keep importing it from this module. las_parser and
+# las_handler now share the one definition, so their null lists cannot drift.
 
 
 @dataclass
@@ -120,25 +124,18 @@ class LASHandler:
         """
         df = df.copy()
         
-        # 1. Ensure DEPTH column exists
-        depth_cols = ['DEPT', 'DEPTH', 'MD', 'TVD', 'TDEP']
-        for col in depth_cols:
+        # 1. Ensure DEPTH column exists (candidates shared with las_parser)
+        for col in DEPTH_COLUMN_CANDIDATES:
             if col in df.columns and col != 'DEPTH':
                 df = df.rename(columns={col: 'DEPTH'})
                 break
-        
+
         if 'DEPTH' not in df.columns:
             raise ValueError("No depth column found in DataFrame")
-        
-        # 2. Convert null values to NaN
-        if null_values is None:
-            null_values = COMMON_NULL_VALUES
-        
-        for col in df.columns:
-            if col != 'DEPTH' and df[col].dtype in ['float64', 'float32', 'int64']:
-                for null in null_values:
-                    mask = np.abs(df[col] - null) < 0.01
-                    df.loc[mask, col] = np.nan
+
+        # 2. Convert null values to NaN via the shared helper (same dtype set and
+        #    tolerance as the single-load path in las_parser).
+        replace_null_values(df, null_values)
         
         # 3. Convert depth to FT if in meters
         if depth_unit.upper() in ['M', 'METER', 'METERS']:

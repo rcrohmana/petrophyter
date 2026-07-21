@@ -2,32 +2,20 @@
 Unit tests for Shale Parameter Calculation (v2.0)
 Tests Per-Formation filter and threshold effect on shale parameter estimation.
 
-These tests are self-contained and don't depend on external modules.
+Per-Formation filtering and linear Vshale are exercised through the production
+classes (FormationTops, PetrophysicsCalculator) instead of reimplementations,
+so a regression in those modules would now fail these tests. The robust-median
+helper below still mirrors AnalysisWorker._robust_median, which lives in the
+Qt-coupled services layer and cannot be imported in this headless test
+environment - see the test-suite audit in the task report.
 """
 
 import pytest
 import pandas as pd
 import numpy as np
 
-
-class MockFormationTops:
-    """Mock formation tops for testing Per-Formation mode."""
-    
-    def __init__(self, tops_dict):
-        """
-        Args:
-            tops_dict: Dict of {formation_name: (top_depth, bottom_depth)}
-        """
-        self.tops = tops_dict
-    
-    def filter_by_formations(self, data, selected_formations, depth_column):
-        """Filter data by selected formations."""
-        mask = pd.Series([False] * len(data), index=data.index)
-        for fm in selected_formations:
-            if fm in self.tops:
-                top, bottom = self.tops[fm]
-                mask |= data[depth_column].between(top, bottom)
-        return data[mask].copy()
+from modules.formation_tops import FormationTops, Formation
+from modules.petrophysics import PetrophysicsCalculator
 
 
 def create_test_data_two_zones():
@@ -57,12 +45,6 @@ def create_test_data_two_zones():
     return pd.concat([zone1, zone2], ignore_index=True)
 
 
-def calculate_vsh_linear(gr, gr_min, gr_max):
-    """Calculate linear VSH from GR."""
-    vsh = (gr - gr_min) / (gr_max - gr_min)
-    return np.clip(vsh, 0, 1)
-
-
 def robust_median(series, use_iqr_filter=True):
     """Calculate median with optional IQR outlier filtering."""
     s = series.dropna()
@@ -85,7 +67,9 @@ class TestShaleThresholdEffect:
         
         # Calculate VSH
         gr_min, gr_max = 25.0, 120.0
-        vsh = calculate_vsh_linear(data['GR'], gr_min, gr_max)
+        vsh = PetrophysicsCalculator(data).calculate_vshale_linear(
+            'GR', gr_min=gr_min, gr_max=gr_max
+        )
         
         # Count shale points at different thresholds
         n_shale_06 = (vsh > 0.6).sum()
@@ -105,7 +89,9 @@ class TestShaleThresholdEffect:
         
         # Calculate VSH
         gr_min, gr_max = 25.0, 120.0
-        vsh = calculate_vsh_linear(data['GR'], gr_min, gr_max)
+        vsh = PetrophysicsCalculator(data).calculate_vshale_linear(
+            'GR', gr_min=gr_min, gr_max=gr_max
+        )
         
         # Get shale RHOB at different thresholds
         mask_06 = vsh > 0.6
@@ -129,10 +115,11 @@ class TestPerFormationFilter:
         data = create_test_data_two_zones()
         
         # Create formation tops (Zone1 = "Sand", Zone2 = "Shale")
-        tops = MockFormationTops({
-            'Sand': (1000, 1050),
-            'Shale': (1050, 1100)
-        })
+        tops = FormationTops()
+        tops.formations = [
+            Formation('Sand', 1000.0, 1050.0, 50.0),
+            Formation('Shale', 1050.0, 1100.0, 50.0),
+        ]
         
         # Filter for Sand only
         filtered = tops.filter_by_formations(data, ['Sand'], 'DEPTH')
@@ -149,10 +136,11 @@ class TestPerFormationFilter:
         """Different formation selections should yield different shale params."""
         data = create_test_data_two_zones()
         
-        tops = MockFormationTops({
-            'Sand': (1000, 1050),
-            'Shale': (1050, 1100)
-        })
+        tops = FormationTops()
+        tops.formations = [
+            Formation('Sand', 1000.0, 1050.0, 50.0),
+            Formation('Shale', 1050.0, 1100.0, 50.0),
+        ]
         
         # Get median NPHI from "Shale" zone only
         shale_data = tops.filter_by_formations(data, ['Shale'], 'DEPTH')
