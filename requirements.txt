@@ -15,7 +15,6 @@ scipy>=1.11.0
 
 # Visualization
 matplotlib>=3.7.0
-plotly>=5.18.0
 
 # Excel Export
 openpyxl>=3.1.0

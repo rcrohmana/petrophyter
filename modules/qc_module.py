@@ -51,20 +51,7 @@ class QCModule:
     # Required curves for petrophysics calculations
     REQUIRED_CURVES = ['GR', 'RHOB', 'NPHI']
     OPTIONAL_CURVES = ['DT', 'RT', 'RS', 'SP', 'CALI', 'DRHO', 'PEF']
-    
-    # Reasonable ranges for common curves
-    CURVE_RANGES = {
-        'GR': (0, 250),
-        'RHOB': (1.8, 3.0),
-        'NPHI': (-0.15, 0.60),
-        'DT': (40, 180),
-        'RT': (0.1, 10000),
-        'RS': (0.1, 10000),
-        'SP': (-200, 100),
-        'CALI': (4, 20),
-        'PEF': (1, 10),
-    }
-    
+
     def __init__(self, data: pd.DataFrame, well_name: str = "Unknown"):
         """
         Initialize QC module with data.
@@ -153,11 +140,14 @@ class QCModule:
         series = self.data[curve]
         total_points = len(series)
         
-        # Count nulls
+        # Count nulls. int(...) so null_count matches its type hint and the
+        # explicitly-int outlier_count (null_mask.sum() returns numpy.int64).
         null_mask = series.isna()
-        null_count = null_mask.sum()
-        null_percentage = (null_count / total_points) * 100 if total_points > 0 else 0
-        
+        null_count = int(null_mask.sum())
+        # An empty curve is 100% null, not 0% - defaulting to 0 here made an
+        # empty DataFrame score a phantom 100/100.
+        null_percentage = (null_count / total_points) * 100 if total_points > 0 else 100.0
+
         # Valid data statistics
         valid_data = series.dropna()
         valid_points = len(valid_data)
@@ -182,10 +172,16 @@ class QCModule:
             min_val = max_val = mean_val = std_val = median_val = p5_val = p95_val = np.nan
             outlier_count = 0
         
-        # Calculate quality score (0-100)
-        quality_score = self._calculate_quality_score(
-            null_percentage, outlier_count, total_points, curve
-        )
+        # Calculate quality score (0-100). A curve with no valid data at all
+        # (100% null, or an empty DataFrame) is unusable and scores 0 - the
+        # penalty caps in _calculate_quality_score otherwise leave a phantom
+        # floor of 60 for a fully-null curve.
+        if valid_points == 0:
+            quality_score = 0.0
+        else:
+            quality_score = self._calculate_quality_score(
+                null_percentage, outlier_count, total_points
+            )
         
         return CurveQCResult(
             mnemonic=curve,
@@ -204,9 +200,13 @@ class QCModule:
             quality_score=quality_score
         )
     
-    def _calculate_quality_score(self, null_pct: float, outliers: int, 
-                                  total: int, curve: str) -> float:
-        """Calculate a quality score for a curve (0-100)."""
+    def _calculate_quality_score(self, null_pct: float, outliers: int,
+                                  total: int) -> float:
+        """Calculate a quality score for a curve that has valid data (0-100).
+
+        Callers must handle the no-valid-data case (score 0) before calling
+        this; here null_pct is always < 100 so the capped penalties are safe.
+        """
         score = 100.0
         
         # Penalty for null values
