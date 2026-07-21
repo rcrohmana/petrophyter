@@ -3,12 +3,25 @@ Core Data Handler Module for Petrophyter
 Handles loading and validation of core data against log-derived petrophysical properties.
 """
 
+import re
+import logging
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from scipy import stats
 from scipy.interpolate import interp1d
+
+logger = logging.getLogger(__name__)
+
+# Depth-unit tokens.
+_FEET_TOKENS = {'ft', 'feet', 'foot'}
+_METER_TOKENS = {'m', 'meter', 'meters', 'metre', 'metres'}
+
+
+def _tokenize(text: str) -> List[str]:
+    """Split a string into lower-case alphanumeric tokens (drops punctuation)."""
+    return [t for t in re.split(r'[^a-z0-9]+', text.lower()) if t]
 
 
 @dataclass
@@ -67,6 +80,8 @@ class CoreDataHandler:
         self.perm_col: Optional[str] = None
         self.grain_density_col: Optional[str] = None
         self.depth_unit: str = 'M'  # Will be converted to FT to match log data
+        self.depth_unit_detected: bool = False
+        self.depth_unit_warning: Optional[str] = None
         self.porosity_unit: str = 'fraction'  # After conversion
         self.converted_to_feet: bool = False
         self.porosity_converted: bool = False
@@ -88,13 +103,14 @@ class CoreDataHandler:
             # Try to read with specified separator
             try:
                 df = pd.read_csv(file_buffer, sep=separator)
-            except:
+            except Exception as e:
                 # Fallback: try comma separator
+                logger.debug("Read with sep=%r failed (%s); retrying with comma", separator, e)
                 file_buffer.seek(0)
                 df = pd.read_csv(file_buffer, sep=',')
             
             if df.empty:
-                print("Empty file")
+                logger.warning("Empty core file")
                 return False
             
             # Normalize column names for matching
@@ -103,7 +119,7 @@ class CoreDataHandler:
             # Find required depth column
             self.depth_col = self._find_column(df, self.DEPTH_ALIASES)
             if self.depth_col is None:
-                print("Could not find depth column")
+                logger.warning("Could not find depth column")
                 return False
             
             # Find optional columns
@@ -113,7 +129,7 @@ class CoreDataHandler:
             
             # Validate that we have at least one property to validate
             if self.porosity_col is None and self.perm_col is None:
-                print("No porosity or permeability column found")
+                logger.warning("No porosity or permeability column found")
                 return False
             
             # Clean data: drop rows where depth is NaN
@@ -132,7 +148,7 @@ class CoreDataHandler:
             df = df.dropna(subset=[self.depth_col])
             
             if df.empty:
-                print("No valid data after cleaning")
+                logger.warning("No valid core data after cleaning")
                 return False
             
             # Sort by depth
@@ -143,25 +159,39 @@ class CoreDataHandler:
             # Record original unit
             if depth_unit != 'Auto':
                 self.depth_unit = depth_unit.upper()
+                self.depth_unit_detected = True
             else:
-                # Try to detect from column name
-                if '(m)' in self.depth_col.lower() or '_m' in self.depth_col.lower():
-                    self.depth_unit = 'M'
-                elif '(ft)' in self.depth_col.lower() or '_ft' in self.depth_col.lower():
+                # Detect from the depth column name via whole-token matching.
+                col_tokens = set(_tokenize(self.depth_col))
+                if col_tokens & _FEET_TOKENS:
                     self.depth_unit = 'FT'
+                    self.depth_unit_detected = True
+                elif col_tokens & _METER_TOKENS:
+                    self.depth_unit = 'M'
+                    self.depth_unit_detected = True
                 else:
-                    self.depth_unit = 'M'  # Default to M if unknown
-            
+                    # Unit unknown: do NOT silently assume meters and triple the
+                    # depth of a feet-native file. Treat as feet (no conversion)
+                    # and warn so the UI can prompt the user to confirm.
+                    self.depth_unit = 'FT'
+                    self.depth_unit_detected = False
+                    self.depth_unit_warning = (
+                        "Core depth unit could not be determined from the column "
+                        f"name '{self.depth_col}'; depths were left unchanged "
+                        "(assumed feet). Set the depth unit manually if this is wrong."
+                    )
+                    logger.warning(self.depth_unit_warning)
+
             self._auto_convert_units()
-            
-            # Auto convert to feet if unit is M
+
+            # Auto convert to feet only when the unit is positively meters.
             if self.depth_unit == 'M':
                 self.convert_depth_to_feet()
-            
+
             return True
             
         except Exception as e:
-            print(f"Error reading core data: {e}")
+            logger.error("Error reading core data: %s", e)
             return False
     
     def read_core_file(self, file_path: str, separator: str = '\t') -> bool:
@@ -179,14 +209,25 @@ class CoreDataHandler:
             with open(file_path, 'r') as f:
                 return self.read_core_from_buffer(f, separator)
         except Exception as e:
-            print(f"Error reading file: {e}")
+            logger.error("Error reading core file: %s", e)
             return False
     
     def _find_column(self, df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
-        """Find column by alias list (case-insensitive partial match)."""
+        """
+        Find a column by alias list using whole-token matching.
+
+        Substring matching (the previous approach) let short aliases like 'k'
+        (permeability) match unrelated columns such as 'Remarks', and 'por'
+        match 'Report_ID'. Token matching requires each alias token to appear as
+        a complete token in the column name, eliminating those false positives.
+        """
+        col_tokens = {col: set(_tokenize(str(col))) for col in df.columns}
         for alias in aliases:
+            alias_tokens = _tokenize(alias)
+            if not alias_tokens:
+                continue
             for col in df.columns:
-                if alias in col.lower():
+                if all(tok in col_tokens[col] for tok in alias_tokens):
                     return col
         return None
     
@@ -199,11 +240,19 @@ class CoreDataHandler:
         if len(porosity) == 0:
             return
         
-        # If max porosity > 1, assume it's in percentage (0-100)
-        if porosity.max() > 1.0:
+        # If max porosity > 1, assume it's in percentage (0-100). Values well
+        # above 100 indicate corrupt data rather than a percent scale, so warn
+        # instead of silently dividing (which would still leave garbage).
+        pmax = porosity.max()
+        if pmax > 100.0:
+            logger.warning(
+                "Core porosity max is %.1f (> 100); data may be corrupt. "
+                "Applying percent->fraction conversion anyway.", pmax
+            )
+        if pmax > 1.0:
             self.data[self.porosity_col] = self.data[self.porosity_col] / 100.0
             self.porosity_converted = True
-            print(f"Converted porosity from % to fraction (max was {porosity.max():.1f}%)")
+            logger.info("Converted porosity from %% to fraction (max was %.1f%%)", pmax)
     
     def convert_depth_to_feet(self):
         """Convert depth from meters to feet to match log data."""
@@ -214,7 +263,7 @@ class CoreDataHandler:
             self.data[self.depth_col] = self.data[self.depth_col] * self.M_TO_FT
             self.depth_unit = 'FT'
             self.converted_to_feet = True
-            print(f"Converted core depths from M to FT")
+            logger.info("Converted core depths from M to FT")
     
     def get_available_properties(self) -> List[str]:
         """Get list of available core properties."""
@@ -309,7 +358,7 @@ class CoreDataHandler:
             
             return interpolated
         except Exception as e:
-            print(f"Interpolation error: {e}")
+            logger.warning("Interpolation error: %s", e)
             return np.full(len(core_depths), np.nan)
     
     def validate_porosity(self, log_depth: np.ndarray,
@@ -331,7 +380,7 @@ class CoreDataHandler:
         
         core_depths, core_por = self.get_core_porosity()
         if len(core_depths) < 3:
-            print("Insufficient core porosity data (< 3 points)")
+            logger.warning("Insufficient core porosity data (< 3 points)")
             return None
         
         # Interpolate log to core depths
@@ -342,7 +391,7 @@ class CoreDataHandler:
         n_points = valid_mask.sum()
         
         if n_points < 3:
-            print(f"Insufficient matched points: {n_points}")
+            logger.warning("Insufficient matched points: %s", n_points)
             return None
         
         log_valid = log_at_core[valid_mask]
@@ -396,7 +445,7 @@ class CoreDataHandler:
         
         core_depths, core_perm = self.get_core_permeability()
         if len(core_depths) < 3:
-            print("Insufficient core permeability data (< 3 points)")
+            logger.warning("Insufficient core permeability data (< 3 points)")
             return None
         
         # Interpolate log to core depths
@@ -407,7 +456,7 @@ class CoreDataHandler:
         n_points = valid_mask.sum()
         
         if n_points < 3:
-            print(f"Insufficient matched points: {n_points}")
+            logger.warning("Insufficient matched points: %s", n_points)
             return None
         
         log_valid = log_at_core[valid_mask]
@@ -537,7 +586,13 @@ class CoreDataHandler:
         return summary
     
     def to_dataframe(self) -> pd.DataFrame:
-        """Return the core data as DataFrame."""
+        """
+        Return the core data as a DataFrame.
+
+        Note: column names are normalized to lower-case (see read_core_from_buffer).
+        Use the resolved ``depth_col``/``porosity_col``/``perm_col`` attributes to
+        access specific columns rather than assuming original header casing.
+        """
         if self.data is None:
             return pd.DataFrame()
         return self.data.copy()
