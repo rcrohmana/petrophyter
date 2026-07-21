@@ -1,0 +1,65 @@
+# Sensitive local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*credentials*.json
+*secret*.json
+*token*.json
+.netrc
+.pypirc
+
+# Local agent artifacts
+/.superpowers/
+/docs/claude/
+/docs/plan/
+/docs/superpowers/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.nox/
+
+# Coverage output
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging and build output
+/build/
+/dist/
+/installer/Output/
+.eggs/
+*.egg-info/
+
+# Notebook, editor, and OS metadata
+.ipynb_checkpoints/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
