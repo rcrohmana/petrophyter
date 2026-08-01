@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..widgets.plot_widget import CompositeLogPlot, CrossPlot
 from ..widgets.interactive_log import InteractiveLogPlot, HAS_PYQTGRAPH
-from themes.colors import get_color
+from themes.colors import get_color, get_plot_color
 
 
 class LogDisplayTab(QWidget):
@@ -374,30 +374,67 @@ class LogDisplayTab(QWidget):
         if mode == "Net Pay":
             curves = []
             if "dHCPV_NET_PAY" in columns:
-                curves.append(("dHCPV_NET_PAY", "#FF4500", False, None))
+                curves.append(
+                    (
+                        "dHCPV_NET_PAY",
+                        get_plot_color("dHCPV_NET_PAY"),
+                        False,
+                        None,
+                    )
+                )
             if "HCPV_CUM_NET_PAY" in columns:
-                curves.append(("HCPV_CUM_NET_PAY", "#228B22", False, None))
+                curves.append(
+                    (
+                        "HCPV_CUM_NET_PAY",
+                        get_plot_color("HCPV_CUM_NET_PAY"),
+                        False,
+                        None,
+                    )
+                )
             return curves
 
         elif mode == "Net Reservoir":
             curves = []
             if "dHCPV_NET_RES" in columns:
-                curves.append(("dHCPV_NET_RES", "#DAA520", False, None))
+                curves.append(
+                    (
+                        "dHCPV_NET_RES",
+                        get_plot_color("dHCPV_NET_RES"),
+                        False,
+                        None,
+                    )
+                )
             if "HCPV_CUM_NET_RES" in columns:
-                curves.append(("HCPV_CUM_NET_RES", "#4682B4", False, None))
+                curves.append(
+                    (
+                        "HCPV_CUM_NET_RES",
+                        get_plot_color("HCPV_CUM_NET_RES"),
+                        False,
+                        None,
+                    )
+                )
             return curves
 
         elif mode == "Gross":
             curves = []
             if "dHCPV" in columns:
-                curves.append(("dHCPV", "#FF6347", False, None))
+                curves.append(("dHCPV", get_plot_color("dHCPV"), False, None))
             if "HCPV_CUM" in columns:
-                curves.append(("HCPV_CUM", "#00CED1", False, None))
+                curves.append(
+                    ("HCPV_CUM", get_plot_color("HCPV_CUM"), False, None)
+                )
             return curves
 
         else:  # Fraction Only
             if "HCPV_FRAC" in columns:
-                return [("HCPV_FRAC", "#FF8C00", False, (0, 0.5))]
+                return [
+                    (
+                        "HCPV_FRAC",
+                        get_plot_color("HCPV_FRAC"),
+                        False,
+                        (0, 0.5),
+                    )
+                ]
             return []
 
     def _update_plot(self):
@@ -465,7 +502,7 @@ class LogDisplayTab(QWidget):
     def update_display(self):
         """Update display with analysis results."""
         if not self.model.calculated or self.model.results is None:
-            self.placeholder.setVisible(True)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
@@ -602,9 +639,9 @@ class LogDisplayTab(QWidget):
         if hasattr(self, "interactive_log") and self.interactive_log:
             self.interactive_log.clear()
 
-        # Clear static plot
-        if hasattr(self, "static_plot") and self.static_plot:
-            self.static_plot.clear()
+        # Clear classic matplotlib plot
+        if hasattr(self, "classic_log") and self.classic_log:
+            self.classic_log.clear()
 
         # Clear crossplots
         if hasattr(self, "nd_crossplot"):
