@@ -6,7 +6,11 @@ This ensures consistent theming across the application and makes it easy
 to maintain and update color schemes.
 """
 
-from typing import Dict
+import logging
+from typing import Dict, Optional
+
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # SEMANTIC COLOR DEFINITIONS
@@ -35,15 +39,16 @@ LIGHT_COLORS: Dict[str, str] = {
     "primary_light": "#90CAF9",
     # Status colors
     "success": "#4CAF50",
-    "success_text": "green",  # For text labels
+    "success_text": "#4CAF50",  # For text labels
     "warning": "#FF8C00",
-    "warning_text": "orange",  # For text labels
+    "warning_text": "#FF8C00",  # For text labels
     "error": "#F44336",
     "info": "#1976D2",
     # Special elements
     "handle": "#A09080",  # Splitter handle
     "tooltip_bg": "#2B2B2B",
     "tooltip_text": "#FFFFFF",
+    "tooltip_border": "#555555",
     "white": "#FFFFFF",
     # Collapsible group specific
     "collapsible_header": "#D5CFC4",
@@ -85,6 +90,7 @@ DARK_COLORS: Dict[str, str] = {
     "handle": "#606060",
     "tooltip_bg": "#424242",
     "tooltip_text": "#E0E0E0",
+    "tooltip_border": "#606060",
     "white": "#FFFFFF",
     # Collapsible group specific
     "collapsible_header": "#383838",
@@ -99,23 +105,34 @@ DARK_COLORS: Dict[str, str] = {
 # =============================================================================
 
 PLOT_COLORS: Dict[str, str] = {
-    # Plot background - ALWAYS sand for branding consistency
+    # Legacy light aliases; get_plot_color/get_plot_chrome resolve theme-aware chrome.
     "bg": "#F0EBE1",
     "grid": "#D0C9BC",
     # Well log curve colors (from interactive_log.py)
-    "GR": "#228B22",  # Forest Green
+    "GR": "#00AA00",  # Green
     "VSH": "#8B4513",  # Saddle Brown
     "RHOB": "#FF0000",  # Red
     "NPHI": "#0000FF",  # Blue
-    "DT": "#800080",  # Purple
-    "RT": "#FF8C00",  # Dark Orange
-    "SW": "#00CED1",  # Dark Cyan
-    "PHIE": "#FFD700",  # Gold
-    "PERM": "#FF1493",  # Deep Pink
+    "DT": "#FF00FF",  # Magenta
+    "RT": "#000000",  # Black
+    "SW": "#9400D3",  # Dark Violet
+    "PHIE": "#1E90FF",  # Dodger Blue
+    "PHID": "#FF6347",  # Tomato
+    "PHIN": "#008B8B",  # Dark Cyan
+    "PHIT": "#32CD32",  # Lime Green
+    "PERM": "#FFD700",  # Gold
+    "PERM_TIMUR": "#8B008B",  # Dark Magenta
+    "PERM_WR": "#FF8C00",  # Dark Orange
+    "PAY": "#228B22",  # Forest Green
+    "RESERVOIR": "#FFD700",  # Gold
+    "FORMATION_TOP": "#FF6600",  # Orange
+    "GAS_CROSSOVER": "#FFD700",  # Gold
     # Sw histogram colors
     "SW_ARCHIE": "#FF6B6B",
     "SW_INDO": "#4ECDC4",
     "SW_SIMAN": "#45B7D1",
+    "SW_WS": "#00BFFF",
+    "SW_DW": "#8A2BE2",
     "SW_DEFAULT": "#808080",
     # Summary bar chart colors
     "GROSS_SAND": "#2196F3",
@@ -131,7 +148,7 @@ PLOT_COLORS: Dict[str, str] = {
     "HCPV_CUM": "#00CED1",
     "HCPV_FRAC": "#FF8C00",
     # Crossplot/annotation colors
-    "MEDIAN_LINE": "green",
+    "MEDIAN_LINE": "#008000",
     "CORE_POR": "#006666",
     "CORE_PERM": "#CC0000",
     "LOG_PHIE": "#00CED1",
@@ -142,95 +159,105 @@ PLOT_COLORS: Dict[str, str] = {
 }
 
 # =============================================================================
+# PLOT CHROME
+# =============================================================================
+
+# Curve colors are stable across themes; plot chrome follows the active theme.
+# RT is the one readability exception: black is retained for light mode,
+# while dark mode uses the semantic light text color.
+_PLOT_COLOR_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "dark": {"RT": DARK_COLORS["text_primary"]},
+}
+
+PLOT_CHROME: Dict[str, Dict[str, str]] = {
+    "light": {
+        "figure": "#F0EBE1",
+        "axes": "#F0EBE1",
+        "grid": "#D0C9BC",
+        "text": "#4A4540",
+        "spine": "#C9C0B0",
+        "crosshair": "#888888",
+        "selection": "#6496C8",
+    },
+    "dark": {
+        "figure": "#1E1E1E",
+        "axes": "#2D2D2D",
+        "grid": "#505050",
+        "text": "#E0E0E0",
+        "spine": "#606060",
+        "crosshair": "#A0A0A0",
+        "selection": "#6496C8",
+    },
+}
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
 _current_theme = "light"
+_VALID_THEMES = frozenset(PLOT_CHROME)
 
 
-def set_current_theme(theme: str):
-    """
-    Set the current theme for color lookups.
+def _normalize_theme(theme: Optional[str]) -> str:
+    """Return a supported theme, warning before falling back to light."""
+    if theme is None:
+        return _current_theme
+    if theme not in _VALID_THEMES:
+        logger.warning("Unknown theme key %r; falling back to light", theme)
+        return "light"
+    return theme
 
-    Args:
-        theme: Theme name ('light' or 'dark')
-    """
+
+def set_current_theme(theme: str) -> str:
+    """Set the single module-level theme state and return its normalized value."""
     global _current_theme
-    _current_theme = theme
+    _current_theme = _normalize_theme(theme)
+    return _current_theme
+
+
+def get_current_theme() -> str:
+    """Return the normalized current theme used by all color helpers."""
+    return _current_theme
 
 
 def get_color(color_name: str, theme: str = None) -> str:
-    """
-    Get color value for the specified color name.
-
-    Args:
-        color_name: Semantic color name (e.g., 'text_primary', 'bg_surface')
-        theme: Optional theme override ('light' or 'dark').
-               If None, uses current theme.
-
-    Returns:
-        Color hex string (e.g., '#E8E3D9')
-
-    Example:
-        >>> get_color('bg_primary')  # Uses current theme
-        '#E8E3D9'
-        >>> get_color('bg_primary', 'dark')  # Explicit dark theme
-        '#1E1E1E'
-    """
-    if theme is None:
-        theme = _current_theme
-
-    colors = DARK_COLORS if theme == "dark" else LIGHT_COLORS
-    return colors.get(color_name, LIGHT_COLORS.get(color_name, "#000000"))
+    """Get a semantic UI color, warning before unknown-key fallback."""
+    selected_theme = _normalize_theme(theme)
+    colors = DARK_COLORS if selected_theme == "dark" else LIGHT_COLORS
+    if color_name not in colors:
+        logger.warning("Unknown color key %r; falling back to black", color_name)
+        return "#000000"
+    return colors[color_name]
 
 
-def get_plot_color(color_name: str) -> str:
-    """
-    Get plot color value (consistent across all themes).
+def get_plot_color(color_name: str, theme: str = None) -> str:
+    """Get a stable curve color or theme-aware legacy plot chrome color."""
+    selected_theme = _normalize_theme(theme)
+    if color_name == "bg":
+        return PLOT_CHROME[selected_theme]["figure"]
+    if color_name == "grid":
+        return PLOT_CHROME[selected_theme]["grid"]
+    override = _PLOT_COLOR_OVERRIDES.get(selected_theme, {}).get(color_name)
+    if override is not None:
+        return override
+    if color_name not in PLOT_COLORS:
+        logger.warning("Unknown plot color key %r; falling back to gray", color_name)
+        return "#808080"
+    return PLOT_COLORS[color_name]
 
-    Plot colors remain the same in both light and dark themes
-    for branding consistency and plotting convention.
 
-    Args:
-        color_name: Plot color name (e.g., 'GR', 'SW_ARCHIE', 'bg')
-
-    Returns:
-        Color hex string
-
-    Example:
-        >>> get_plot_color('bg')  # Plot background (always sand)
-        '#F0EBE1'
-        >>> get_plot_color('GR')  # Gamma Ray curve
-        '#228B22'
-    """
-    return PLOT_COLORS.get(color_name, "#808080")
+def get_plot_chrome(theme: str = None) -> Dict[str, str]:
+    """Return figure/axes/grid/text/spine colors for a plot theme."""
+    selected_theme = _normalize_theme(theme)
+    return PLOT_CHROME[selected_theme].copy()
 
 
 def get_colors_dict(theme: str = None) -> Dict[str, str]:
-    """
-    Get the full colors dictionary for the specified theme.
-
-    Args:
-        theme: Theme name ('light' or 'dark'). If None, uses current theme.
-
-    Returns:
-        Dictionary of all color definitions for the theme
-    """
-    if theme is None:
-        theme = _current_theme
-    return DARK_COLORS.copy() if theme == "dark" else LIGHT_COLORS.copy()
+    """Return a copy of the semantic color dictionary for ``theme``."""
+    selected_theme = _normalize_theme(theme)
+    return (DARK_COLORS if selected_theme == "dark" else LIGHT_COLORS).copy()
 
 
 def is_dark_theme(theme: str = None) -> bool:
-    """
-    Check if current or specified theme is dark.
-
-    Args:
-        theme: Theme name to check. If None, uses current theme.
-
-    Returns:
-        True if dark theme, False otherwise
-    """
-    if theme is None:
-        theme = _current_theme
-    return theme == "dark"
+    """Return whether the selected/current theme is dark."""
+    return _normalize_theme(theme) == "dark"
