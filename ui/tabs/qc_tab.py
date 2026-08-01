@@ -91,6 +91,8 @@ class PandasTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             value = self._df.iloc[index.row(), index.column()]
+            if pd.isna(value):
+                return ""
             if isinstance(value, float):
                 return f"{value:.4f}"
             return str(value)
@@ -301,7 +303,7 @@ class QCTab(QWidget):
         qc = self.model.qc_report
 
         if qc is None:
-            self.placeholder.setVisible(True)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
