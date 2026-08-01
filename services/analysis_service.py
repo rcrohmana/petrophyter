@@ -7,12 +7,11 @@ from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThreadPool
 import pandas as pd
 import numpy as np
 from typing import Dict, Tuple, Optional
+import logging
 import traceback
 
-import sys
-import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+logger = logging.getLogger(__name__)
 
 from modules.petrophysics import PetrophysicsCalculator
 from modules.statistics_utils import StatisticsUtils
@@ -43,7 +42,14 @@ class AnalysisWorker(QRunnable):
             self.signals.started.emit()
             self.signals.progress.emit("Preparing data...", 5)
 
+            if self.model.las_data is None:
+                self.signals.error.emit(
+                    "No data loaded. Please load a LAS file first."
+                )
+                return
+
             data = self.model.las_data.copy()
+            analysis_warnings = []
 
             # Apply formation filter if Per-Formation mode
             analysis_mode = self.model.analysis_mode
@@ -100,16 +106,22 @@ class AnalysisWorker(QRunnable):
             }
             methods_to_calc = [
                 method_map[m] for m in vsh_methods_selected if m in method_map
-            ]
+            ] or ["linear"]
 
-            if gr_curve and gr_curve != "None" and gr_curve in data.columns:
-                vsh_results = calc.calculate_all_vshale(
+            has_gr = bool(gr_curve and gr_curve != "None" and gr_curve in data.columns)
+            if has_gr:
+                calc.calculate_all_vshale(
                     gr_curve, gr_min, gr_max, methods_to_calc
                 )
-                vsh = calc.results["VSH"]
+                vsh, _ = AnalysisService._get_vsh_reference(
+                    calc, methods_to_calc, data, gr_curve
+                )
             else:
                 vsh = pd.Series([0.3] * len(data), index=data.index)
                 calc.results["VSH"] = vsh
+                analysis_warnings.append(
+                    "VSH defaulted to 0.3 because no GR curve was available."
+                )
 
             self.signals.progress.emit("Calculating porosity...", 35)
 
@@ -127,11 +139,22 @@ class AnalysisWorker(QRunnable):
             if nphi_curve and nphi_curve != "None" and nphi_curve in data.columns:
                 phin = calc.calculate_porosity_neutron(nphi_curve)
 
+            has_density = bool(
+                rhob_curve and rhob_curve != "None" and rhob_curve in data.columns
+            )
+            has_neutron = bool(
+                nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
+            )
             if dt_curve and dt_curve != "None" and dt_curve in data.columns:
                 phis = calc.calculate_porosity_sonic(dt_curve, dt_matrix, dt_fluid)
 
-            # Total porosity (N-D crossplot)
-            phit = calc.calculate_phit_neutron_density()
+            # Total porosity (N-D crossplot) only when an input exists.
+            if has_density or has_neutron:
+                phit = calc.calculate_phit_neutron_density()
+            else:
+                analysis_warnings.append(
+                    "PHIT was not calculated because no RHOB or NPHI curve was available."
+                )
 
             self.signals.progress.emit("Calculating effective porosity...", 45)
 
@@ -173,28 +196,32 @@ class AnalysisWorker(QRunnable):
             n = self.model.n
 
             # Data-driven Rw/Rsh estimation if needed
-            if (
-                rw <= 0.01
-                and rt_curve
-                and rt_curve != "None"
-                and rt_curve in data.columns
-            ):
+            has_rt = bool(rt_curve and rt_curve != "None" and rt_curve in data.columns)
+            phi_proxy = (
+                nphi_curve
+                if has_neutron
+                else ("NPHI" if "NPHI" in data.columns else None)
+            )
+            if rw <= 0.01 and has_rt:
                 rw_est = stats_util.estimate_rw_from_rt_water_zone(
-                    rt_curve, "PHIE", 0.15, a, m
+                    rt_curve, phi_proxy, 0.15, a, m
                 )
                 if rw_est:
                     rw = rw_est
 
-            if rt_curve and rt_curve != "None" and rt_curve in data.columns:
+            if has_rt:
                 rsh_est = stats_util.estimate_rsh(rt_curve, vsh)
                 if rsh_est:
                     rsh = rsh_est
 
-            phie = calc.results.get(
-                "PHIE", pd.Series([0.15] * len(data), index=data.index)
-            )
+            phie = calc.results.get("PHIE")
+            if phie is None:
+                phie = pd.Series([0.15] * len(data), index=data.index)
+                analysis_warnings.append(
+                    "PHIE defaulted to 0.15 because no usable porosity method was available."
+                )
 
-            if rt_curve and rt_curve != "None" and rt_curve in data.columns:
+            if has_rt:
                 # Retrieve selected models (defaults if missing)
                 selected_methods = getattr(self.model, "sw_methods", ["Simandoux"])
                 primary_method = getattr(self.model, "sw_primary_method", "Simandoux")
@@ -245,6 +272,9 @@ class AnalysisWorker(QRunnable):
                     else:
                         calc.results["SW"] = pd.Series(
                             [1.0] * len(data), index=data.index
+                        )
+                        analysis_warnings.append(
+                            "Water saturation defaulted to 1.0 because no selected method produced a result."
                         )
                         sw_primary_series = calc.results["SW"]
 
@@ -341,6 +371,11 @@ class AnalysisWorker(QRunnable):
             summary["analysis_mode"] = analysis_mode
             summary["selected_formations"] = selected_formations
             summary["data_points"] = len(data)
+            if not has_rt:
+                analysis_warnings.append(
+                    "Water saturation defaulted to 1.0 because no RT curve was available."
+                )
+            summary["warnings"] = analysis_warnings
 
             # Add HCPV summary statistics
             if "HCPV_CUM" in hcpv_results:
@@ -425,6 +460,7 @@ class AnalysisService(QObject):
             return None
 
         gr_curve = model.curve_mapping.get("GR", "GR")
+        nphi_curve = model.curve_mapping.get("NPHI", "NPHI")
         rt_curve = model.curve_mapping.get("RT", "RT")
 
         if rt_curve == "None" or rt_curve not in data.columns:
@@ -436,8 +472,13 @@ class AnalysisService(QObject):
             a = model.a
             m = model.m
 
+            phi_proxy = (
+                nphi_curve
+                if nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
+                else ("NPHI" if "NPHI" in data.columns else None)
+            )
             rw_est = stats_util.estimate_rw_from_rt_water_zone(
-                rt_curve, "PHIT", 0.15, a, m
+                rt_curve, phi_proxy, 0.15, a, m
             )
             if not rw_est:
                 rw_est = 0.05
@@ -545,6 +586,7 @@ class AnalysisService(QObject):
                 if np.isnan(threshold):
                     threshold = 0.80
                 mode_info = f"quantile({quantile:.2f})"
+                sweep_summary = None
 
             elif selection_mode == "stability_sweep":
                 tmin = getattr(model, "shale_sweep_tmin", 0.65)
@@ -631,7 +673,8 @@ class AnalysisService(QObject):
             "shale_selection_mode": "fallback",
         }
 
-    def _get_vsh_reference(self, calc, methods_to_calc, data, gr_curve):
+    @staticmethod
+    def _get_vsh_reference(calc, methods_to_calc, data, gr_curve):
         """Get VSH reference series for shale masking."""
         key_map = {
             "linear": "VSH_LINEAR",
