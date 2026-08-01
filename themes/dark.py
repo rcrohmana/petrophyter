@@ -2,7 +2,7 @@
 Dark theme for Petrophyter PyQt.
 """
 
-DARK_COLORS = {
+DARK_PALETTE = {
     "background": "#1E1E1E",
     "surface": "#2D2D2D",
     "surface_alt": "#383838",
@@ -23,7 +23,11 @@ DARK_COLORS = {
     "tooltip_bg": "#424242",
     "tooltip_text": "#E0E0E0",
     "handle": "#606060",
+    "tooltip_border": "#606060",
 }
+
+# Backward-compatible alias; new code should use the explicit palette name.
+DARK_COLORS = DARK_PALETTE
 
 DARK_THEME = """
     * {
