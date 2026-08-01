@@ -121,3 +121,51 @@ def test_filter_by_formations_selects_ranges():
     data = pd.DataFrame({"DEPTH": [5010, 5050, 5150, 5190]})
     out = tops.filter_by_formations(data, ["A"])
     assert out["DEPTH"].tolist() == [5010, 5050]
+
+
+def test_reusing_tops_resets_unit_conversion_state():
+    tops = FormationTops()
+    assert tops.read_tops_from_buffer(
+        _buf("Formation\tTop (m)\tBottom (m)\nA\t1000\t1100\n")
+    )
+    tops.convert_to_feet()
+    assert tops.formations[0].top_depth == pytest.approx(1000.0 * 3.28084)
+
+    # A second meter file must be detected and converted independently.
+    assert tops.read_tops_from_buffer(
+        _buf("Formation\tTop (m)\tBottom (m)\nB\t2000\t2100\n")
+    )
+    assert tops.converted_to_feet is False
+    tops.convert_to_feet()
+    assert tops.formations[0].top_depth == pytest.approx(2000.0 * 3.28084)
+
+    # A subsequent feet file clears any old warning and remains unchanged.
+    assert tops.read_tops_from_buffer(
+        _buf("Formation\tTop (ft)\tBottom (ft)\nC\t6000\t6100\n")
+    )
+    assert tops.depth_unit_warning is None
+    assert tops.converted_to_feet is False
+    tops.convert_to_feet()
+    assert tops.formations[0].top_depth == pytest.approx(6000.0)
+
+
+def test_filter_uses_same_half_open_boundary_as_lookup():
+    import pandas as pd
+
+    tops = FormationTops()
+    assert tops.read_tops_from_buffer(
+        _buf("Formation\tTop (ft)\tBottom (ft)\nA\t5000\t5100\nB\t5100\t5200\n")
+    )
+    data = pd.DataFrame({"DEPTH": [5000, 5099.9, 5100, 5199.9, 5200]})
+
+    assert tops.filter_by_formations(data, ["A"])["DEPTH"].tolist() == [5000, 5099.9]
+    assert tops.filter_by_formations(data, ["B"])["DEPTH"].tolist() == [5100, 5199.9, 5200]
+
+
+def test_range_query_uses_half_open_shared_boundary():
+    tops = FormationTops()
+    assert tops.read_tops_from_buffer(
+        _buf("Formation\tTop (ft)\tBottom (ft)\nA\t5000\t5100\nB\t5100\t5200\n")
+    )
+
+    assert [fm.name for fm in tops.get_formations_in_range(5100, 5100)] == ["B"]
