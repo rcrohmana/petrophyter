@@ -16,7 +16,7 @@ import numpy as np
 
 from .qc_tab import MetricCard
 from ..widgets.plot_widget import PlotWidget
-from themes.colors import get_color
+from themes.colors import get_color, get_plot_color
 
 
 class SummaryTab(QWidget):
@@ -170,12 +170,20 @@ class SummaryTab(QWidget):
         """Update display with analysis results."""
 
         if not self.model.calculated or self.model.summary is None:
-            self.placeholder.setVisible(True)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
 
         summary = self.model.summary
+
+        def numeric(key: str, default: float = 0.0) -> float:
+            value = summary.get(key, default)
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return default
+            return number if np.isfinite(number) else default
 
         # Update scope
         analysis_mode = summary.get("analysis_mode", "Whole Well")
@@ -194,32 +202,31 @@ class SummaryTab(QWidget):
             )
 
         # Update net pay metrics
-        self.gross_sand_card.set_value(f"{summary['gross_sand']:.1f} ft")
-        self.net_reservoir_card.set_value(f"{summary['net_reservoir']:.1f} ft")
-        self.net_pay_card.set_value(f"{summary['net_pay']:.1f} ft")
+        self.gross_sand_card.set_value(f"{numeric('gross_sand'):.1f} ft")
+        self.net_reservoir_card.set_value(f"{numeric('net_reservoir'):.1f} ft")
+        self.net_pay_card.set_value(f"{numeric('net_pay'):.1f} ft")
 
-        self.ng_reservoir_card.set_value(f"{summary['ng_reservoir'] * 100:.1f}%")
-        self.ng_pay_card.set_value(f"{summary['ng_pay'] * 100:.1f}%")
+        self.ng_reservoir_card.set_value(f"{numeric('ng_reservoir') * 100:.1f}%")
+        self.ng_pay_card.set_value(f"{numeric('ng_pay') * 100:.1f}%")
 
-        avg_phie = summary.get("avg_phie_pay", np.nan)
-        self.avg_phie_card.set_value(
-            f"{avg_phie * 100:.1f}%" if not np.isnan(avg_phie) else "N/A"
-        )
-
-        avg_sw = summary.get("avg_sw_pay", np.nan)
-        self.avg_sw_card.set_value(
-            f"{avg_sw * 100:.1f}%" if not np.isnan(avg_sw) else "N/A"
-        )
-
-        avg_vsh = summary.get("avg_vsh_pay", np.nan)
-        self.avg_vsh_card.set_value(
-            f"{avg_vsh * 100:.1f}%" if not np.isnan(avg_vsh) else "N/A"
-        )
+        for key, card in (
+            ("avg_phie_pay", self.avg_phie_card),
+            ("avg_sw_pay", self.avg_sw_card),
+            ("avg_vsh_pay", self.avg_vsh_card),
+        ):
+            value = summary.get(key)
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                value = np.nan
+            card.set_value(
+                f"{value * 100:.1f}%" if np.isfinite(value) else "N/A"
+            )
 
         # Update HCPV metrics
-        hcpv_gross = summary.get("hcpv_gross", 0)
-        hcpv_net_res = summary.get("hcpv_net_res", 0)
-        hcpv_net_pay = summary.get("hcpv_net_pay", 0)
+        hcpv_gross = numeric("hcpv_gross")
+        hcpv_net_res = numeric("hcpv_net_res")
+        hcpv_net_pay = numeric("hcpv_net_pay")
 
         self.hcpv_gross_card.set_value(f"{hcpv_gross:.4f} ft")
         self.hcpv_net_res_card.set_value(f"{hcpv_net_res:.4f} ft")
@@ -238,13 +245,19 @@ class SummaryTab(QWidget):
         ax = self.bar_chart.get_axes()
 
         labels = ["Gross Sand", "Net Reservoir", "Net Pay", "HCPV Net Pay"]
-        values = [
-            summary.get("gross_sand", 0),
-            summary.get("net_reservoir", 0),
-            summary.get("net_pay", 0),
-            summary.get("hcpv_net_pay", 0),
+        values = []
+        for key in ("gross_sand", "net_reservoir", "net_pay", "hcpv_net_pay"):
+            try:
+                value = float(summary.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            values.append(value if np.isfinite(value) else 0.0)
+        colors = [
+            get_plot_color("GROSS_SAND"),
+            get_plot_color("NET_RESERVOIR"),
+            get_plot_color("NET_PAY"),
+            get_plot_color("HCPV"),
         ]
-        colors = ["#2196F3", "#4CAF50", "#FF9800", "#228B22"]
 
         bars = ax.bar(labels, values, color=colors, edgecolor="white", linewidth=1.2)
 
