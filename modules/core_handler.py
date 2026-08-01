@@ -99,6 +99,20 @@ class CoreDataHandler:
         Returns:
             True if successful, False otherwise
         """
+        # A handler instance may be reused for another file. Reset all
+        # per-load metadata so a prior M conversion or warning cannot suppress
+        # or contaminate the next load.
+        self.data = None
+        self.depth_col = None
+        self.porosity_col = None
+        self.perm_col = None
+        self.grain_density_col = None
+        self.depth_unit = 'M'
+        self.depth_unit_detected = False
+        self.depth_unit_warning = None
+        self.converted_to_feet = False
+        self.porosity_converted = False
+
         try:
             # Try to read with specified separator
             try:
@@ -206,8 +220,18 @@ class CoreDataHandler:
             True if successful
         """
         try:
-            with open(file_path, 'r') as f:
-                return self.read_core_from_buffer(f, separator)
+            # Core reports commonly contain non-ASCII units/sample labels. Use
+            # UTF-8 explicitly rather than the Windows locale default, then
+            # retain a CP1252 fallback for legacy files.
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    return self.read_core_from_buffer(f, separator)
+            except UnicodeDecodeError:
+                logger.warning(
+                    "Core file %s is not UTF-8; retrying with CP1252", file_path
+                )
+                with open(file_path, 'r', encoding='cp1252') as f:
+                    return self.read_core_from_buffer(f, separator)
         except Exception as e:
             logger.error("Error reading core file: %s", e)
             return False
