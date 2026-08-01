@@ -1,25 +1,29 @@
-"""
-Theme manager for switching between light and dark themes.
-"""
+"""Theme manager for switching between light and dark themes."""
 
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtGui import QPalette, QColor
+import logging
+
 from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import QApplication
 
-from .light import LIGHT_THEME, LIGHT_COLORS
-from .dark import DARK_THEME, DARK_COLORS
 from .colors import (
     get_color,
-    get_plot_color,
-    set_current_theme,
     get_colors_dict,
+    get_current_theme,
+    get_plot_chrome,
+    get_plot_color,
     is_dark_theme,
-    PLOT_COLORS,
+    set_current_theme,
 )
+from .dark import DARK_THEME
+from .light import LIGHT_THEME
+
+
+logger = logging.getLogger(__name__)
 
 
 class ThemeManager:
-    """Manages application theme switching."""
+    """Manages application theme switching and change notifications."""
 
     LIGHT = "light"
     DARK = "dark"
@@ -27,92 +31,104 @@ class ThemeManager:
     def __init__(self, app: QApplication, icons_dir: str):
         self.app = app
         self.icons_dir = icons_dir
-        self.settings = QSettings("Petrophyter", "Theme")
-        self._current_theme = self.settings.value("theme", self.LIGHT)
+        self.settings = QSettings("Petrophyter Team", "Petrophyter")
+        self._legacy_settings = QSettings("Petrophyter", "Theme")
+        saved_theme = self.settings.value("theme/name", None, type=str)
+        if not saved_theme:
+            saved_theme = self._legacy_settings.value("theme", self.LIGHT, type=str)
+        if saved_theme not in (self.LIGHT, self.DARK):
+            logger.warning("Unknown persisted theme %r; falling back to light", saved_theme)
+            saved_theme = self.LIGHT
+        set_current_theme(saved_theme)
         self._theme_changed_callbacks = []
 
     def get_current_theme(self) -> str:
-        """Get the current theme name."""
-        return self._current_theme
+        """Get the canonical current theme name."""
+        return get_current_theme()
 
     def set_theme(self, theme: str):
-        """Apply the specified theme."""
-        if theme not in [self.LIGHT, self.DARK]:
+        """Apply a theme and notify registered callbacks."""
+        if theme not in (self.LIGHT, self.DARK):
+            logger.warning("Unknown theme key %r; falling back to light", theme)
             theme = self.LIGHT
 
-        self._current_theme = theme
-        self.settings.setValue("theme", theme)
-
-        # Update global current theme for color lookups
         set_current_theme(theme)
+        self.settings.setValue("theme/name", theme)
 
-        colors = LIGHT_COLORS if theme == self.LIGHT else DARK_COLORS
+        colors = get_colors_dict(theme)
         stylesheet = LIGHT_THEME if theme == self.LIGHT else DARK_THEME
 
-        # Apply palette
+        # Apply the palette from the canonical semantic colors.
         palette = self.app.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(colors["background"]))
-        palette.setColor(QPalette.ColorRole.Base, QColor(colors["surface"]))
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors["bg_primary"]))
+        palette.setColor(QPalette.ColorRole.Base, QColor(colors["bg_surface"]))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(colors["bg_surface_alt"]))
+        palette.setColor(QPalette.ColorRole.Text, QColor(colors["text_primary"]))
+        palette.setColor(QPalette.ColorRole.WindowText, QColor(colors["text_primary"]))
+        palette.setColor(QPalette.ColorRole.Button, QColor(colors["bg_surface_alt"]))
+        palette.setColor(QPalette.ColorRole.ButtonText, QColor(colors["text_primary"]))
+        palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(colors["tooltip_bg"]))
+        palette.setColor(QPalette.ColorRole.ToolTipText, QColor(colors["tooltip_text"]))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["text_placeholder"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(colors["primary"]))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors["white"]))
         palette.setColor(
-            QPalette.ColorRole.AlternateBase, QColor(colors["surface_alt"])
+            QPalette.ColorGroup.Disabled,
+            QPalette.ColorRole.Text,
+            QColor(colors["text_disabled"]),
         )
-        palette.setColor(QPalette.ColorRole.Text, QColor(colors["text"]))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(colors["text"]))
-        palette.setColor(QPalette.ColorRole.Button, QColor(colors["surface_alt"]))
-        palette.setColor(QPalette.ColorRole.ButtonText, QColor(colors["text"]))
+        palette.setColor(
+            QPalette.ColorGroup.Disabled,
+            QPalette.ColorRole.WindowText,
+            QColor(colors["text_disabled"]),
+        )
         self.app.setPalette(palette)
 
-        # Apply stylesheet
-        final_stylesheet = stylesheet.replace("{{ICONS_DIR}}", self.icons_dir)
+        # Preserve the existing stylesheet structure; only substitute the
+        # explicit tooltip token and icon path in this staged-safe change.
+        final_stylesheet = stylesheet.replace(
+            "border: 1px solid #555555;",
+            f"border: 1px solid {colors['tooltip_border']};",
+        ).replace(
+            "border: 1px solid #606060;",
+            f"border: 1px solid {colors['tooltip_border']};",
+        ).replace("{{ICONS_DIR}}", self.icons_dir)
         self.app.setStyleSheet(final_stylesheet)
 
-        # Notify callbacks
-        for callback in self._theme_changed_callbacks:
-            callback(theme)
+        for callback in list(self._theme_changed_callbacks):
+            try:
+                callback(theme)
+            except RuntimeError:
+                logger.warning("Theme callback target is no longer available", exc_info=True)
+            except Exception:
+                logger.exception("Theme callback failed")
 
     def toggle_theme(self):
         """Toggle between light and dark themes."""
-        new_theme = self.DARK if self._current_theme == self.LIGHT else self.LIGHT
+        new_theme = self.DARK if not is_dark_theme() else self.LIGHT
         self.set_theme(new_theme)
         return new_theme
 
     def on_theme_changed(self, callback):
-        """Register a callback for theme changes."""
+        """Register a callback invoked after the theme is applied."""
         self._theme_changed_callbacks.append(callback)
 
     def is_dark(self) -> bool:
-        """Check if current theme is dark."""
-        return self._current_theme == self.DARK
+        """Check the canonical theme state."""
+        return is_dark_theme()
 
     def get_color(self, color_name: str) -> str:
-        """
-        Get color value for current theme.
-
-        Args:
-            color_name: Semantic color name (e.g., 'text_primary', 'bg_surface')
-
-        Returns:
-            Color hex string
-        """
-        return get_color(color_name, self._current_theme)
+        """Get a semantic color for the canonical current theme."""
+        return get_color(color_name)
 
     def get_colors(self) -> dict:
-        """
-        Get all colors for current theme.
-
-        Returns:
-            Dictionary of all color definitions
-        """
-        return get_colors_dict(self._current_theme)
+        """Get semantic colors for the canonical current theme."""
+        return get_colors_dict()
 
     def get_plot_color(self, color_name: str) -> str:
-        """
-        Get plot color value (consistent across themes).
-
-        Args:
-            color_name: Plot color name
-
-        Returns:
-            Color hex string
-        """
+        """Get a stable curve color or current-theme plot chrome color."""
         return get_plot_color(color_name)
+
+    def get_plot_chrome(self) -> dict:
+        """Get current-theme matplotlib/pyqtgraph chrome colors."""
+        return get_plot_chrome()
