@@ -591,33 +591,15 @@ class CompositeLogPlot(PlotWidget):
         axes[1].set_xlabel("φ (v/v)", fontsize=8)
         axes[1].legend(loc="upper right", fontsize=6)
 
-        # Track 3: Water Saturation
-        sw_curves = ["SW_ARCHIE", "SW_INDO", "SW_SIMAN"]
-        if (
-            hasattr(self, "model")
-            and hasattr(self.model, "curve_mapping")
-            and "RT" in self.model.curve_mapping
-        ):
-            sw_curves = ["SW", "SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
-        sw_colors = [
-            get_plot_color("SW"),
-            get_plot_color("SW_ARCHIE"),
-            get_plot_color("SW_INDO"),
-            get_plot_color("SW_SIMAN"),
-            get_plot_color("SW_WS"),
-            get_plot_color("SW_DW"),
-        ]
-
-        # Ensure sw_colors has enough elements for sw_curves
-        # If sw_curves is extended, sw_colors should also be extended or handled.
-        # For now, assuming sw_colors is extended as per the change.
-
-        for curve, color in zip(sw_curves, sw_colors):
+        # Track 3: Water Saturation. Plot every calculated method that is
+        # present; this widget has no model dependency.
+        sw_curves = ["SW", "SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
+        for curve in sw_curves:
             if curve in filtered.columns:
                 axes[2].plot(
                     filtered[curve].values,
                     depth,
-                    color=color,
+                    color=get_plot_color(curve),
                     linewidth=0.8,
                     label=curve.replace("SW_", ""),
                 )
