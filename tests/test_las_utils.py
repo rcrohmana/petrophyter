@@ -83,6 +83,17 @@ def test_replace_int64_sentinels():
     assert out['FACIES'].isna().sum() == 1
 
 
+def test_replace_nullable_integer_sentinels():
+    # Pandas nullable integer columns are numeric too; a sentinel must not
+    # survive merely because its dtype is ``Int64`` rather than ``int64``.
+    df = pd.DataFrame({
+        'DEPTH': [100.0, 101.0],
+        'FACIES': pd.Series([1, -999], dtype='Int64'),
+    })
+    out = replace_null_values(df)
+    assert out['FACIES'].isna().sum() == 1
+
+
 def test_depth_column_is_never_modified():
     # A depth value equal to a sentinel must survive (depth is excluded).
     df = pd.DataFrame({'DEPTH': [-999.25, 100.0], 'GR': [50.0, 60.0]})

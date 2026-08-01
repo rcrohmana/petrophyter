@@ -251,6 +251,16 @@ class TestQuickWins:
         assert "VSH" in calc.results.columns
         assert calc.results["VSH"].isna().all()
 
+    def test_all_null_gr_returns_nan_without_crashing(self):
+        calc = PetrophysicsCalculator(
+            pd.DataFrame({"GR": [np.nan, np.nan, np.nan]})
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            vsh = calc.calculate_vshale_linear("GR")
+        assert vsh.isna().all()
+        assert calc.results["VSH"].isna().all()
+
     def test_dual_water_runs_and_records_diagnostics(self):
         data = pd.DataFrame({"RT": [50.0, 2.0, 10.0, 0.5]})
         calc = PetrophysicsCalculator(data)
@@ -267,6 +277,37 @@ class TestQuickWins:
         calc = PetrophysicsCalculator(data)
         calc.calculate_sw_waxman_smits("RT", pd.Series([0.2, 0.2, 0.2]), rw=0.05)
         assert "SW_WS" in calc.solver_diagnostics
+
+    def test_swirr_clean_zone_handles_all_null_sw(self):
+        calc = PetrophysicsCalculator(
+            pd.DataFrame({"RT": [1.0, 2.0, 3.0]})
+        )
+        sw = pd.Series([np.nan, np.nan, np.nan])
+        vsh = pd.Series([0.5, 0.5, 0.5])
+
+        result = calc.calculate_swirr_clean_zone(sw=sw, vsh=vsh)
+        statistical = calc.calculate_swirr_statistical(sw=sw, vsh=vsh)
+
+        assert result.notna().all()
+        assert statistical.notna().all()
+        assert ((result >= 0.05) & (result <= 0.5)).all()
+        assert ((statistical >= 0.05) & (statistical <= 0.5)).all()
+
+
+class TestPrimarySwFallback:
+    def test_net_pay_prefers_primary_sw_over_archie(self):
+        data = pd.DataFrame({"DEPTH": [1000.0, 1001.0]})
+        calc = PetrophysicsCalculator(data)
+        calc.results["SW"] = pd.Series([0.2, 0.2])
+        calc.results["SW_ARCHIE"] = pd.Series([0.9, 0.9])
+
+        summary = calc.calculate_net_pay(
+            vsh=pd.Series([0.1, 0.1]),
+            phie=pd.Series([0.2, 0.2]),
+            step=1.0,
+        )
+
+        assert summary["net_pay"] == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -296,3 +337,51 @@ class TestPhieAvailabilityThreshold:
         # Primary must fall back off the almost-empty PHIE_S.
         assert calc.phie_method_used != "PHIE_S"
         assert calc.results["PHIE"].notna().sum() > n * 0.5
+
+    def test_no_method_is_selected_when_all_curves_are_mostly_nan(self):
+        n = 100
+        data = pd.DataFrame({
+            "RHOB": [np.nan] * n,
+            "NPHI": [np.nan] * n,
+        })
+        data.loc[0, "RHOB"] = 2.3
+        data.loc[0, "NPHI"] = 0.2
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_density("RHOB")
+        calc.calculate_porosity_neutron("NPHI")
+
+        calc.calculate_all_phie(
+            vsh=pd.Series([0.0] * n), primary_method="PHIE_DN"
+        )
+
+        # The >=50% availability contract must not be bypassed by the old
+        # any-valid-point safety net.
+        assert calc.phie_method_used is None
+        assert "PHIE" not in calc.results.columns
+
+    def test_reuse_clears_stale_primary_when_no_method_is_available(self):
+        n = 10
+        data = pd.DataFrame({
+            "RHOB": [2.3] * n,
+            "NPHI": [0.2] * n,
+        })
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_density("RHOB")
+        calc.calculate_porosity_neutron("NPHI")
+
+        calc.calculate_all_phie(
+            vsh=pd.Series([0.0] * n), primary_method="PHIE_DN"
+        )
+        assert calc.phie_method_used == "PHIE_DN"
+        assert calc.results["PHIE"].notna().all()
+
+        nulls = pd.Series([np.nan] * n)
+        calc.results["PHID"] = nulls.copy()
+        calc.results["PHIN"] = nulls.copy()
+        calc.results["PHIS"] = nulls.copy()
+        calc.calculate_all_phie(
+            vsh=pd.Series([0.0] * n), primary_method="PHIE_DN"
+        )
+
+        assert "PHIE" not in calc.results
+        assert calc.phie_method_used is None

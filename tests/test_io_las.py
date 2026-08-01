@@ -22,6 +22,7 @@ from modules.las_handler import (
     LASHandler,
     COMMON_NULL_VALUES as HANDLER_NULLS,
     export_merged_las,
+    _is_discrete_curve,
 )
 
 
@@ -107,6 +108,15 @@ def test_undetected_unit_is_not_converted_and_warns():
     assert parser.well_info["converted_from_meters"] is False
 
 
+def test_latin1_buffer_decodes_and_flags_encoding_fallback():
+    parser = LASParser()
+    content = make_las("F").replace("TESTWELL", "WÉLL")
+
+    assert parser.read_las_from_buffer(io.BytesIO(content.encode("latin-1")))
+    assert parser.well_info["well_name"] == "WÉLL"
+    assert parser.encoding_warning is True
+
+
 def test_nonnumeric_null_header_does_not_crash():
     parser = LASParser()
     # Header NULL blank -> guarded to default -999.25 instead of raising.
@@ -173,6 +183,14 @@ def test_master_depth_has_exact_endpoints_no_drift():
     assert np.allclose(steps, 0.5)
 
 
+def test_master_depth_rejects_nonpositive_step():
+    handler = LASHandler()
+    dfs = [pd.DataFrame({"DEPTH": [1000.0, 1001.0]})]
+
+    with pytest.raises(ValueError, match="step_ft"):
+        handler.build_master_depth(dfs, step_ft=0.0)
+
+
 # --------------------------------------------------------------------------- #
 # merge report: gaps_filled_from records all contributing sources
 # --------------------------------------------------------------------------- #
@@ -209,3 +227,79 @@ def test_export_merged_las_writes_utf8(tmp_path):
     # Reads back cleanly as UTF-8 (would raise if written as CP1252).
     text = out.read_text(encoding="utf-8")
     assert "WELL-Ñ" in text and "WELL-Ñ" in content
+
+
+def test_discrete_detection_uses_curve_name_tokens():
+    # CLASS is a discrete token only when it is a standalone mnemonic token;
+    # VCLASSIFIER must remain a continuous curve name.
+    assert _is_discrete_curve("LITHOLOGY") is False
+    assert _is_discrete_curve("VCLASSIFIER") is False
+    assert _is_discrete_curve("CLASS_CODE") is True
+
+
+def test_discrete_string_curve_projects_without_numeric_cast():
+    handler = LASHandler()
+    df = pd.DataFrame({
+        "DEPTH": [100.0, 101.0],
+        "LITH": ["SAND", "SHALE"],
+    })
+
+    projected = handler.project_to_master_grid(
+        df, np.array([100.0, 100.5, 101.0]), gap_limit_ft=2.0, step_ft=0.5
+    )
+
+    assert projected["LITH"].tolist() == ["SAND", "SAND", "SHALE"]
+
+
+def test_merge_handles_duplicate_depth_with_string_curve():
+    depths = [100.0, 100.0, 101.0]
+    frame = pd.DataFrame({
+        "DEPTH": depths,
+        "GR": [50.0, 60.0, 70.0],
+        "LITH": ["SAND", "SAND", "SHALE"],
+    })
+    result = LASHandler().merge_las_files(
+        [FakeLAS(frame.copy()), FakeLAS(frame.copy())],
+        ["A", "B"],
+        step_ft=1.0,
+        gap_limit_ft=1.5,
+    )
+
+    assert result["merged_df"]["LITH"].tolist() == ["SAND", "SHALE"]
+
+
+def test_fill_gaps_rejects_misaligned_indexes():
+    handler = LASHandler()
+    primary = pd.Series([1.0, np.nan], index=[10, 11])
+    secondary = pd.Series([2.0, 3.0], index=[0, 1])
+
+    with pytest.raises(ValueError, match="identical indexes"):
+        handler.fill_gaps_from_secondary(primary, secondary)
+
+
+def test_export_merged_las_preserves_discrete_labels(tmp_path):
+    df = pd.DataFrame({
+        "DEPTH": [1000.0, 1001.0],
+        "LITH": ["SAND", "SHALE"],
+        "GR": [50.0, np.nan],
+    })
+
+    content = export_merged_las(df, {"well_name": "W1"}, str(tmp_path / "labels.las"))
+
+    assert "SAND" in content and "SHALE" in content
+    assert "-999.2500" in content
+
+
+def test_export_merged_las_sorts_depth_before_serializing():
+    df = pd.DataFrame({
+        "DEPTH": [1001.0, 1000.0, 1002.0],
+        "GR": [60.0, 50.0, 70.0],
+    })
+
+    content = export_merged_las(df, {"well_name": "W1"})
+    data_lines = content.split("~A DEPTH GR\n", 1)[1].splitlines()
+
+    assert data_lines[0].startswith("1000.00")
+    assert data_lines[1].startswith("1001.00")
+    assert data_lines[2].startswith("1002.00")
+    assert "STEP.FT            1.0000" in content

@@ -111,3 +111,42 @@ class TestEstimateSwi:
         swi = util.estimate_swi(pd.Series(sw), pd.Series(vsh))
         # Swi is driven by the clean-zone Sw (~0.1), clipped to >= 0.05.
         assert 0.05 <= swi <= 0.2
+
+
+class TestExternalSeriesAlignment:
+    def test_reordered_vsh_is_aligned_by_index(self):
+        data = pd.DataFrame(
+            {"RT": [1.0, 10.0, 100.0]}, index=[10, 11, 12]
+        )
+        # The high-shale value belongs to row 11, despite arriving reordered.
+        vsh = pd.Series([0.0, 0.0, 0.9], index=[12, 10, 11])
+
+        rsh = StatisticsUtils(data).estimate_rsh("RT", vsh_series=vsh)
+
+        assert rsh == pytest.approx(10.0)
+
+    def test_disjoint_external_index_fails_clearly(self):
+        data = pd.DataFrame({"RHOB": [2.6, 2.7]}, index=[10, 11])
+        vsh = pd.Series([0.1, 0.1], index=[0, 1])
+
+        with pytest.raises(ValueError, match="index"):
+            StatisticsUtils(data).estimate_matrix_density("RHOB", vsh)
+
+    def test_disjoint_sw_index_fails_clearly(self):
+        data = pd.DataFrame({"DEPTH": [1000.0, 1001.0]}, index=[10, 11])
+        sw = pd.Series([0.2, 0.3], index=[0, 1])
+        vsh = pd.Series([0.1, 0.1], index=[10, 11])
+
+        with pytest.raises(ValueError, match="index"):
+            StatisticsUtils(data).estimate_swi(sw, vsh)
+
+    def test_all_null_gr_falls_back_for_rsh(self):
+        data = pd.DataFrame({
+            "RT": [1.0, 2.0, 3.0],
+            "GR": [np.nan, np.nan, np.nan],
+        })
+
+        rsh = StatisticsUtils(data).estimate_rsh("RT", gr_curve="GR")
+
+        assert np.isfinite(rsh)
+        assert 0.5 <= rsh <= 50.0

@@ -115,3 +115,13 @@ def test_run_qc_end_to_end_realistic():
     for res in report.curve_results.values():
         assert isinstance(res, CurveQCResult)
         assert 0.0 <= res.quality_score <= 100.0
+
+
+def test_run_qc_rejects_missing_explicit_depth_column():
+    # Do not silently remove the first curve from QC by treating it as depth.
+    data = pd.DataFrame({
+        'GR': [50.0, 60.0, 70.0],
+        'RHOB': [2.4, 2.5, 2.45],
+    })
+    with pytest.raises(ValueError, match="numeric depth"):
+        QCModule(data).run_qc()

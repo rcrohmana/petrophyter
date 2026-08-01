@@ -130,3 +130,44 @@ def test_corrupt_porosity_over_100_warns(caplog):
             depth_unit="FT",
         )
     assert any("> 100" in rec.message or "100" in rec.message for rec in caplog.records)
+
+
+def test_reusing_handler_resets_conversion_and_warning_state():
+    handler = CoreDataHandler()
+
+    # First read an ambiguous, feet-native file.
+    assert handler.read_core_from_buffer(_feet_native_bare_depth(), depth_unit="Auto")
+    assert handler.depth_unit_warning is not None
+    assert handler.converted_to_feet is False
+
+    # A later meter file must still be converted; stale state from a prior read
+    # must not suppress the conversion.
+    assert handler.read_core_from_buffer(
+        _buf("Depth (m)\tPorosity (%)\n1000\t20\n1010\t22\n1020\t18\n"),
+        depth_unit="Auto",
+    )
+    assert handler.depth_unit_warning is None
+    assert handler.converted_to_feet is True
+    assert handler.get_core_depths().min() == pytest.approx(1000.0 * 3.28084)
+
+    # Reading another meter file after conversion must not inherit the old
+    # converted_to_feet guard and leave the new values in meters.
+    assert handler.read_core_from_buffer(
+        _buf("Depth (m)\tPorosity (%)\n2000\t20\n2010\t22\n2020\t18\n"),
+        depth_unit="Auto",
+    )
+    assert handler.get_core_depths().min() == pytest.approx(2000.0 * 3.28084)
+
+
+def test_read_core_file_decodes_utf8_headers(tmp_path):
+    path = tmp_path / "core_utf8.tsv"
+    path.write_bytes(
+        "Depth (ft)\tPorosity (%)\tGrain density (g/cm³)\n"
+        "5000\t20\t2.65\n"
+        "5010\t22\t2.66\n"
+        "5020\t18\t2.64\n".encode("utf-8")
+    )
+
+    handler = CoreDataHandler()
+    assert handler.read_core_file(str(path), separator="\t")
+    assert "grain density (g/cm³)" in handler.to_dataframe().columns
