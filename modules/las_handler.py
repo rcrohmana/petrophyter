@@ -4,6 +4,8 @@ Handles merging of multiple LAS files with automatic curve selection
 based on coverage and QC scores.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
@@ -86,10 +88,13 @@ def _is_discrete_curve(curve_name: str) -> bool:
         True if discrete curve
     """
     curve_upper = curve_name.upper()
-    for token in DISCRETE_CURVE_TOKENS:
-        if token in curve_upper:
-            return True
-    return False
+    # Match complete mnemonic tokens only. Substring matching classified
+    # continuous curves such as VCLASSIFIER as discrete merely because they
+    # contain CLASS.
+    curve_tokens = {
+        token for token in re.split(r"[^A-Z0-9]+", curve_upper) if token
+    }
+    return any(token in curve_tokens for token in DISCRETE_CURVE_TOKENS)
 
 
 class LASHandler:
@@ -174,6 +179,9 @@ class LASHandler:
         Returns:
             Master depth array
         """
+        if not np.isfinite(step_ft) or step_ft <= 0:
+            raise ValueError("step_ft must be a finite positive number")
+
         # Find global min/max depth
         all_mins = []
         all_maxs = []
@@ -226,6 +234,13 @@ class LASHandler:
         
         if len(series_clean) == 0:
             return 0.0
+
+        # Discrete/string curves cannot support numeric flatline, spike, or
+        # physical-range arithmetic. Their merge QC is therefore coverage-only;
+        # attempting Series.diff() here crashes pandas 2.x and drops the curve
+        # from an otherwise valid merge.
+        if not pd.api.types.is_numeric_dtype(series_clean):
+            return float(len(series_clean) / len(series) * 100)
         
         # 1. Coverage score (40%)
         coverage = len(series_clean) / len(series)
@@ -366,7 +381,10 @@ class LASHandler:
                                   x: np.ndarray, y: np.ndarray,
                                   max_dist: float) -> np.ndarray:
         """Nearest neighbor interpolation with distance limit."""
-        result = np.full(len(x_new), np.nan)
+        # Discrete LAS curves may contain strings (e.g. ``LITH`` labels), so
+        # avoid forcing every output into a floating-point array.
+        result_dtype = float if np.issubdtype(y.dtype, np.number) else object
+        result = np.full(len(x_new), np.nan, dtype=result_dtype)
         
         for i, xi in enumerate(x_new):
             distances = np.abs(x - xi)
@@ -416,6 +434,11 @@ class LASHandler:
         Returns:
             Tuple of (filled series, number of gaps filled)
         """
+        if not primary.index.equals(secondary.index):
+            raise ValueError(
+                "primary and secondary series must have identical indexes"
+            )
+
         result = primary.copy()
         gaps = result.isna()
         gaps_before = gaps.sum()
@@ -640,6 +663,18 @@ def export_merged_las(merged_df: pd.DataFrame,
         LAS file content as string
     """
     from datetime import datetime
+
+    if 'DEPTH' not in merged_df.columns:
+        raise ValueError("merged_df must contain a DEPTH column")
+    if merged_df.empty:
+        raise ValueError("merged_df must contain at least one row")
+    if not pd.api.types.is_numeric_dtype(merged_df['DEPTH']):
+        raise ValueError("merged_df DEPTH column must be numeric")
+
+    # LAS data sections are depth ordered. Sort a caller-supplied frame before
+    # calculating header ranges/step or serializing rows, rather than emitting
+    # a syntactically plausible but non-monotonic file.
+    merged_df = merged_df.sort_values('DEPTH', kind='stable').reset_index(drop=True)
     
     lines = []
     
@@ -655,7 +690,9 @@ def export_merged_las(merged_df: pd.DataFrame,
     lines.append(f" WELL.                 {well_name} : WELL NAME")
     lines.append(f" STRT.FT            {merged_df['DEPTH'].min():.2f} : START DEPTH")
     lines.append(f" STOP.FT            {merged_df['DEPTH'].max():.2f} : STOP DEPTH")
-    lines.append(f" STEP.FT            {merged_df['DEPTH'].diff().median():.4f} : STEP")
+    depth_steps = merged_df['DEPTH'].diff().dropna()
+    step_ft = float(depth_steps.median()) if len(depth_steps) else 0.0
+    lines.append(f" STEP.FT            {step_ft:.4f} : STEP")
     lines.append(f" NULL.              -999.2500 : NULL VALUE")
     lines.append(f" COMP.              PETROPHYTER : COMPANY")
     lines.append(f" DATE.              {datetime.now().strftime('%Y-%m-%d')} : LOG DATE")
@@ -679,8 +716,12 @@ def export_merged_las(merged_df: pd.DataFrame,
                 val = row[col]
                 if pd.isna(val):
                     values.append("-999.2500")
-                else:
+                elif isinstance(val, (int, float, np.integer, np.floating)):
                     values.append(f"{val:.4f}")
+                else:
+                    # Preserve discrete/string curve labels instead of
+                    # applying a numeric format specifier to them.
+                    values.append(str(val))
         lines.append(" ".join(values))
     
     content = "\n".join(lines)
