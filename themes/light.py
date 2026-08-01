@@ -2,7 +2,7 @@
 Light theme for Petrophyter PyQt.
 """
 
-LIGHT_COLORS = {
+LIGHT_PALETTE = {
     "background": "#E8E3D9",
     "surface": "#F0EBE1",
     "surface_alt": "#E0DBD1",
@@ -23,7 +23,11 @@ LIGHT_COLORS = {
     "tooltip_bg": "#2B2B2B",
     "tooltip_text": "#FFFFFF",
     "handle": "#A09080",
+    "tooltip_border": "#555555",
 }
+
+# Backward-compatible alias; new code should use the explicit palette name.
+LIGHT_COLORS = LIGHT_PALETTE
 
 LIGHT_THEME = """
     * {
