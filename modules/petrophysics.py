@@ -94,6 +94,14 @@ class PetrophysicsCalculator:
 
         gr = self.data[gr_curve]
 
+        # An all-null GR curve has no baseline from which Vshale can be
+        # defined. Return an aligned NaN series rather than asking NumPy for a
+        # percentile of an all-NaN slice (which emits a RuntimeWarning).
+        if gr.notna().sum() == 0:
+            vsh = self._make_series(np.nan)
+            self.results["VSH"] = vsh
+            return vsh
+
         # Auto-calculate baselines if not provided
         if gr_min is None:
             gr_min = float(np.nanpercentile(gr, 5))
@@ -539,6 +547,12 @@ class PetrophysicsCalculator:
         if vsh is None:
             vsh = self.results.get("VSH", self._make_series(0))
 
+        # Reset the selected primary on every run so an unsuccessful reuse
+        # cannot expose a PHIE series or method choice from an earlier run.
+        if "PHIE" in self.results.columns:
+            self.results.drop(columns=["PHIE"], inplace=True)
+        self.phie_method_used = None
+
         results = {}
         results["PHIE_D"] = self.calculate_phie_density(
             vsh, rhob_shale, rho_matrix, rho_fluid
@@ -581,16 +595,10 @@ class PetrophysicsCalculator:
             if col in results and _valid_fraction(col) >= self.MIN_METHOD_VALID_FRACTION
         ]
 
-        # Safety net: if no method clears the fraction bar but some has any valid
-        # data, fall back to the old "any valid point" rule so PHIE is still set.
-        if not available:
-            available = [
-                col
-                for col in candidates
-                if col in results and results[col].notna().sum() > 0
-            ]
-
-        # Select primary PHIE based on user choice with fallback
+        # Select primary PHIE based on user choice with fallback. If no method
+        # clears the fraction bar, leave PHIE unset so callers can surface a
+        # missing/insufficient porosity result instead of treating one valid
+        # sample as a well-wide method.
         selected = None
         if primary_method in available:
             selected = primary_method
@@ -1182,13 +1190,18 @@ class PetrophysicsCalculator:
 
         # Identify clean hydrocarbon zones
         clean_hc_zone = (vsh < vsh_threshold) & (sw < sw_threshold)
+        sw_valid = sw.dropna()
 
         if clean_hc_zone.sum() > 0:
             # Minimum Sw in clean HC zones = Swirr
             swirr_value = float(sw[clean_hc_zone].min())
-        else:
+        elif len(sw_valid) > 0:
             # Fallback: use P5 of all Sw as estimate
-            swirr_value = float(np.percentile(sw.dropna(), 5))
+            swirr_value = float(np.percentile(sw_valid, 5))
+        else:
+            # No saturation observations: use the documented neutral default
+            # rather than asking NumPy for a percentile of an empty array.
+            swirr_value = 0.2
 
         # Bound to reasonable range
         swirr_value = np.clip(swirr_value, 0.05, 0.5)
@@ -1232,7 +1245,12 @@ class PetrophysicsCalculator:
             else:
                 swirr_value = 0.2
         else:
-            swirr_value = float(np.percentile(sw.dropna(), percentile))
+            sw_valid = sw.dropna()
+            swirr_value = (
+                float(np.percentile(sw_valid, percentile))
+                if len(sw_valid) > 0
+                else 0.2
+            )
 
         # Bound to reasonable range
         swirr_value = np.clip(swirr_value, 0.05, 0.5)
@@ -1634,11 +1652,16 @@ class PetrophysicsCalculator:
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0))
         if sw is None:
+            # Respect the selected primary saturation first; named method
+            # columns are only fallbacks for direct calculator use.
             sw = self.results.get(
-                "SW_ARCHIE",
+                "SW",
                 self.results.get(
-                    "SW_INDO",
-                    self.results.get("SW_SIMAN", self._make_series(1)),
+                    "SW_ARCHIE",
+                    self.results.get(
+                        "SW_INDO",
+                        self.results.get("SW_SIMAN", self._make_series(1)),
+                    ),
                 ),
             )
 
