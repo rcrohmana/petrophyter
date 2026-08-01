@@ -3,10 +3,72 @@ Session Service for Petrophyter PyQt
 Manages saving and loading of analysis sessions.
 """
 
+import copy
 import json
+import logging
 import os
+import tempfile
 from typing import Dict, Any, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
+
+
+logger = logging.getLogger(__name__)
+
+_SESSION_DEFAULTS = {
+    "analysis_mode": "Whole Well",
+    "selected_formations": [],
+    "curve_mapping": {"GR": "None", "RHOB": "None", "NPHI": "None", "DT": "None", "RT": "None"},
+    "vsh_baseline_method": "Statistically (Auto)",
+    "gr_min_manual": 20.0,
+    "gr_max_manual": 120.0,
+    "vsh_methods": ["Linear"],
+    "rho_matrix": 2.65,
+    "dt_matrix": 55.5,
+    "rho_fluid": 1.0,
+    "dt_fluid": 189.0,
+    "shale_approach": "Custom (Manual)",
+    "rho_shale": 2.45,
+    "dt_shale": 100.0,
+    "nphi_shale": 0.35,
+    "shale_vsh_threshold": 0.80,
+    "shale_gate_logs": True,
+    "shale_iqr_filter": True,
+    "shale_selection_mode": "fixed_threshold",
+    "shale_vsh_quantile": 0.90,
+    "shale_min_points": 50,
+    "shale_sweep_tmin": 0.65,
+    "shale_sweep_tmax": 0.95,
+    "shale_sweep_step": 0.02,
+    "primary_phie_method": "PHIE_DN",
+    "lithology_preset": "Sandstone (Humble)",
+    "a": 0.62,
+    "m": 2.15,
+    "n": 2.0,
+    "rw": 0.05,
+    "rsh": 5.0,
+    "perm_C": 8581.0,
+    "perm_P": 4.4,
+    "perm_Q": 2.0,
+    "swirr_method": "Hierarchical (Recommended)",
+    "buckles_preset": "Sandstone (Clean)",
+    "k_buckles": 0.02,
+    "vsh_cutoff": 0.4,
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "sw_methods": ["Simandoux"],
+    "sw_primary_method": "Simandoux",
+    "ws_qv": 0.2,
+    "ws_b": 1.0,
+    "dw_swb": 0.1,
+    "dw_rwb": 0.2,
+    "merge_step": 0.5,
+    "merge_gap_limit": 5.0,
+    "core_depth_unit": "Auto",
+    "core_max_dist": 2.0,
+    "gas_correction_enabled": False,
+    "gas_nphi_factor": 0.30,
+    "gas_rhob_factor": 0.15,
+}
 
 
 class SessionService(QObject):
@@ -22,7 +84,8 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "1.2"
+    SESSION_VERSION = "1.3"
+    SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,20 +101,36 @@ class SessionService(QObject):
         Returns:
             True if successful, False otherwise
         """
+        temporary_path = None
         try:
             session_data = self._model_to_dict(model)
-            session_data['_session_version'] = self.SESSION_VERSION
-            session_data['_las_filename'] = model.las_filename
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(session_data, f, indent=2, ensure_ascii=False)
-            
+            session_data["_session_version"] = self.SESSION_VERSION
+            session_data["_las_filename"] = getattr(model, "las_filename", "")
+
+            directory = os.path.dirname(os.path.abspath(file_path)) or "."
+            fd, temporary_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(file_path)}.",
+                suffix=".tmp",
+                dir=directory,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(session_data, handle, indent=2, ensure_ascii=False)
+            os.replace(temporary_path, file_path)
+            temporary_path = None
+
             self.session_saved.emit(file_path)
             return True
-            
+
         except Exception as e:
+            logger.exception("Failed to save session")
             self.error.emit(f"Failed to save session: {str(e)}")
             return False
+        finally:
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
     
     def load_session(self, file_path: str) -> Optional[Dict]:
         """
@@ -67,16 +146,22 @@ class SessionService(QObject):
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
             
-            # Check version compatibility
-            version = session_data.get('_session_version', '1.0')
+            # Check version compatibility while keeping older parameter-only
+            # sessions loadable; unknown fields are simply ignored below.
+            version = session_data.get("_session_version", "1.0")
             if version != self.SESSION_VERSION:
-                # Future: migration logic here
-                pass
+                logger.warning(
+                    "Session version %s differs from current version %s; "
+                    "loading compatible fields",
+                    version,
+                    self.SESSION_VERSION,
+                )
             
             self.session_loaded.emit(session_data)
             return session_data
             
         except Exception as e:
+            logger.exception("Failed to load session")
             self.error.emit(f"Failed to load session: {str(e)}")
             return None
     
@@ -197,83 +282,36 @@ class SessionService(QObject):
                 model.gas_nphi_factor = session_data['gas_nphi_factor']
             if 'gas_rhob_factor' in session_data:
                 model.gas_rhob_factor = session_data['gas_rhob_factor']
-            
+
+            # Fields introduced after the original 1.2 schema.
+            for field in (
+                "curve_mapping",
+                "primary_phie_method",
+                "shale_vsh_threshold",
+                "shale_gate_logs",
+                "shale_iqr_filter",
+                "shale_selection_mode",
+                "shale_vsh_quantile",
+                "shale_min_points",
+                "shale_sweep_tmin",
+                "shale_sweep_tmax",
+                "shale_sweep_step",
+            ):
+                if field in session_data:
+                    setattr(model, field, session_data[field])
+            if "_las_filename" in session_data and hasattr(model, "las_filename"):
+                model.las_filename = session_data["_las_filename"]
+
             return True
-            
+
         except Exception as e:
+            logger.exception("Failed to apply session")
             self.error.emit(f"Failed to apply session: {str(e)}")
             return False
     
     def _model_to_dict(self, model) -> Dict[str, Any]:
-        """Convert model parameters to dictionary for saving."""
+        """Convert known model parameters, tolerating older/minimal models."""
         return {
-            # Analysis mode
-            'analysis_mode': model.analysis_mode,
-            'selected_formations': model.selected_formations,
-            
-            # VShale parameters
-            'vsh_baseline_method': model.vsh_baseline_method,
-            'gr_min_manual': model.gr_min_manual,
-            'gr_max_manual': model.gr_max_manual,
-            'vsh_methods': model.vsh_methods,
-            
-            # Matrix parameters
-            'rho_matrix': model.rho_matrix,
-            'dt_matrix': model.dt_matrix,
-            
-            # Fluid parameters
-            'rho_fluid': model.rho_fluid,
-            'dt_fluid': model.dt_fluid,
-            
-            # Shale parameters
-            'shale_approach': model.shale_approach,
-            'rho_shale': model.rho_shale,
-            'dt_shale': model.dt_shale,
-            'nphi_shale': model.nphi_shale,
-            
-            # Archie parameters
-            'lithology_preset': model.lithology_preset,
-            'a': model.a,
-            'm': model.m,
-            'n': model.n,
-            
-            # Resistivity parameters
-            'rw': model.rw,
-            'rsh': model.rsh,
-            
-            # Permeability parameters
-            'perm_C': model.perm_C,
-            'perm_P': model.perm_P,
-            'perm_Q': model.perm_Q,
-            
-            # Swirr parameters
-            'swirr_method': model.swirr_method,
-            'buckles_preset': model.buckles_preset,
-            'k_buckles': model.k_buckles,
-            
-            # Cutoff parameters
-            'vsh_cutoff': model.vsh_cutoff,
-            'phi_cutoff': model.phi_cutoff,
-            'sw_cutoff': model.sw_cutoff,
-            
-            # Sw Parameters
-            'sw_methods': model.sw_methods,
-            'sw_primary_method': model.sw_primary_method,
-            'ws_qv': model.ws_qv,
-            'ws_b': model.ws_b,
-            'dw_swb': model.dw_swb,
-            'dw_rwb': model.dw_rwb,
-            
-            # Merge settings
-            'merge_step': model.merge_step,
-            'merge_gap_limit': model.merge_gap_limit,
-            
-            # Core settings
-            'core_depth_unit': model.core_depth_unit,
-            'core_max_dist': model.core_max_dist,
-            
-            # Gas correction (v1.2)
-            'gas_correction_enabled': model.gas_correction_enabled,
-            'gas_nphi_factor': model.gas_nphi_factor,
-            'gas_rhob_factor': model.gas_rhob_factor,
+            field: copy.deepcopy(getattr(model, field, default))
+            for field, default in _SESSION_DEFAULTS.items()
         }
