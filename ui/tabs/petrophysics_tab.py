@@ -165,6 +165,13 @@ class PetrophysicsTab(QWidget):
     def refresh_theme(self):
         for card in getattr(self, "metric_cards", []):
             card.refresh_theme()
+        for plot in (
+            self.vsh_hist,
+            self.phie_hist,
+            self.sw_hist,
+            self.perm_hist,
+        ):
+            plot.refresh_theme()
         self.placeholder.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
