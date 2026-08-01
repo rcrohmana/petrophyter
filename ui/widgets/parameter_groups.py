@@ -440,6 +440,19 @@ class VShaleParamsGroup(QWidget):
             "methods": [item.text() for item in self.method_list.selectedItems()],
         }
 
+    def set_params(
+        self, baseline_method: str, gr_min: float, gr_max: float, methods: List[str]
+    ):
+        """Restore all VShale controls from persisted parameters."""
+        self.baseline_combo.setCurrentText(baseline_method)
+        self.gr_min_spin.setValue(gr_min)
+        self.gr_max_spin.setValue(gr_max)
+        self.method_list.blockSignals(True)
+        for index in range(self.method_list.count()):
+            item = self.method_list.item(index)
+            item.setSelected(item.text() in methods)
+        self.method_list.blockSignals(False)
+
 
 class MatrixParamsGroup(QWidget):
     """Matrix parameters widget."""
@@ -479,6 +492,11 @@ class MatrixParamsGroup(QWidget):
             "dt_matrix": self.dt_matrix_spin.value(),
         }
 
+    def set_params(self, rho: float, dt: float):
+        """Restore matrix parameters."""
+        self.rho_matrix_spin.setValue(rho)
+        self.dt_matrix_spin.setValue(dt)
+
 
 class FluidParamsGroup(QWidget):
     """Fluid parameters widget."""
@@ -517,6 +535,11 @@ class FluidParamsGroup(QWidget):
             "rho_fluid": self.rho_fluid_spin.value(),
             "dt_fluid": self.dt_fluid_spin.value(),
         }
+
+    def set_params(self, rho: float, dt: float):
+        """Restore fluid parameters."""
+        self.rho_fluid_spin.setValue(rho)
+        self.dt_fluid_spin.setValue(dt)
 
 
 class ShaleParamsGroup(QWidget):
@@ -707,12 +730,14 @@ class ShaleParamsGroup(QWidget):
         is_stat = text == "Statistical (Auto)"
         self.manual_frame.setVisible(not is_stat)
         self.stat_frame.setVisible(is_stat)
+        self.params_changed.emit()
 
     def _on_selection_mode_changed(self, text: str):
         """Show/hide mode-specific frames."""
         self.fixed_frame.setVisible(text == "Fixed Threshold")
         self.quantile_frame.setVisible(text == "Quantile")
         self.sweep_frame.setVisible(text == "Stability Sweep")
+        self.params_changed.emit()
 
     def show_calculated_result(self, result: Dict):
         """Show calculated shale parameters with diagnostics."""
@@ -769,11 +794,43 @@ class ShaleParamsGroup(QWidget):
             "shale_sweep_step": self.sweep_step_spin.value(),
         }
 
-    def set_params(self, rho: float, dt: float, nphi: float):
-        """Set parameter values."""
+    def set_params(
+        self, rho: float, dt: float, nphi: float, *, approach: str = None,
+        selection_mode: str = None, vsh_threshold: float = None,
+        vsh_quantile: float = None, min_points: int = None,
+        sweep_tmin: float = None, sweep_tmax: float = None,
+        sweep_step: float = None, gate_logs: bool = None,
+        iqr_filter: bool = None,
+    ):
+        """Restore shale values and optional estimation controls."""
         self.rho_shale_spin.setValue(rho)
         self.dt_shale_spin.setValue(dt)
         self.nphi_shale_spin.setValue(nphi)
+        if approach is not None:
+            self.approach_combo.setCurrentText(approach)
+        mode_labels = {
+            "fixed_threshold": "Fixed Threshold",
+            "quantile": "Quantile",
+            "stability_sweep": "Stability Sweep",
+        }
+        if selection_mode is not None:
+            self.selection_mode_combo.setCurrentText(
+                mode_labels.get(selection_mode, selection_mode)
+            )
+        for widget, value in (
+            (self.vsh_threshold_spin, vsh_threshold),
+            (self.vsh_quantile_spin, vsh_quantile),
+            (self.min_points_spin, min_points),
+            (self.sweep_tmin_spin, sweep_tmin),
+            (self.sweep_tmax_spin, sweep_tmax),
+            (self.sweep_step_spin, sweep_step),
+        ):
+            if value is not None:
+                widget.setValue(value)
+        if gate_logs is not None:
+            self.gate_logs_check.setChecked(gate_logs)
+        if iqr_filter is not None:
+            self.iqr_filter_check.setChecked(iqr_filter)
 
 
 class ArchieParamsGroup(QWidget):
@@ -870,6 +927,13 @@ class ArchieParamsGroup(QWidget):
             "n": self.n_spin.value(),
         }
 
+    def set_params(self, a: float, m: float, n: float, lithology: str = "Custom"):
+        """Restore Archie parameters without allowing a preset to overwrite them."""
+        self.lithology_combo.setCurrentText(lithology)
+        self.a_spin.setValue(a)
+        self.m_spin.setValue(m)
+        self.n_spin.setValue(n)
+
 
 class ResistivityParamsGroup(QWidget):
     """Resistivity parameters widget."""
@@ -943,6 +1007,11 @@ class ResistivityParamsGroup(QWidget):
 
     def get_params(self) -> Dict:
         return {"rw": self.rw_spin.value(), "rsh": self.rsh_spin.value()}
+
+    def set_params(self, rw: float, rsh: float):
+        """Restore resistivity parameters."""
+        self.rw_spin.setValue(rw)
+        self.rsh_spin.setValue(rsh)
 
 
 class PermParamsGroup(QWidget):
@@ -1028,6 +1097,12 @@ class PermParamsGroup(QWidget):
             "P": self.p_spin.value(),
             "Q": self.q_spin.value(),
         }
+
+    def set_params(self, C: float, P: float, Q: float):
+        """Restore permeability coefficients."""
+        self.c_spin.setValue(C)
+        self.p_spin.setValue(P)
+        self.q_spin.setValue(Q)
 
     def show_calculated_result(self, C: float, P: float, Q: float):
         """Show calculated values."""
@@ -1163,6 +1238,12 @@ class SwirEstimationGroup(QWidget):
             "k_buckles": self.k_buckles_spin.value(),
         }
 
+    def set_params(self, method: str, buckles_preset: str, k_buckles: float):
+        """Restore irreducible-water estimation parameters."""
+        self.method_combo.setCurrentText(method)
+        self.buckles_combo.setCurrentText(buckles_preset)
+        self.k_buckles_spin.setValue(k_buckles)
+
 
 class CutoffParamsGroup(QWidget):
     """Cutoff parameters widget."""
@@ -1233,6 +1314,12 @@ class CutoffParamsGroup(QWidget):
             "phi_cutoff": self.phi_slider.value() / 100,
             "sw_cutoff": self.sw_slider.value() / 100,
         }
+
+    def set_params(self, vsh: float, phi: float, sw: float):
+        """Restore cutoff sliders."""
+        self.vsh_slider.setValue(round(vsh * 100))
+        self.phi_slider.setValue(round(phi * 100))
+        self.sw_slider.setValue(round(sw * 100))
 
 
 class GasCorrectionGroup(QWidget):
