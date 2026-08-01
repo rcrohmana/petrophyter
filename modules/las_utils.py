@@ -67,10 +67,11 @@ def replace_null_values(df: pd.DataFrame,
     """
     Replace null sentinels with NaN, in place, on numeric curve columns.
 
-    For every column except ``depth_col`` whose dtype is in
-    NULL_REPLACE_DTYPES, any value within ``tolerance`` of any sentinel in
-    ``null_values`` is set to NaN. When ``null_values`` is None the module-level
-    COMMON_NULL_VALUES list is used.
+    For every numeric column except ``depth_col``, any value within
+    ``tolerance`` of any sentinel in ``null_values`` is set to NaN. This uses
+    pandas' numeric-dtype predicate so nullable integer/float dtypes (for
+    example ``Int64``) receive the same handling as NumPy dtypes. When
+    ``null_values`` is None the module-level COMMON_NULL_VALUES list is used.
 
     The DataFrame is modified in place and also returned for convenience.
     """
@@ -80,7 +81,7 @@ def replace_null_values(df: pd.DataFrame,
     for col in df.columns:
         if col == depth_col:
             continue
-        if df[col].dtype in NULL_REPLACE_DTYPES:
+        if pd.api.types.is_numeric_dtype(df[col]):
             for null in null_values:
                 mask = np.abs(df[col] - null) < tolerance
                 df.loc[mask, col] = np.nan
