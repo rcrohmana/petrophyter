@@ -236,10 +236,7 @@ class ExportTab(QWidget):
         # print(f"[DEBUG ExportTab] model.results is None = {self.model.results is None}")
 
         if not self.model.calculated or self.model.results is None:
-            # print("[DEBUG ExportTab] Early return - no results")
-            self.placeholder.setVisible(True)
-            self.csv_btn.setEnabled(False)
-            self.excel_btn.setEnabled(False)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
