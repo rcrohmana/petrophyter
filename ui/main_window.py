@@ -555,9 +555,9 @@ class MainWindow(QMainWindow):
         self.sidebar.set_progress(100, "Complete")
         self.sidebar.run_btn.setEnabled(True)
 
-        # Store results
-        self.model.results = results
-        self.model.summary = summary
+        # Store both pieces of the analysis result atomically so observers see
+        # a matching results/summary pair and only one completion refresh.
+        self.model.set_analysis_results(results, summary)
 
         # print(
         #     f"[DEBUG MainWindow] After storing: model.calculated = {self.model.calculated}"
@@ -567,10 +567,6 @@ class MainWindow(QMainWindow):
         # )
 
         self.statusBar.showMessage("✅ Analysis complete!")
-
-        # Explicitly update all tabs (in case signal doesn't propagate)
-        # print("[DEBUG MainWindow] Calling _update_all_tabs()")
-        self._update_all_tabs()
 
         # Show success message
         QMessageBox.information(
