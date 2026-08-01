@@ -17,14 +17,12 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict
 
+from themes.colors import get_color, get_plot_chrome, get_plot_color
+
 # Get icons directory path
 _ICONS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "icons"
 )
-
-# Theme colors - DARKER THEME
-_THEME_SURFACE = QColor("#F0EBE1")
-
 
 class PlotWidget(QWidget):
     """
@@ -37,9 +35,12 @@ class PlotWidget(QWidget):
     ):
         super().__init__(parent)
 
-        # Fixed theme colors for consistent appearance - DARKER THEME
-        self._bg_color = "#F0EBE1"
-        self._axes_color = "#F0EBE1"
+        self._chrome = get_plot_chrome()
+        self._bg_color = self._chrome["figure"]
+        self._axes_color = self._chrome["axes"]
+        self._grid_color = self._chrome["grid"]
+        self._text_color = self._chrome["text"]
+        self._spine_color = self._chrome["spine"]
 
         # Set figure with theme background
         self.figure = Figure(figsize=figsize, dpi=100, facecolor=self._bg_color)
@@ -49,10 +50,10 @@ class PlotWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-        # Set canvas palette to theme color (fixes debug mode detection)
+        # Set canvas palette to the current plot chrome.
         canvas_palette = self.canvas.palette()
-        canvas_palette.setColor(QPalette.ColorRole.Window, _THEME_SURFACE)
-        canvas_palette.setColor(QPalette.ColorRole.Base, _THEME_SURFACE)
+        canvas_palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
+        canvas_palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
         self.canvas.setPalette(canvas_palette)
         self.canvas.setAutoFillBackground(True)
 
@@ -62,10 +63,10 @@ class PlotWidget(QWidget):
         if show_toolbar:
             self.toolbar = NavigationToolbar(self.canvas, self)
 
-            # Set toolbar palette to theme color
+            # Set toolbar palette to the current plot chrome.
             toolbar_palette = self.toolbar.palette()
-            toolbar_palette.setColor(QPalette.ColorRole.Window, _THEME_SURFACE)
-            toolbar_palette.setColor(QPalette.ColorRole.Base, _THEME_SURFACE)
+            toolbar_palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
+            toolbar_palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
             self.toolbar.setPalette(toolbar_palette)
             self.toolbar.setAutoFillBackground(True)
 
@@ -74,38 +75,8 @@ class PlotWidget(QWidget):
             for action in self.toolbar.actions():
                 action.setEnabled(True)
 
-            # Style toolbar with explicit foreground color for icon visibility
-            self.toolbar.setStyleSheet("""
-                QToolBar {
-                    background-color: #F0EBE1;
-                    border: 1px solid #C9C0B0;
-                    border-radius: 4px;
-                    spacing: 3px;
-                    padding: 4px;
-                }
-                QToolButton {
-                    color: #111;
-                    background-color: transparent;
-                    border: 1px solid transparent;
-                    border-radius: 4px;
-                    padding: 4px;
-                    margin: 1px;
-                }
-                QToolButton:hover {
-                    background-color: rgba(0,0,0,0.06);
-                    border-color: #CCCCCC;
-                }
-                QToolButton:pressed {
-                    background-color: rgba(0,0,0,0.1);
-                }
-                QToolButton:checked {
-                    background-color: rgba(0,0,0,0.1);
-                    border-color: #AAAAAA;
-                }
-                QToolButton:disabled {
-                    color: #777;
-                }
-            """)
+            # Style toolbar with explicit theme-aware foreground/background.
+            self.toolbar.setStyleSheet(self._toolbar_stylesheet())
 
             # Override toolbar icons with custom dark SVG icons for visibility
             self._apply_custom_toolbar_icons()
@@ -116,15 +87,70 @@ class PlotWidget(QWidget):
 
         layout.addWidget(self.canvas)
 
+    def _toolbar_stylesheet(self) -> str:
+        """Build the small toolbar stylesheet from current theme tokens."""
+        return f"""
+            QToolBar {{
+                background-color: {self._bg_color};
+                border: 1px solid {get_color('border')};
+                border-radius: 4px;
+                spacing: 3px;
+                padding: 4px;
+            }}
+            QToolButton {{
+                color: {self._text_color};
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 4px;
+                margin: 1px;
+            }}
+            QToolButton:hover {{
+                background-color: {get_color('bg_surface_hover')};
+                border-color: {self._spine_color};
+            }}
+            QToolButton:pressed, QToolButton:checked {{
+                background-color: {get_color('bg_surface_pressed')};
+                border-color: {self._spine_color};
+            }}
+            QToolButton:disabled {{ color: {get_color('text_disabled')}; }}
+        """
+
+    def _style_axes(self, ax):
+        """Apply current chrome to an existing Matplotlib axes."""
+        ax.set_facecolor(self._axes_color)
+        ax.tick_params(axis="both", colors=self._text_color)
+        for spine in ax.spines.values():
+            spine.set_color(self._spine_color)
+        ax.grid(color=self._grid_color)
+
     def update_theme_colors(self):
-        """Update plot colors to match theme."""
-        # Use fixed theme color, not dynamic palette - DARKER THEME
-        self._bg_color = "#F0EBE1"
+        """Update figure, axes, toolbar and text chrome to match the theme."""
+        self._chrome = get_plot_chrome()
+        self._bg_color = self._chrome["figure"]
+        self._axes_color = self._chrome["axes"]
+        self._grid_color = self._chrome["grid"]
+        self._text_color = self._chrome["text"]
+        self._spine_color = self._chrome["spine"]
         self.figure.set_facecolor(self._bg_color)
         self.canvas.setStyleSheet(f"background-color: {self._bg_color};")
+        palette = self.canvas.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
+        palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
+        self.canvas.setPalette(palette)
+        if self.toolbar is not None:
+            toolbar_palette = self.toolbar.palette()
+            toolbar_palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
+            toolbar_palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
+            self.toolbar.setPalette(toolbar_palette)
+            self.toolbar.setStyleSheet(self._toolbar_stylesheet())
         for ax in self.figure.axes:
-            ax.set_facecolor(self._axes_color)
+            self._style_axes(ax)
         self.canvas.draw_idle()
+
+    def refresh_theme(self):
+        """Refresh plot chrome for the theme manager callback wiring."""
+        self.update_theme_colors()
 
     def _apply_custom_toolbar_icons(self):
         """Override Matplotlib toolbar icons with custom dark SVG icons."""
@@ -176,14 +202,14 @@ class PlotWidget(QWidget):
         self.figure.clear()
         if rows == 1 and cols == 1:
             ax = self.figure.add_subplot(111, **kwargs)
-            ax.set_facecolor(self._axes_color)
+            self._style_axes(ax)
             return ax
         else:
             axes = self.figure.subplots(rows, cols, **kwargs)
             # Set facecolor for all axes
             if hasattr(axes, "flat"):
                 for ax in axes.flat:
-                    ax.set_facecolor(self._axes_color)
+                    self._style_axes(ax)
             return axes
 
     def refresh(self):
@@ -218,7 +244,7 @@ class LogTrackPlot(PlotWidget):
 
             ax.invert_yaxis()
             ax.grid(True, alpha=0.3)
-            ax.set_facecolor(self._axes_color)
+            self._style_axes(ax)
             self.axes.append(ax)
 
         # Set depth range
@@ -282,7 +308,7 @@ class HistogramPlot(PlotWidget):
         """Plot a histogram."""
         self.figure.clear()
         ax = self.figure.add_subplot(111)
-        ax.set_facecolor(self._axes_color)
+        self._style_axes(ax)
 
         # Remove NaN
         clean_data = data.dropna()
@@ -300,14 +326,14 @@ class HistogramPlot(PlotWidget):
 
         ax.axvline(
             mean_val,
-            color="red",
+            color=get_plot_color("CORE_PERM"),
             linestyle="--",
             linewidth=1,
             label=f"Mean: {mean_val:.3f}",
         )
         ax.axvline(
             median_val,
-            color="green",
+            color=get_plot_color("MEDIAN_LINE"),
             linestyle=":",
             linewidth=1,
             label=f"Median: {median_val:.3f}",
@@ -355,7 +381,7 @@ class CrossPlot(PlotWidget):
         """
         self.figure.clear()
         ax = self.figure.add_subplot(111)
-        ax.set_facecolor(self._axes_color)
+        self._style_axes(ax)
 
         # Remove NaN from both series
         mask = x_data.notna() & y_data.notna()
@@ -370,7 +396,9 @@ class CrossPlot(PlotWidget):
                 cbar.set_label(colorbar_label, fontsize=9)
             cbar.ax.tick_params(labelsize=8)
         else:
-            ax.scatter(x, y, alpha=0.6, s=8, color="#1E90FF", edgecolors='none')
+            ax.scatter(
+                x, y, alpha=0.6, s=8, color=get_plot_color("DEFAULT_SCATTER"), edgecolors="none"
+            )
 
         # Set axis ranges
         if x_range:
@@ -472,22 +500,6 @@ class CrossPlot(PlotWidget):
 class CompositeLogPlot(PlotWidget):
     """Widget for composite petrophysics log display."""
 
-    # Default color scheme
-    COLORS = {
-        "GR": "#00AA00",
-        "VSH": "#8B4513",
-        "RHOB": "#FF0000",
-        "NPHI": "#0000FF",
-        "DT": "#FF00FF",
-        "RT": "#000000",
-        "PHIE": "#00CED1",
-        "PHID": "#FF6347",
-        "PHIN": "#4169E1",
-        "SW": "#FF8C00",
-        "PERM": "#8B008B",
-        "PAY": "#228B22",
-    }
-
     def __init__(self, parent=None):
         super().__init__(parent, show_toolbar=True, figsize=(14, 10))
 
@@ -535,7 +547,7 @@ class CompositeLogPlot(PlotWidget):
                 ax = self.figure.add_subplot(1, 6, i + 1, sharey=axes[0])
             ax.invert_yaxis()
             ax.grid(True, alpha=0.3)
-            ax.set_facecolor(self._axes_color)
+            self._style_axes(ax)
             axes.append(ax)
 
         axes[0].set_ylabel("Depth (ft)", fontsize=9)
@@ -551,12 +563,12 @@ class CompositeLogPlot(PlotWidget):
             axes[0].plot(
                 filtered["VSH"].values,
                 depth,
-                color=self.COLORS["VSH"],
+                color=get_plot_color("VSH"),
                 linewidth=0.8,
                 label="Vsh",
             )
             axes[0].fill_betweenx(
-                depth, 0, filtered["VSH"].values, color=self.COLORS["VSH"], alpha=0.3
+                depth, 0, filtered["VSH"].values, color=get_plot_color("VSH"), alpha=0.3
             )
         axes[0].set_xlim(0, 1)
         axes[0].set_title("GR / Vsh", fontsize=9)
@@ -564,7 +576,7 @@ class CompositeLogPlot(PlotWidget):
 
         # Track 2: Porosity
         porosity_curves = ["PHIE", "PHID", "PHIN", "PHIT"]
-        colors = ["#00CED1", "#FF6347", "#4169E1", "#32CD32"]
+        colors = [get_plot_color(curve) for curve in porosity_curves]
         for curve, color in zip(porosity_curves, colors):
             if curve in filtered.columns:
                 axes[1].plot(
@@ -588,13 +600,13 @@ class CompositeLogPlot(PlotWidget):
         ):
             sw_curves = ["SW", "SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
         sw_colors = [
-            "#FF4500",
-            "#1E90FF",
-            "#32CD32",
-            "#FF8C00",
-            "#00BFFF",
-            "#8A2BE2",
-        ]  # Added colors for SW, SW_WS, SW_DW
+            get_plot_color("SW"),
+            get_plot_color("SW_ARCHIE"),
+            get_plot_color("SW_INDO"),
+            get_plot_color("SW_SIMAN"),
+            get_plot_color("SW_WS"),
+            get_plot_color("SW_DW"),
+        ]
 
         # Ensure sw_colors has enough elements for sw_curves
         # If sw_curves is extended, sw_colors should also be extended or handled.
@@ -616,7 +628,7 @@ class CompositeLogPlot(PlotWidget):
 
         # Track 4: Permeability (log scale)
         perm_curves = ["PERM_TIMUR", "PERM_WR"]
-        perm_colors = ["#8B008B", "#FF8C00"]
+        perm_colors = [get_plot_color("PERM_TIMUR"), get_plot_color("PERM_WR")]
         for curve, color in zip(perm_curves, perm_colors):
             if curve in filtered.columns:
                 perm_data = np.clip(filtered[curve].values, 0.001, 100000)
@@ -636,7 +648,9 @@ class CompositeLogPlot(PlotWidget):
         # Track 5: Pay flags (if available)
         if "NET_PAY_FLAG" in filtered.columns:
             pay = filtered["NET_PAY_FLAG"].values
-            axes[4].fill_betweenx(depth, 0, pay, color="green", alpha=0.7, label="Pay")
+            axes[4].fill_betweenx(
+                depth, 0, pay, color=get_plot_color("PAY"), alpha=0.7, label="Pay"
+            )
         if "NET_RES_FLAG" in filtered.columns:
             res = filtered["NET_RES_FLAG"].values
             # Only show reservoir where not already pay
@@ -664,7 +678,7 @@ class CompositeLogPlot(PlotWidget):
                 axes[5].plot(
                     d_hcpv_data,
                     depth,
-                    color="#FF4500",
+                    color=get_plot_color("dHCPV_NET_PAY"),
                     linewidth=0.8,
                     label="dHCPV Pay",
                 )
@@ -674,7 +688,7 @@ class CompositeLogPlot(PlotWidget):
                 axes[5].plot(
                     hcpv_cum_data,
                     depth,
-                    color="#228B22",
+                    color=get_plot_color("HCPV_CUM_NET_PAY"),
                     linewidth=1.0,
                     linestyle="--",
                     label="HCPV Cum",
@@ -736,12 +750,20 @@ class TripleComboPlot(PlotWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent, show_toolbar=True, figsize=(12, 8))
+        self._last_triple_data = None
+        self._last_curve_mapping = None
+
+    def refresh_theme(self):
+        """Refresh chrome and redraw the active triple-combo curves."""
+        self.update_theme_colors()
+        if self._last_triple_data is not None and self._last_curve_mapping is not None:
+            self.plot_triple_combo(self._last_triple_data, self._last_curve_mapping)
 
     def plot_triple_combo(self, data: pd.DataFrame, curve_mapping: Dict[str, str]):
         """
         Plot triple combo log with professional layout:
         Track 1: GR (0-150 API) - green
-        Track 2: RT (log scale 0.2-2000) - black
+        Track 2: RT (log scale 0.2-2000) - theme-aware contrast
         Track 3: RHOB (1.95-2.95), NPHI (0.45--0.15), DT (optional) overlay
 
         Features:
@@ -749,6 +771,8 @@ class TripleComboPlot(PlotWidget):
         - RHOB and NPHI scaled for gas crossover visualization
         - Interactive toolbar for zoom/pan/reset
         """
+        self._last_triple_data = data
+        self._last_curve_mapping = dict(curve_mapping)
         self.figure.clear()
 
         if "DEPTH" not in data.columns:
@@ -783,6 +807,7 @@ class TripleComboPlot(PlotWidget):
                 ax = self.figure.add_subplot(1, n_tracks, i + 1)
             else:
                 ax = self.figure.add_subplot(1, n_tracks, i + 1, sharey=axes[0])
+            self._style_axes(ax)
             axes.append(ax)
 
         # Set depth range (inverted - increasing downward)
@@ -794,17 +819,17 @@ class TripleComboPlot(PlotWidget):
         # =====================================================================
         ax1 = axes[0]
         ax1.set_ylabel("Depth (ft)", fontsize=10, fontweight="bold")
-        ax1.set_xlabel("GR (API)", fontsize=9, color="#228B22")
+        ax1.set_xlabel("GR (API)", fontsize=9, color=get_plot_color("GR"))
         ax1.set_title("Track 1: GR", fontsize=10, fontweight="bold")
         ax1.grid(True, alpha=0.3, linestyle="--")
-        ax1.set_facecolor(self._axes_color)
+        self._style_axes(ax1)
 
         if has_gr:
             gr_data = data[gr_curve].values
-            ax1.plot(gr_data, depth, color="#228B22", linewidth=0.8, label="GR")
+            ax1.plot(gr_data, depth, color=get_plot_color("GR"), linewidth=0.8, label="GR")
             ax1.fill_betweenx(depth, 0, gr_data, color="#90EE90", alpha=0.4)
             ax1.set_xlim(0, 150)
-            ax1.axvline(75, color="#228B22", linestyle=":", alpha=0.5)  # Shale baseline
+            ax1.axvline(75, color=get_plot_color("GR"), linestyle=":", alpha=0.5)
         else:
             ax1.set_xlim(0, 150)
             ax1.text(
@@ -822,14 +847,14 @@ class TripleComboPlot(PlotWidget):
         # =====================================================================
         ax2 = axes[1]
         ax2.tick_params(labelleft=False)
-        ax2.set_xlabel("RT (Ω.m)", fontsize=9, color="#000000")
+        ax2.set_xlabel("RT (Ω.m)", fontsize=9, color=get_plot_color("RT"))
         ax2.set_title("Track 2: RT", fontsize=10, fontweight="bold")
         ax2.grid(True, alpha=0.3, linestyle="--", which="both")
-        ax2.set_facecolor(self._axes_color)
+        self._style_axes(ax2)
 
         if has_rt:
             rt_data = np.clip(data[rt_curve].values, 0.1, 10000)
-            ax2.plot(rt_data, depth, color="#000000", linewidth=1.0, label="RT")
+            ax2.plot(rt_data, depth, color=get_plot_color("RT"), linewidth=1.0, label="RT")
             ax2.set_xscale("log")
             ax2.set_xlim(0.2, 2000)
         else:
@@ -852,7 +877,7 @@ class TripleComboPlot(PlotWidget):
         ax3.tick_params(labelleft=False)
         ax3.set_title("Track 3: ρ-N-DT", fontsize=10, fontweight="bold")
         ax3.grid(True, alpha=0.3, linestyle="--")
-        ax3.set_facecolor(self._axes_color)
+        self._style_axes(ax3)
 
         # We want overlay:
         # NPHI: 0.45 (Left) -> -0.15 (Right) (High porosity left)
@@ -864,14 +889,14 @@ class TripleComboPlot(PlotWidget):
             ax3.plot(
                 nphi_data,
                 depth,
-                color="#0000FF",
+                color=get_plot_color("NPHI"),
                 linewidth=1.0,
                 linestyle="-",
                 label="NPHI",
             )
             ax3.set_xlim(0.45, -0.15)  # Reversed scale
-            ax3.set_xlabel("NPHI (v/v)", fontsize=9, color="#0000FF")
-            ax3.tick_params(axis="x", colors="#0000FF")
+            ax3.set_xlabel("NPHI (v/v)", fontsize=9, color=get_plot_color("NPHI"))
+            ax3.tick_params(axis="x", colors=get_plot_color("NPHI"))
         else:
             ax3.set_xlim(0.45, -0.15)
 
@@ -882,14 +907,14 @@ class TripleComboPlot(PlotWidget):
             ax3_rhob.plot(
                 rhob_data,
                 depth,
-                color="#FF0000",
+                color=get_plot_color("RHOB"),
                 linewidth=1.0,
                 linestyle="-",
                 label="RHOB",
             )
             ax3_rhob.set_xlim(1.95, 2.95)  # Standard scale
-            ax3_rhob.set_xlabel("RHOB (g/cc)", fontsize=9, color="#FF0000")
-            ax3_rhob.tick_params(axis="x", colors="#FF0000")
+            ax3_rhob.set_xlabel("RHOB (g/cc)", fontsize=9, color=get_plot_color("RHOB"))
+            ax3_rhob.tick_params(axis="x", colors=get_plot_color("RHOB"))
 
             if has_nphi:
                 # Normalize to 0-1 range (0 = Left, 1 = Right)
@@ -926,7 +951,7 @@ class TripleComboPlot(PlotWidget):
                     rhob_on_nphi_scale,
                     where=(rhob_on_nphi_scale > n_valid),
                     interpolate=True,
-                    color="#FFD700",
+                    color=get_plot_color("GAS_CROSSOVER"),
                     alpha=0.5,
                     label="Gas X-over",
                 )
@@ -939,14 +964,14 @@ class TripleComboPlot(PlotWidget):
             ax3_dt.plot(
                 dt_data,
                 depth,
-                color="#8B008B",
+                color=get_plot_color("DT"),
                 linewidth=0.8,
                 linestyle=":",
                 label="DT",
             )
             ax3_dt.set_xlim(140, 40)  # Inverted
-            ax3_dt.set_xlabel("DT (µs/ft)", fontsize=8, color="#8B008B")
-            ax3_dt.tick_params(axis="x", colors="#8B008B", labelsize=8)
+            ax3_dt.set_xlabel("DT (µs/ft)", fontsize=8, color=get_plot_color("DT"))
+            ax3_dt.tick_params(axis="x", colors=get_plot_color("DT"), labelsize=8)
 
         # Add legend
         legend_items = []

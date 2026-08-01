@@ -17,12 +17,16 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 from PyQt6.QtCore import Qt
+import logging
 import pandas as pd
 import numpy as np
 
 from .qc_tab import MetricCard, PandasTableModel
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
-from themes.colors import get_color
+from themes.colors import get_color, get_plot_color
+
+
+logger = logging.getLogger(__name__)
 
 
 class DiagnosticsTab(QWidget):
@@ -304,7 +308,7 @@ class DiagnosticsTab(QWidget):
         """Update display with analysis results."""
 
         if not self.model.calculated or self.model.results is None:
-            self.placeholder.setVisible(True)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
@@ -426,9 +430,18 @@ class DiagnosticsTab(QWidget):
 
             # Define colors and labels for each method
             method_config = {
-                "SW_ARCHIE": {"color": "#FF6B6B", "label": "Archie"},
-                "SW_INDO": {"color": "#4ECDC4", "label": "Indonesian"},
-                "SW_SIMAN": {"color": "#45B7D1", "label": "Simandoux"},
+                "SW_ARCHIE": {
+                    "color": get_plot_color("SW_ARCHIE"),
+                    "label": "Archie",
+                },
+                "SW_INDO": {
+                    "color": get_plot_color("SW_INDO"),
+                    "label": "Indonesian",
+                },
+                "SW_SIMAN": {
+                    "color": get_plot_color("SW_SIMAN"),
+                    "label": "Simandoux",
+                },
             }
 
             # Use consistent bins for all methods
@@ -606,7 +619,11 @@ class DiagnosticsTab(QWidget):
                 log_phie = results["PHIE"].values
 
                 # Porosity validation
-                por_result = core.validate_porosity(log_depth, log_phie)
+                por_result = core.validate_porosity(
+                    log_depth,
+                    log_phie,
+                    max_dist_ft=self.model.core_max_dist,
+                )
                 if por_result:
                     # Stats table
                     stats_data = [
@@ -659,7 +676,11 @@ class DiagnosticsTab(QWidget):
                 # Permeability validation
                 if "PERM_TIMUR" in results.columns:
                     log_perm = results["PERM_TIMUR"].values
-                    perm_result = core.validate_permeability(log_depth, log_perm)
+                    perm_result = core.validate_permeability(
+                        log_depth,
+                        log_perm,
+                        max_dist_ft=self.model.core_max_dist,
+                    )
                     if perm_result:
                         # Stats table
                         stats_data = [
@@ -720,10 +741,10 @@ class DiagnosticsTab(QWidget):
                 # ===============================================================
                 # DEPTH TRACK WITH CORE POINTS
                 # ===============================================================
-                self._plot_depth_track_with_core(core, results)
+                overlay_warnings = self._plot_depth_track_with_core(core, results) or []
 
                 # Warnings
-                warnings = []
+                warnings = list(overlay_warnings)
                 if por_result and por_result.r_squared and por_result.r_squared < 0.5:
                     warnings.append(
                         f"⚠️ Porosity R² = {por_result.r_squared:.2f} (low correlation)"
@@ -743,7 +764,8 @@ class DiagnosticsTab(QWidget):
             self.core_group.setVisible(False)
 
     def _plot_depth_track_with_core(self, core, results):
-        """Plot depth tracks with log curves and core overlay points."""
+        """Plot depth tracks with log curves and report unavailable overlays."""
+        overlay_warnings = []
         # Get log data
         log_depth = results["DEPTH"].values
 
@@ -758,7 +780,11 @@ class DiagnosticsTab(QWidget):
         if "PHIE" in results.columns:
             log_phie = results["PHIE"].values
             ax1.plot(
-                log_phie, log_depth, color="#00CED1", linewidth=1, label="Log PHIE"
+                log_phie,
+                log_depth,
+                color=get_plot_color("LOG_PHIE"),
+                linewidth=1,
+                label="Log PHIE",
             )
 
         # Overlay core porosity
@@ -768,7 +794,7 @@ class DiagnosticsTab(QWidget):
                 ax1.scatter(
                     core_por,
                     core_depths,
-                    c="#006666",
+                    c=get_plot_color("CORE_POR"),
                     marker="D",
                     s=40,
                     zorder=5,
@@ -776,8 +802,9 @@ class DiagnosticsTab(QWidget):
                     edgecolors="white",
                     linewidths=0.5,
                 )
-        except:
-            pass
+        except Exception as exc:
+            logger.warning("Core porosity overlay unavailable: %s", exc, exc_info=True)
+            overlay_warnings.append("Core porosity overlay unavailable")
 
         ax1.set_xlim(0, 0.4)
         ax1.set_xlabel("Porosity (v/v)", fontsize=10)
@@ -801,7 +828,11 @@ class DiagnosticsTab(QWidget):
         if "PERM_TIMUR" in results.columns:
             log_perm = np.clip(results["PERM_TIMUR"].values, 0.01, 50000)
             ax2.plot(
-                log_perm, log_depth, color="#FF6347", linewidth=1, label="Log Perm"
+                log_perm,
+                log_depth,
+                color=get_plot_color("LOG_PERM"),
+                linewidth=1,
+                label="Log Perm",
             )
 
         # Overlay core permeability
@@ -811,7 +842,7 @@ class DiagnosticsTab(QWidget):
                 ax2.scatter(
                     core_perm,
                     core_depths,
-                    c="#CC0000",
+                    c=get_plot_color("CORE_PERM"),
                     marker="D",
                     s=40,
                     zorder=5,
@@ -819,8 +850,11 @@ class DiagnosticsTab(QWidget):
                     edgecolors="white",
                     linewidths=0.5,
                 )
-        except:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Core permeability overlay unavailable: %s", exc, exc_info=True
+            )
+            overlay_warnings.append("Core permeability overlay unavailable")
 
         ax2.set_xscale("log")
         ax2.set_xlim(0.1, 50000)
@@ -833,6 +867,11 @@ class DiagnosticsTab(QWidget):
 
         self.core_perm_depth_plot.figure.tight_layout()
         self.core_perm_depth_plot.canvas.draw()
+
+        if overlay_warnings:
+            self.core_warnings.setText("⚠️ " + "; ".join(overlay_warnings))
+            self.core_warnings.setStyleSheet("color: orange;")
+        return overlay_warnings
 
     def _update_phie_plot(self):
         """Update PHIE histogram and stats based on selected method."""
