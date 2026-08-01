@@ -76,9 +76,23 @@ class QCModule:
         """
         if curve_mapping is None:
             curve_mapping = {}
-            
-        # Depth analysis
-        depth_col = 'DEPTH' if 'DEPTH' in self.data.columns else self.data.columns[0]
+
+        # A missing DEPTH column must not cause the first real curve to be
+        # silently excluded from QC. Accept the same common depth mnemonics as
+        # the LAS loaders, but require the selected column to be numeric.
+        depth_candidates = {'DEPTH', 'DEPT', 'MD', 'TVD', 'TDEP'}
+        depth_col = next(
+            (col for col in self.data.columns if str(col).upper() in depth_candidates),
+            None,
+        )
+        if depth_col is None or not pd.api.types.is_numeric_dtype(self.data[depth_col]):
+            raise ValueError(
+                "QC requires an explicit numeric depth column (DEPTH/DEPT/MD/TVD/TDEP)"
+            )
+
+        # Do not retain results from a previous run if the same QCModule object
+        # is invoked again after its input has changed.
+        self.curve_results = {}
         depth_range = (self.data[depth_col].min(), self.data[depth_col].max())
         total_depth = abs(depth_range[1] - depth_range[0])
         
