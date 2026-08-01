@@ -307,6 +307,8 @@ class InteractiveLogPlot(QWidget):
         if not HAS_PYQTGRAPH or "DEPTH" not in data.columns:
             return
 
+        # searchsorted-based cursor lookup requires monotonically increasing depth.
+        data = data.sort_values("DEPTH", kind="stable")
         self.clear()
 
         depth = data["DEPTH"].values
@@ -458,6 +460,7 @@ class InteractiveLogPlot(QWidget):
             )
             plot.addItem(vLine, ignoreBounds=True)
             plot.addItem(hLine, ignoreBounds=True)
+            self.crosshairs[i] = (vLine, hLine)
 
             # Re-add depth region to first track
             if i == 0 and self.depth_region is not None:
