@@ -161,6 +161,7 @@ class SummaryTab(QWidget):
     def refresh_theme(self):
         for card in getattr(self, "metric_cards", []):
             card.refresh_theme()
+        self.bar_chart.refresh_theme()
         self.placeholder.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
