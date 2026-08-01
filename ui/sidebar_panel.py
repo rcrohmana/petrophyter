@@ -765,8 +765,9 @@ class SidebarPanel(QWidget):
         # Clear curve mapping
         self.curve_mapping_widget.set_available_curves([], None)
 
-        # Clear formations list
+        # Clear formations and restore the default analysis scope.
         self.analysis_mode_widget.set_formations([])
+        self.analysis_mode_widget.whole_well_radio.setChecked(True)
 
     def _on_theme_toggle(self):
         """Handle theme toggle button click."""
