@@ -26,7 +26,34 @@ class StatisticsUtils:
             data: DataFrame containing log data
         """
         self.data = data
-        
+
+    def _align_external_series(
+        self, series: pd.Series, name: str
+    ) -> pd.Series:
+        """Align a caller-supplied series to this utility's data index.
+
+        Label-based alignment prevents a filtered/reordered series from being
+        applied positionally to different log rows. Reordered copies with the
+        same unique labels are safely reindexed; disjoint indexes fail fast
+        instead of producing a plausible but incorrect estimate.
+        """
+        if not isinstance(series, pd.Series):
+            series = pd.Series(series, index=self.data.index)
+
+        if series.index.equals(self.data.index):
+            return series
+
+        if (
+            series.index.is_unique
+            and self.data.index.is_unique
+            and set(series.index) == set(self.data.index)
+        ):
+            return series.reindex(self.data.index)
+
+        raise ValueError(
+            f"{name} index must contain the same labels as the log data index"
+        )
+
     def estimate_gr_baseline(self, gr_curve: str = 'GR') -> Tuple[float, float]:
         """
         Estimate GR clean sand (GRmin) and shale (GRmax) baselines.
@@ -77,6 +104,7 @@ class StatisticsUtils:
         rhob = self.data[rhob_curve].dropna()
         
         if vsh_series is not None:
+            vsh_series = self._align_external_series(vsh_series, "vsh_series")
             # Use clean zones (Vsh < 0.2)
             clean_mask = vsh_series < 0.2
             rhob = self.data.loc[clean_mask, rhob_curve].dropna()
@@ -233,14 +261,27 @@ class StatisticsUtils:
         
         # Identify shale zones
         if vsh_series is not None:
+            vsh_series = self._align_external_series(vsh_series, "vsh_series")
             shale_mask = vsh_series > 0.8
         elif gr_curve in self.data.columns:
             gr = self.data[gr_curve]
-            gr_p90 = np.percentile(gr.dropna(), 90)
-            shale_mask = gr > gr_p90
+            gr_valid = gr.dropna()
+            if len(gr_valid) > 0:
+                gr_p90 = np.percentile(gr_valid, 90)
+                shale_mask = gr > gr_p90
+            else:
+                # Fall back to low resistivity when the optional GR curve is
+                # present but entirely null.
+                rt_valid = rt.dropna()
+                if len(rt_valid) == 0:
+                    return 5.0
+                shale_mask = rt < np.percentile(rt_valid, 20)
         else:
             # Use low resistivity as proxy
-            shale_mask = rt < np.percentile(rt.dropna(), 20)
+            rt_valid = rt.dropna()
+            if len(rt_valid) == 0:
+                return 5.0
+            shale_mask = rt < np.percentile(rt_valid, 20)
         
         rt_shale = rt[shale_mask].dropna()
         
@@ -269,6 +310,7 @@ class StatisticsUtils:
         dt = self.data[dt_curve].dropna()
         
         if vsh_series is not None:
+            vsh_series = self._align_external_series(vsh_series, "vsh_series")
             clean_mask = vsh_series < 0.2
             dt = self.data.loc[clean_mask, dt_curve].dropna()
         
@@ -377,7 +419,9 @@ class StatisticsUtils:
         Returns:
             Estimated Swi (fraction)
         """
+        sw_series = self._align_external_series(sw_series, "sw_series")
         if vsh_series is not None:
+            vsh_series = self._align_external_series(vsh_series, "vsh_series")
             # Focus on clean zones
             clean_mask = vsh_series < 0.3
             sw = sw_series[clean_mask].dropna()
