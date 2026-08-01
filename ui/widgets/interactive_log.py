@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPen
 
+from themes.colors import get_color, get_plot_chrome, get_plot_color
+
 try:
     import pyqtgraph as pg
 
@@ -31,32 +33,26 @@ except Exception as e:
     pg = None
 
 
-# Theme colors
-_THEME_BG = "#F0EBE1"
-_THEME_GRID = "#D0C9BC"
+# Deprecated module aliases retained for callers that imported these names.
+_THEME_BG = get_plot_chrome("light")["figure"]
+_THEME_GRID = get_plot_chrome("light")["grid"]
 
-# Default curve colors
+# Compatibility mapping for theme-invariant curve colors. RT is resolved at
+# configuration/refresh time because dark mode intentionally overrides it.
 CURVE_COLORS = {
-    "GR": "#00AA00",  # Green
-    "VSH": "#8B4513",  # Brown
-    "RHOB": "#FF0000",  # Red
-    "NPHI": "#0000FF",  # Blue
-    "DT": "#FF00FF",  # Magenta
-    "RT": "#000000",  # Black
-    "PHIE": "#1E90FF",  # Dodger Blue
-    "PHID": "#FF6347",  # Tomato
-    "PHIN": "#008B8B",  # Dark Cyan
-    "SW": "#9400D3",  # Dark Violet
-    "PERM": "#FFD700",  # Gold
-    # HCPV colors
-    "HCPV_FRAC": "#FF8C00",  # Dark Orange
-    "dHCPV": "#FF6347",  # Tomato
-    "HCPV_CUM": "#00CED1",  # Dark Cyan
-    "dHCPV_NET_PAY": "#FF4500",  # Orange Red
-    "HCPV_CUM_NET_PAY": "#228B22",  # Forest Green
-    "dHCPV_NET_RES": "#DAA520",  # Goldenrod
-    "HCPV_CUM_NET_RES": "#4682B4",  # Steel Blue
+    name: get_plot_color(name, "light")
+    for name in (
+        "GR", "VSH", "RHOB", "NPHI", "DT", "PHIE", "PHID", "PHIN",
+        "PHIT", "SW", "PERM", "PAY", "HCPV_FRAC", "dHCPV", "HCPV_CUM",
+        "dHCPV_NET_PAY", "HCPV_CUM_NET_PAY", "dHCPV_NET_RES",
+        "HCPV_CUM_NET_RES",
+    )
 }
+
+
+def _current_curve_color(curve_name: str) -> str:
+    """Resolve a curve color against the current theme at draw time."""
+    return get_plot_color(curve_name)
 
 
 class InteractiveLogPlot(QWidget):
@@ -92,8 +88,10 @@ class InteractiveLogPlot(QWidget):
         self._updating_region = False  # Guard for bi-directional sync
         self._last_mouse_update = 0  # Timestamp for throttling mouse updates
         self._mouse_throttle_ms = 33  # ~30 FPS limit (33ms between updates)
+        self._chrome = get_plot_chrome()
 
         self._setup_ui()
+        self.refresh_theme()
 
     def _setup_ui(self):
         """Setup the UI layout."""
@@ -124,7 +122,7 @@ class InteractiveLogPlot(QWidget):
         # PLOT AREA
         # =====================================================================
         self.graphics_layout = pg.GraphicsLayoutWidget()
-        self.graphics_layout.setBackground(_THEME_BG)
+        self.graphics_layout.setBackground(self._chrome["figure"])
         # Add bottom margin so axis labels don't get cut off by controls bar
         self.graphics_layout.ci.layout.setContentsMargins(0, 0, 0, 25)
         layout.addWidget(self.graphics_layout, stretch=1)
@@ -160,13 +158,43 @@ class InteractiveLogPlot(QWidget):
 
         layout.addWidget(controls)
 
+    def refresh_theme(self):
+        """Apply theme-aware plot chrome while keeping curve colors stable."""
+        self._chrome = get_plot_chrome()
+        if hasattr(self, "depth_label"):
+            self.depth_label.setStyleSheet(f"color: {get_color('text_primary')};")
+        if hasattr(self, "value_label"):
+            self.value_label.setStyleSheet(f"color: {get_color('text_secondary')};")
+        if not HAS_PYQTGRAPH or not self.plot_widgets:
+            return
+
+        self.graphics_layout.setBackground(self._chrome["figure"])
+        for plot in self.plot_widgets:
+            plot.getViewBox().setBackgroundColor(self._chrome["axes"])
+            for axis_name in ("left", "bottom", "top", "right"):
+                axis = plot.getAxis(axis_name)
+                axis.setPen(pg.mkPen(self._chrome["spine"]))
+                axis.setTextPen(pg.mkPen(self._chrome["text"]))
+        for v_line, h_line in self.crosshairs:
+            v_line.setPen(pg.mkPen(self._chrome["crosshair"], width=1))
+            h_line.setPen(
+                pg.mkPen(
+                    self._chrome["crosshair"], width=1, style=Qt.PenStyle.DashLine
+                )
+            )
+        if self.depth_region is not None:
+            self.depth_region.setBrush(pg.mkBrush(100, 150, 200, 50))
+        for curve_name, curve_item in self.curve_items.items():
+            if curve_name in CURVE_COLORS or curve_name == "RT":
+                curve_item.setPen(pg.mkPen(_current_curve_color(curve_name), width=1.5))
+
     def _create_tracks(self):
         """Create the plot tracks."""
         if not HAS_PYQTGRAPH:
             return
 
         # Track titles
-        track_titles = ["GR/Vsh", "Porosity", "Sw", "Perm", "Flags", "HCPV"]
+        track_titles = ["GR/Vsh", "Porosity", "Sw", "RT/Perm", "Flags", "HCPV"]
 
         self.plot_widgets = []
 
@@ -185,7 +213,7 @@ class InteractiveLogPlot(QWidget):
             plot.invertY(True)
 
             # Set background via ViewBox
-            plot.getViewBox().setBackgroundColor(_THEME_BG)
+            plot.getViewBox().setBackgroundColor(self._chrome["axes"])
 
             # Link Y-axis to first track
             if i > 0 and len(self.plot_widgets) > 0:
@@ -193,12 +221,18 @@ class InteractiveLogPlot(QWidget):
 
             # Add crosshair
             vLine = pg.InfiniteLine(
-                angle=90, movable=False, pen=pg.mkPen("#888888", width=1)
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(self._chrome["crosshair"], width=1),
             )
             hLine = pg.InfiniteLine(
                 angle=0,
                 movable=False,
-                pen=pg.mkPen("#888888", width=1, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(
+                    self._chrome["crosshair"],
+                    width=1,
+                    style=Qt.PenStyle.DashLine,
+                ),
             )
             plot.addItem(vLine, ignoreBounds=True)
             plot.addItem(hLine, ignoreBounds=True)
@@ -295,6 +329,9 @@ class InteractiveLogPlot(QWidget):
                 else:
                     curve_name, color, log_scale = curve_info[:3]
 
+                if curve_name in CURVE_COLORS or curve_name == "RT":
+                    color = _current_curve_color(curve_name)
+
                 if curve_name in data.columns:
                     curve_data = data[curve_name].values.copy()
 
@@ -336,41 +373,43 @@ class InteractiveLogPlot(QWidget):
         track0 = []
         if "GR" in columns:
             track0.append(
-                ("GR", CURVE_COLORS["GR"], False, (0, 150))
+                ("GR", _current_curve_color("GR"), False, (0, 150))
             )  # GR normalized 0-150 → 0-1
         if "VSH" in columns:
-            track0.append(("VSH", CURVE_COLORS["VSH"], False, (0, 1)))
+            track0.append(("VSH", _current_curve_color("VSH"), False, (0, 1)))
         config[0] = track0
 
         # Track 1: Porosity (0-0.5 range)
         track1 = []
         for c in ["PHIE", "PHID", "PHIN", "PHIT"]:
             if c in columns:
-                track1.append((c, CURVE_COLORS.get(c, "#1E90FF"), False, (0, 0.5)))
+                track1.append((c, _current_curve_color(c), False, (0, 0.5)))
         config[1] = track1
 
         # Track 2: Water Saturation (0-1 range)
         track2 = []
         for c in ["SW", "SW_ARCHIE", "SW_INDO"]:
             if c in columns:
-                track2.append((c, CURVE_COLORS.get("SW", "#9400D3"), False, (0, 1)))
+                track2.append((c, _current_curve_color(c), False, (0, 1)))
                 break
         config[2] = track2
 
-        # Track 3: Permeability (log scale, no normalization)
+        # Track 3: Resistivity/permeability (log scale, no normalization)
         track3 = []
+        if "RT" in columns:
+            track3.append(("RT", _current_curve_color("RT"), True, None))
         for c in ["PERM", "PERM_TIMUR", "PERM_COATES"]:
             if c in columns:
-                track3.append((c, CURVE_COLORS.get("PERM", "#FFD700"), True, None))
+                track3.append((c, _current_curve_color(c), True, None))
                 break
         config[3] = track3
 
         # Track 4: Pay Flags (0-1 range) - use correct column names
         track4 = []
         if "NET_PAY_FLAG" in columns:
-            track4.append(("NET_PAY_FLAG", "#228B22", False, (0, 1)))  # Green for Pay
+            track4.append(("NET_PAY_FLAG", get_plot_color("PAY"), False, (0, 1)))
         if "NET_RES_FLAG" in columns:
-            track4.append(("NET_RES_FLAG", "#FFD700", False, (0, 1)))  # Yellow for Res
+            track4.append(("NET_RES_FLAG", get_plot_color("RESERVOIR"), False, (0, 1)))
         config[4] = track4
 
         # Track 5: HCPV (dHCPV + HCPV_CUM)
@@ -379,18 +418,18 @@ class InteractiveLogPlot(QWidget):
         # Default curves - Net Pay version
         if "dHCPV_NET_PAY" in columns:
             track5.append(
-                ("dHCPV_NET_PAY", "#FF4500", False, None)
+                ("dHCPV_NET_PAY", get_plot_color("dHCPV_NET_PAY"), False, None)
             )  # Orange Red - auto scale
         if "HCPV_CUM_NET_PAY" in columns:
             track5.append(
-                ("HCPV_CUM_NET_PAY", "#228B22", False, None)
+                ("HCPV_CUM_NET_PAY", get_plot_color("HCPV_CUM_NET_PAY"), False, None)
             )  # Forest Green - auto scale
         # Fallback to gross if net pay not available
         if not track5:
             if "dHCPV" in columns:
-                track5.append(("dHCPV", "#FF6347", False, None))  # Tomato
+                track5.append(("dHCPV", get_plot_color("dHCPV"), False, None))
             if "HCPV_CUM" in columns:
-                track5.append(("HCPV_CUM", "#00CED1", False, None))  # Dark Cyan
+                track5.append(("HCPV_CUM", get_plot_color("HCPV_CUM"), False, None))
         config[5] = track5
 
         return config
@@ -404,12 +443,18 @@ class InteractiveLogPlot(QWidget):
             plot.clear()
             # Re-add crosshairs
             vLine = pg.InfiniteLine(
-                angle=90, movable=False, pen=pg.mkPen("#888888", width=1)
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(self._chrome["crosshair"], width=1),
             )
             hLine = pg.InfiniteLine(
                 angle=0,
                 movable=False,
-                pen=pg.mkPen("#888888", width=1, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(
+                    self._chrome["crosshair"],
+                    width=1,
+                    style=Qt.PenStyle.DashLine,
+                ),
             )
             plot.addItem(vLine, ignoreBounds=True)
             plot.addItem(hLine, ignoreBounds=True)
@@ -543,13 +588,19 @@ class InteractiveLogPlot(QWidget):
                 pos=top_depth,
                 angle=0,
                 movable=False,
-                pen=pg.mkPen("#FF6600", width=2, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(
+                    get_plot_color("FORMATION_TOP"),
+                    width=2,
+                    style=Qt.PenStyle.DashLine,
+                ),
             )
             plot.addItem(line)
             self.formation_lines.append(line)
 
             # Create label
-            label = pg.TextItem(name, color="#FF6600", anchor=(0, 1))
+            label = pg.TextItem(
+                name, color=get_plot_color("FORMATION_TOP"), anchor=(0, 1)
+            )
             label.setPos(0, top_depth)
             plot.addItem(label)
             self.formation_labels.append(label)
