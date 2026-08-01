@@ -35,6 +35,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 import traceback
 import threading
+import logging
 
 import sys
 import os
@@ -59,6 +60,9 @@ from modules.las_parser import LASParser
 from modules.qc_module import QCModule
 from modules.formation_tops import FormationTops
 from modules.core_handler import CoreDataHandler
+
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -253,9 +257,9 @@ class MainWindow(QMainWindow):
             self.sidebar.refresh_theme()
         for tab in [
             getattr(self, "qc_tab", None),
-            getattr(self, "petrophysics_tab", None),
-            getattr(self, "log_display_tab", None),
-            getattr(self, "diagnostics_tab", None),
+            getattr(self, "petro_tab", None),
+            getattr(self, "log_tab", None),
+            getattr(self, "diag_tab", None),
             getattr(self, "summary_tab", None),
             getattr(self, "export_tab", None),
         ]:
@@ -317,10 +321,18 @@ class MainWindow(QMainWindow):
                     if found:
                         detected[ctype] = found
                 self.sidebar.update_available_curves(curves, detected)
+                self.model.curve_mapping = {
+                    ctype: detected.get(ctype, "None")
+                    for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
+                }
 
                 self.statusBar.showMessage(
                     f"Loaded: {os.path.basename(file_path)} ({len(parser.data)} rows)"
                 )
+
+                # Refresh once more after QC and mapping are ready. The model's
+                # data_loaded signal fires earlier to clear stale result content.
+                self._on_data_loaded()
 
                 # Surface an ambiguous depth-unit instead of silently (mis)converting.
                 if getattr(parser, "depth_unit_warning", None):
@@ -366,6 +378,7 @@ class MainWindow(QMainWindow):
             return
 
         self.sidebar.update_model_from_ui()
+        self.sidebar.merge_btn.setEnabled(False)
 
         self.merge_service.merge_files(
             self._loaded_parsers,
@@ -385,6 +398,7 @@ class MainWindow(QMainWindow):
 
     def _on_merge_completed(self, merged_df, merge_report):
         """Handle merge completion."""
+        self.sidebar.merge_btn.setEnabled(True)
         self.sidebar.set_progress(100, "Complete")
 
         # Store merged data
@@ -415,16 +429,20 @@ class MainWindow(QMainWindow):
             if found:
                 detected[ctype] = found
         self.sidebar.update_available_curves(curves, detected)
+        self.model.curve_mapping = {
+            ctype: detected.get(ctype, "None")
+            for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
+        }
 
         self.statusBar.showMessage(
             f"Merged {len(self._loaded_parsers)} files ({len(merged_df)} rows)"
         )
 
-        # Update QC tab
-        self.qc_tab.update_display()
+        self._on_data_loaded()
 
     def _on_merge_error(self, error: str):
         """Handle merge error."""
+        self.sidebar.merge_btn.setEnabled(True)
         self.sidebar.set_progress(0, "")
         QMessageBox.critical(self, "Merge Error", error)
         self.statusBar.showMessage("Merge failed")
@@ -527,8 +545,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Update model from UI
+        # Update model from UI and close the double-click window before the
+        # background worker can emit its asynchronous started signal.
         self.sidebar.update_model_from_ui()
+        self.sidebar.run_btn.setEnabled(False)
 
         # Start analysis
         self.analysis_service.run_analysis(self.model)
@@ -586,8 +606,8 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage("Analysis failed")
 
     def _on_data_loaded(self):
-        """Handle data loaded signal."""
-        self.qc_tab.update_display()
+        """Refresh every tab after data replacement invalidates derived state."""
+        self._update_all_tabs()
 
     def _on_results_updated(self):
         """Handle results updated signal."""
@@ -651,7 +671,7 @@ class MainWindow(QMainWindow):
 
     def _on_calculate_perm(self):
         """Calculate permeability coefficients (with or without core data)."""
-        if self.model.results is None:
+        if not self.model.calculated or self.model.results is None:
             QMessageBox.warning(self, "Warning", "Please run analysis first")
             return
 
@@ -726,8 +746,10 @@ class MainWindow(QMainWindow):
                                 f"Core-calibrated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}"
                             )
                             return
-            except Exception as e:
-                pass  # Fall through to statistical estimation
+            except Exception:
+                logger.exception(
+                    "Core permeability fit failed; using statistical estimation"
+                )
 
         # Statistical estimation based on porosity (works without core)
         try:
@@ -766,12 +788,16 @@ class MainWindow(QMainWindow):
 
     def _on_export_csv(self, file_path: str):
         """Handle CSV export."""
-        if self.model.results is not None:
+        if self.model.calculated and self.model.results is not None:
             self.export_service.export_csv(self.model.results, file_path)
 
     def _on_export_excel(self, file_path: str):
         """Handle Excel export."""
-        if self.model.results is not None and self.model.summary is not None:
+        if (
+            self.model.calculated
+            and self.model.results is not None
+            and self.model.summary is not None
+        ):
             self.export_service.export_excel(
                 self.model.results, self.model.summary, file_path
             )
@@ -859,56 +885,190 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage("Ready. Load a LAS file to begin.")
 
     def _update_ui_from_model(self):
-        """Update UI widgets from model values after loading session."""
-        # Update sidebar widgets from model values
-        # This refreshes all parameter fields
+        """Restore persisted controls independently after loading a session."""
+
+        def restore_analysis_mode():
+            per_formation = self.model.analysis_mode == "Per-Formation"
+            self.sidebar.analysis_mode_widget.per_formation_radio.setChecked(
+                per_formation
+            )
+            formation_list = self.sidebar.analysis_mode_widget.formation_list
+            existing = {
+                formation_list.item(index).text()
+                for index in range(formation_list.count())
+            }
+            for formation in self.model.selected_formations:
+                if formation not in existing:
+                    formation_list.addItem(formation)
+            for index in range(formation_list.count()):
+                item = formation_list.item(index)
+                item.setSelected(item.text() in self.model.selected_formations)
+
+        def restore_curve_mapping():
+            for curve_type, curve_name in self.model.curve_mapping.items():
+                combo = self.sidebar.curve_mapping_widget.curve_combos.get(curve_type)
+                if combo is None:
+                    continue
+                if curve_name != "None" and combo.findText(curve_name) < 0:
+                    combo.addItem(curve_name)
+                combo.setCurrentText(curve_name)
+
+        restored_widgets = [
+            self.sidebar.analysis_mode_widget,
+            self.sidebar.curve_mapping_widget,
+            self.sidebar.vsh_params_widget,
+            self.sidebar.porosity_method_widget,
+            self.sidebar.matrix_params_widget,
+            self.sidebar.fluid_params_widget,
+            self.sidebar.shale_params_widget,
+            self.sidebar.archie_params_widget,
+            self.sidebar.sw_models_widget,
+            self.sidebar.res_params_widget,
+            self.sidebar.perm_params_widget,
+            self.sidebar.swir_params_widget,
+            self.sidebar.cutoff_params_widget,
+            self.sidebar.gas_correction_widget,
+        ]
+        for widget in restored_widgets:
+            widget.blockSignals(True)
+
+        actions = [
+            ("analysis mode", restore_analysis_mode),
+            ("curve mapping", restore_curve_mapping),
+            (
+                "VShale",
+                lambda: self.sidebar.vsh_params_widget.set_params(
+                    self.model.vsh_baseline_method,
+                    self.model.gr_min_manual,
+                    self.model.gr_max_manual,
+                    self.model.vsh_methods,
+                ),
+            ),
+            (
+                "porosity method",
+                lambda: self.sidebar.porosity_method_widget.set_params(
+                    {"primary_phie_method": self.model.primary_phie_method}
+                ),
+            ),
+            (
+                "matrix",
+                lambda: self.sidebar.matrix_params_widget.set_params(
+                    self.model.rho_matrix, self.model.dt_matrix
+                ),
+            ),
+            (
+                "fluid",
+                lambda: self.sidebar.fluid_params_widget.set_params(
+                    self.model.rho_fluid, self.model.dt_fluid
+                ),
+            ),
+            (
+                "shale",
+                lambda: self.sidebar.shale_params_widget.set_params(
+                    self.model.rho_shale,
+                    self.model.dt_shale,
+                    self.model.nphi_shale,
+                    approach=self.model.shale_approach,
+                    selection_mode=self.model.shale_selection_mode,
+                    vsh_threshold=self.model.shale_vsh_threshold,
+                    vsh_quantile=self.model.shale_vsh_quantile,
+                    min_points=self.model.shale_min_points,
+                    sweep_tmin=self.model.shale_sweep_tmin,
+                    sweep_tmax=self.model.shale_sweep_tmax,
+                    sweep_step=self.model.shale_sweep_step,
+                    gate_logs=self.model.shale_gate_logs,
+                    iqr_filter=self.model.shale_iqr_filter,
+                ),
+            ),
+            (
+                "Archie",
+                lambda: self.sidebar.archie_params_widget.set_params(
+                    self.model.a,
+                    self.model.m,
+                    self.model.n,
+                    self.model.lithology_preset,
+                ),
+            ),
+            (
+                "water saturation",
+                lambda: self.sidebar.sw_models_widget.set_params(
+                    {
+                        "sw_methods": self.model.sw_methods,
+                        "sw_primary_method": self.model.sw_primary_method,
+                        "ws_qv": self.model.ws_qv,
+                        "ws_b": self.model.ws_b,
+                        "dw_swb": self.model.dw_swb,
+                        "dw_rwb": self.model.dw_rwb,
+                    }
+                ),
+            ),
+            (
+                "resistivity",
+                lambda: self.sidebar.res_params_widget.set_params(
+                    self.model.rw, self.model.rsh
+                ),
+            ),
+            (
+                "permeability",
+                lambda: self.sidebar.perm_params_widget.set_params(
+                    self.model.perm_C, self.model.perm_P, self.model.perm_Q
+                ),
+            ),
+            (
+                "Swirr",
+                lambda: self.sidebar.swir_params_widget.set_params(
+                    self.model.swirr_method,
+                    self.model.buckles_preset,
+                    self.model.k_buckles,
+                ),
+            ),
+            (
+                "cutoffs",
+                lambda: self.sidebar.cutoff_params_widget.set_params(
+                    self.model.vsh_cutoff,
+                    self.model.phi_cutoff,
+                    self.model.sw_cutoff,
+                ),
+            ),
+            (
+                "merge settings",
+                lambda: (
+                    self.sidebar.merge_step_spin.setValue(self.model.merge_step),
+                    self.sidebar.merge_gap_spin.setValue(
+                        self.model.merge_gap_limit
+                    ),
+                ),
+            ),
+            (
+                "core settings",
+                lambda: (
+                    self.sidebar.core_unit_combo.setCurrentText(
+                        self.model.core_depth_unit
+                    ),
+                    self.sidebar.core_dist_spin.setValue(self.model.core_max_dist),
+                ),
+            ),
+            (
+                "gas correction",
+                lambda: self.sidebar.gas_correction_widget.set_params(
+                    self.model.gas_correction_enabled,
+                    self.model.gas_nphi_factor,
+                    self.model.gas_rhob_factor,
+                ),
+            ),
+        ]
+
         try:
-            # VShale
-            self.sidebar.vsh_params_widget.set_baseline_method(
-                self.model.vsh_baseline_method
-            )
-            self.sidebar.vsh_params_widget.set_gr_range(
-                self.model.gr_min_manual, self.model.gr_max_manual
-            )
+            for group_name, restore in actions:
+                try:
+                    restore()
+                except Exception:
+                    logger.exception(
+                        "Failed to restore %s session controls", group_name
+                    )
+        finally:
+            for widget in restored_widgets:
+                widget.blockSignals(False)
 
-            # Matrix
-            self.sidebar.matrix_params_widget.set_params(
-                self.model.rho_matrix, self.model.dt_matrix
-            )
-
-            # Fluid
-            self.sidebar.fluid_params_widget.set_params(
-                self.model.rho_fluid, self.model.dt_fluid
-            )
-
-            # Shale
-            self.sidebar.shale_params_widget.set_params(
-                self.model.rho_shale, self.model.dt_shale, self.model.nphi_shale
-            )
-
-            # Archie
-            self.sidebar.archie_params_widget.set_params(
-                self.model.a, self.model.m, self.model.n
-            )
-
-            # Resistivity
-            self.sidebar.res_params_widget.set_params(self.model.rw, self.model.rsh)
-
-            # Perm
-            self.sidebar.perm_params_widget.set_params(
-                self.model.perm_C, self.model.perm_P, self.model.perm_Q
-            )
-
-            # Cutoffs
-            self.sidebar.cutoff_params_widget.set_params(
-                self.model.vsh_cutoff, self.model.phi_cutoff, self.model.sw_cutoff
-            )
-
-            # Gas correction (v1.2)
-            self.sidebar.gas_correction_widget.set_params(
-                self.model.gas_correction_enabled,
-                self.model.gas_nphi_factor,
-                self.model.gas_rhob_factor,
-            )
-        except Exception:
-            pass  # Best effort - some widgets may not support set_params
+        # Reconcile the model once after every supported control has restored.
+        self.sidebar.update_model_from_ui()
