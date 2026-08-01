@@ -184,6 +184,9 @@ class AppModel(QObject):
 
     @las_data.setter
     def las_data(self, value: Optional[pd.DataFrame]):
+        # A new/cleared LAS dataset invalidates all calculated state from the
+        # previous well while preserving user-selected parameters.
+        self._clear_derived_state()
         self._las_data = value
         if value is not None:
             self.data_loaded.emit()
@@ -219,8 +222,8 @@ class AppModel(QObject):
     @results.setter
     def results(self, value: Optional[pd.DataFrame]):
         self._results = value
+        self._calculated = value is not None
         if value is not None:
-            self._calculated = True
             self.analysis_complete.emit()
 
     @property
@@ -808,18 +811,37 @@ class AppModel(QObject):
     # =========================================================================
     # METHODS
     # =========================================================================
-    def reset(self):
-        """Reset all data (keep parameters)."""
-        self._las_data = None
-        self._las_parser = None
-        self._las_filename = ""
+    def _clear_derived_state(self):
+        """Clear data-dependent results without changing user parameters."""
         self._qc_report = None
         self._results = None
         self._summary = None
-        self._formation_tops = None
-        self._core_data = None
         self._merge_report = None
         self._calculated = False
+        self._calculated_shale = None
+        self._shale_method_used = "custom"
+        self._calculated_rw = None
+        self._calculated_rsh = None
+        self._calculated_C = None
+        self._calculated_P = None
+        self._calculated_Q = None
+
+    def set_analysis_results(self, results: Optional[pd.DataFrame], summary: Optional[Dict]):
+        """Store results and summary together, then emit one completion signal."""
+        self._results = results
+        self._summary = summary
+        self._calculated = results is not None
+        if results is not None:
+            self.analysis_complete.emit()
+
+    def reset(self):
+        """Reset all data and derived results (keep user parameters)."""
+        self._las_data = None
+        self._las_parser = None
+        self._las_filename = ""
+        self._formation_tops = None
+        self._core_data = None
+        self._clear_derived_state()
         self._curve_mapping = {
             "GR": "None",
             "RHOB": "None",
