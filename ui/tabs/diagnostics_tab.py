@@ -286,6 +286,16 @@ class DiagnosticsTab(QWidget):
     def refresh_theme(self):
         for card in getattr(self, "metric_cards", []):
             card.refresh_theme()
+        for plot in (
+            self.phie_hist,
+            self.sw_hist,
+            self.perm_crossplot,
+            self.core_por_crossplot,
+            self.core_perm_crossplot,
+            self.core_phie_depth_plot,
+            self.core_perm_depth_plot,
+        ):
+            plot.refresh_theme()
         self.placeholder.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
