@@ -185,8 +185,7 @@ class PetrophysicsTab(QWidget):
         # print(f"[DEBUG PetroTab] model.results is None = {self.model.results is None}")
 
         if not self.model.calculated or self.model.results is None:
-            # print("[DEBUG PetroTab] Early return - no results")
-            self.placeholder.setVisible(True)
+            self.reset_ui()
             return
 
         self.placeholder.setVisible(False)
