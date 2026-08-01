@@ -238,6 +238,14 @@ class LogDisplayTab(QWidget):
         self.placeholder.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
+        for plot in (
+            self.interactive_log,
+            self.classic_log,
+            self.nd_crossplot,
+            self.pk_crossplot,
+        ):
+            if hasattr(plot, "refresh_theme"):
+                plot.refresh_theme()
 
     def _toggle_crossplots(self, group_box, checked: bool):
         """Toggle visibility of crossplots content."""
