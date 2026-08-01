@@ -106,7 +106,9 @@ class LASParser:
         """
         try:
             import io
-            
+
+            self.encoding_warning = False
+
             # Read the file content
             file_buffer.seek(0)
             content = file_buffer.read()
@@ -133,13 +135,22 @@ class LASParser:
 
     def _decode_bytes(self, content: bytes) -> str:
         """Decode raw LAS bytes, trying common encodings before lossy replace."""
-        for enc in ('utf-8', 'cp1252', 'latin-1'):
-            try:
-                return content.decode(enc)
-            except UnicodeDecodeError:
-                continue
-        # Last resort: replace undecodable bytes and flag it for the UI.
-        self.encoding_warning = True
+        try:
+            return content.decode('utf-8')
+        except UnicodeDecodeError:
+            # A successful legacy-codec fallback is still noteworthy: the UI
+            # should tell the user that the source was not UTF-8.
+            self.encoding_warning = True
+            for enc in ('cp1252', 'latin-1'):
+                try:
+                    logger.warning(
+                        "LAS content is not UTF-8; decoded using %s", enc
+                    )
+                    return content.decode(enc)
+                except UnicodeDecodeError:
+                    continue
+
+        # Last resort: replace undecodable bytes and keep the warning set.
         logger.warning("LAS content could not be decoded cleanly; using lossy fallback")
         return content.decode('utf-8', errors='replace')
     
