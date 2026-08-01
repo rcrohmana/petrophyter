@@ -289,6 +289,8 @@ class QCTab(QWidget):
     def refresh_theme(self):
         for card in getattr(self, "metric_cards", []):
             card.refresh_theme()
+        if hasattr(self, "triple_combo_plot"):
+            self.triple_combo_plot.refresh_theme()
         self.placeholder.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
         )
