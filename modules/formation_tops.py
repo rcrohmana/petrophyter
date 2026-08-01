@@ -120,6 +120,15 @@ class FormationTops:
         detection, depth-unit detection, top>bottom swaps, missing bottom
         (defaulted to the next formation's top), and sorting.
         """
+        # A FormationTops instance can be reused. Clear prior parsed data and
+        # unit provenance before rebuilding so a previous conversion/warning
+        # cannot suppress conversion or leak into the next file.
+        self.formations = []
+        self.depth_unit = 'M'
+        self.depth_unit_detected = False
+        self.depth_unit_warning = None
+        self.converted_to_feet = False
+
         # Normalize column names
         df.columns = df.columns.str.strip().str.lower()
 
@@ -321,9 +330,17 @@ class FormationTops:
             List of Formation objects
         """
         formations = []
-        for fm in self.formations:
-            # Check if formation overlaps with range
-            if fm.bottom_depth >= top_depth and fm.top_depth <= bottom_depth:
+        for i, fm in enumerate(self.formations):
+            # Match the lookup/filter interval convention: a non-deepest
+            # formation is [top, bottom), while the deepest formation includes
+            # its final bottom. This avoids returning both formations for a
+            # zero-width query exactly on a shared boundary.
+            is_last = i == len(self.formations) - 1
+            if is_last:
+                overlaps = fm.bottom_depth >= top_depth and fm.top_depth <= bottom_depth
+            else:
+                overlaps = fm.bottom_depth > top_depth and fm.top_depth < bottom_depth
+            if overlaps:
                 formations.append(fm)
         return formations
     
@@ -364,10 +381,25 @@ class FormationTops:
         
         masks = []
         for fm_name in formation_names:
-            depth_range = self.get_depth_range_for_formation(fm_name)
-            if depth_range:
-                mask = (data[depth_col] >= depth_range[0]) & (data[depth_col] <= depth_range[1])
-                masks.append(mask)
+            formation = next(
+                (fm for fm in self.formations
+                 if fm.name.lower() == fm_name.lower()),
+                None,
+            )
+            if formation is None:
+                continue
+
+            # Keep filtering consistent with get_formation_at_depth: intervals
+            # are half-open except for the deepest formation, whose bottom is
+            # inclusive so the final well sample remains selectable.
+            is_last = bool(self.formations) and formation is self.formations[-1]
+            lower = data[depth_col] >= formation.top_depth
+            upper = (
+                data[depth_col] <= formation.bottom_depth
+                if is_last
+                else data[depth_col] < formation.bottom_depth
+            )
+            masks.append(lower & upper)
         
         if not masks:
             return data
