@@ -3,7 +3,7 @@ Petrophyter PyQt - Desktop Petrophysics Application
 Main entry point.
 
 Author: Petrophyter Team
-Version: 1.2.0
+Version metadata: version.py
 """
 
 import sys
@@ -31,6 +31,7 @@ from PyQt6.QtGui import QIcon
 from ui.main_window import MainWindow
 from themes import ThemeManager
 from services.logging_setup import configure_logging
+from version import APP_VERSION
 
 
 def main():
@@ -44,7 +45,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Petrophyter")
     app.setOrganizationName("Petrophyter Team")
-    app.setApplicationVersion("1.2.0")
+    app.setApplicationVersion(APP_VERSION)
     configure_logging()
 
     # Set application icon (rock/stone icon)

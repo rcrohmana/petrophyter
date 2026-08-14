@@ -6,8 +6,8 @@ This procedure builds a Windows `setup.exe` for distribution.
 
 ## Prerequisites
 
-1. Install all Python dependencies from `requirements.txt`.
-2. Install PyInstaller with `pip install pyinstaller`.
+1. Install Conda and create an environment with the dependencies from `requirements.txt`.
+2. Install PyInstaller in that environment with `pip install pyinstaller`.
 3. Download and install [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ## Build Commands
@@ -15,6 +15,9 @@ This procedure builds a Windows `setup.exe` for distribution.
 Run the PowerShell build script from the `petrophyter_pyqt` folder:
 
 ```powershell
+# Select the Conda environment (defaults to qceda when omitted)
+$env:CONDA_ENV = "your-environment"
+
 # Full build: PyInstaller and Inno Setup
 .\scripts\build-installer.ps1
 
@@ -29,7 +32,7 @@ Run the PowerShell build script from the `petrophyter_pyqt` folder:
 
 | Output | Location |
 |---|---|
-| **Installer** | `installer/Output/Petrophyter_Setup_1.2.exe` |
+| **Installer** | `installer/Output/Petrophyter_Setup_1.5.0_Build20260814.exe` |
 | **Portable application** | `dist/Petrophyter/` (can be copied directly) |
 
 ## Custom Inno Setup Path

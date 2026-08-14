@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap, QFont
 import os
 from themes.colors import get_color
+from version import APP_VERSION, APP_VERSION_DISPLAY
 
 
 class AboutDialog(QDialog):
@@ -71,7 +72,7 @@ class AboutDialog(QDialog):
             f"font-size: 24px; font-weight: bold; color: {get_color('primary')};"
         )
 
-        app_subtitle = QLabel("Petrophysics Master - v1.4.0 (Build 20260113)")
+        app_subtitle = QLabel(f"Petrophysics Master - v{APP_VERSION_DISPLAY}")
         app_subtitle.setStyleSheet(
             f"font-size: 14px; font-weight: bold; color: {get_color('text_secondary')};"
         )
@@ -101,7 +102,13 @@ class AboutDialog(QDialog):
         history_group = self._create_info_section("History & Development")
         history_text = (
             "<p style='margin-bottom: 8px;'><b>Version History:</b></p>"
-            "<p style='margin: 0 0 8px 0;'><b>v1.4.0 (Build 20260113) - Current Release</b></p>"
+            f"<p style='margin: 0 0 8px 0;'><b>v{APP_VERSION_DISPLAY} - Current Release</b></p>"
+            "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
+            "<li>Hardened LAS, core, formation-top, export, and session data handling</li>"
+            "<li>Added configurable neutron matrix responses and saturation solver warnings</li>"
+            "<li>Improved theme-aware plots, UI state restoration, and rotating file logging</li>"
+            "</ul>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.4.0 (Build 20260113)</b></p>"
             "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
             "<li>Added Light and Dark themes</li>"
             "<li>Theme-aware refresh for sidebar, tabs, metric cards, and export buttons</li>"
@@ -161,7 +168,7 @@ class AboutDialog(QDialog):
         citation_group = self._create_info_section("How to Cite")
         citation_text = (
             "Rohmana, R. C. (2026). Petrophyter: An Application for "
-            "Petrophysical Analysis (Version 1.3). "
+            f"Petrophysical Analysis (Version {APP_VERSION}). "
             "Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University."
         )
         citation_box = QTextEdit()
