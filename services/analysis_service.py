@@ -14,7 +14,7 @@ import traceback
 logger = logging.getLogger(__name__)
 
 from modules.petrophysics import PetrophysicsCalculator
-from modules.statistics_utils import StatisticsUtils
+from modules.statistics_utils import StatisticsUtils, get_default_matrix_parameters
 
 
 class AnalysisSignals(QObject):
@@ -137,7 +137,8 @@ class AnalysisWorker(QRunnable):
                 )
 
             if nphi_curve and nphi_curve != "None" and nphi_curve in data.columns:
-                phin = calc.calculate_porosity_neutron(nphi_curve)
+                nphi_matrix = AnalysisService._get_nphi_matrix(self.model)
+                phin = calc.calculate_porosity_neutron(nphi_curve, nphi_matrix)
 
             has_density = bool(
                 rhob_curve and rhob_curve != "None" and rhob_curve in data.columns
@@ -371,6 +372,21 @@ class AnalysisWorker(QRunnable):
             summary["analysis_mode"] = analysis_mode
             summary["selected_formations"] = selected_formations
             summary["data_points"] = len(data)
+
+            solver_diagnostics = {}
+            for method, diagnostics in calc.solver_diagnostics.items():
+                counts = {
+                    "no_root": int(diagnostics.get("no_root", 0)),
+                    "failed": int(diagnostics.get("failed", 0)),
+                }
+                solver_diagnostics[method] = counts
+                if counts["no_root"] or counts["failed"]:
+                    analysis_warnings.append(
+                        f"{method}: {counts['no_root']} no-root, "
+                        f"{counts['failed']} failed solver points."
+                    )
+            summary["solver_diagnostics"] = solver_diagnostics
+
             if not has_rt:
                 analysis_warnings.append(
                     "Water saturation defaulted to 1.0 because no RT curve was available."
@@ -419,6 +435,27 @@ class AnalysisService(QObject):
         super().__init__(parent)
         self.thread_pool = QThreadPool()
         self._current_worker = None
+
+    @staticmethod
+    def _get_nphi_matrix(model) -> float:
+        """Resolve the configured neutron matrix response compatibly.
+
+        Explicit session/calibration values win. Older models do not have the
+        optional field, so their selected lithology supplies the historical
+        sandstone default or the matching carbonate/dolomite response.
+        """
+        configured = getattr(model, "nphi_matrix", None)
+        if configured is not None:
+            return configured
+
+        preset = str(getattr(model, "lithology_preset", "sandstone")).lower()
+        if "dolomite" in preset:
+            lithology = "dolomite"
+        elif "carbonate" in preset or "limestone" in preset:
+            lithology = "limestone"
+        else:
+            lithology = "sandstone"
+        return get_default_matrix_parameters(lithology)["nphi_matrix"]
 
     def run_analysis(self, model):
         """Start analysis in background thread."""
