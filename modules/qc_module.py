@@ -8,6 +8,17 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
+from .las_utils import DEPTH_COLUMN_CANDIDATES
+
+
+def _resolve_depth_column(data: pd.DataFrame) -> Optional[str]:
+    """Resolve an accepted depth mnemonic without renaming the source frame."""
+    for candidate in DEPTH_COLUMN_CANDIDATES:
+        for column in data.columns:
+            if str(column).upper() == candidate:
+                return column
+    return None
+
 
 @dataclass
 class CurveQCResult:
@@ -80,11 +91,7 @@ class QCModule:
         # A missing DEPTH column must not cause the first real curve to be
         # silently excluded from QC. Accept the same common depth mnemonics as
         # the LAS loaders, but require the selected column to be numeric.
-        depth_candidates = {'DEPTH', 'DEPT', 'MD', 'TVD', 'TDEP'}
-        depth_col = next(
-            (col for col in self.data.columns if str(col).upper() in depth_candidates),
-            None,
-        )
+        depth_col = _resolve_depth_column(self.data)
         if depth_col is None or not pd.api.types.is_numeric_dtype(self.data[depth_col]):
             raise ValueError(
                 "QC requires an explicit numeric depth column (DEPTH/DEPT/MD/TVD/TDEP)"
@@ -288,11 +295,12 @@ class QCModule:
         Returns:
             List of (start_depth, end_depth) tuples for each gap
         """
-        if curve not in self.data.columns or 'DEPTH' not in self.data.columns:
+        depth_col = _resolve_depth_column(self.data)
+        if curve not in self.data.columns or depth_col is None:
             return []
             
         null_mask = self.data[curve].isna()
-        depth = self.data['DEPTH'].values
+        depth = self.data[depth_col].values
         
         gaps = []
         in_gap = False
