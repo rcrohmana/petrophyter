@@ -46,6 +46,7 @@ class FormationTops:
         self.depth_unit_detected = False
         self.depth_unit_warning: Optional[str] = None
         self.converted_to_feet = False
+        self.last_error: Optional[str] = None
 
     def convert_to_feet(self):
         """
@@ -87,11 +88,13 @@ class FormationTops:
         Returns:
             True if successful
         """
+        self.last_error = None
         try:
             df = pd.read_csv(file_path, sep=separator)
             return self._build_from_dataframe(df)
         except Exception as e:
-            logger.error("Error reading tops file: %s", e)
+            self.last_error = str(e)
+            logger.error("Error reading tops file: %s", e, exc_info=True)
             return False
 
     def read_tops_from_buffer(self, file_buffer, separator: str = '\t') -> bool:
@@ -105,11 +108,13 @@ class FormationTops:
         Returns:
             True if successful
         """
+        self.last_error = None
         try:
             df = pd.read_csv(file_buffer, sep=separator)
             return self._build_from_dataframe(df)
         except Exception as e:
-            logger.error("Error reading tops: %s", e)
+            self.last_error = str(e)
+            logger.error("Error reading tops: %s", e, exc_info=True)
             return False
 
     def _build_from_dataframe(self, df: pd.DataFrame) -> bool:
@@ -128,6 +133,7 @@ class FormationTops:
         self.depth_unit_detected = False
         self.depth_unit_warning = None
         self.converted_to_feet = False
+        self.last_error = None
 
         # Normalize column names
         df.columns = df.columns.str.strip().str.lower()
@@ -140,7 +146,8 @@ class FormationTops:
         anomaly_col = self._find_column(df, ['anomaly code', 'anomaly', 'code', 'remarks'])
 
         if name_col is None or top_col is None:
-            logger.warning("Could not find required columns (name, top)")
+            self.last_error = "Could not find required columns (name, top)"
+            logger.warning(self.last_error)
             return False
 
         # Detect the depth unit from the top/bottom column names.
