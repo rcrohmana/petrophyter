@@ -24,6 +24,9 @@ _SESSION_DEFAULTS = {
     "vsh_methods": ["Linear"],
     "rho_matrix": 2.65,
     "dt_matrix": 55.5,
+    # Optional explicit matrix neutron response; absent/None preserves the
+    # lithology-derived default used by older sessions.
+    "nphi_matrix": None,
     "rho_fluid": 1.0,
     "dt_fluid": 189.0,
     "shale_approach": "Custom (Manual)",
@@ -198,6 +201,8 @@ class SessionService(QObject):
                 model.rho_matrix = session_data['rho_matrix']
             if 'dt_matrix' in session_data:
                 model.dt_matrix = session_data['dt_matrix']
+            if 'nphi_matrix' in session_data:
+                model.nphi_matrix = session_data['nphi_matrix']
             
             # Fluid parameters
             if 'rho_fluid' in session_data:
