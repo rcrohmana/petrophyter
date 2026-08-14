@@ -71,6 +71,9 @@ class AppModel(QObject):
         # =====================================================================
         self._rho_matrix: float = 2.65
         self._dt_matrix: float = 55.5
+        # None means derive the neutron matrix response from the selected
+        # lithology preset; explicit values support calibrated/custom sessions.
+        self._nphi_matrix: Optional[float] = None
 
         # =====================================================================
         # FLUID PARAMETERS
@@ -363,6 +366,15 @@ class AppModel(QObject):
     @dt_matrix.setter
     def dt_matrix(self, value: float):
         self._dt_matrix = value
+
+    @property
+    def nphi_matrix(self) -> Optional[float]:
+        """Configured matrix neutron response, or None for lithology default."""
+        return self._nphi_matrix
+
+    @nphi_matrix.setter
+    def nphi_matrix(self, value: Optional[float]):
+        self._nphi_matrix = value
 
     # =========================================================================
     # PROPERTIES - FLUID
