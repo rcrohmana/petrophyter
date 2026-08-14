@@ -2,7 +2,37 @@
 
 # Version History
 
-## v1.4.0 (Build 20260113) — Current Release
+## v1.5.0 (Build 20260814) — Current Release
+
+### New features
+
+- Added explicit, configurable neutron matrix responses for quartz, limestone, and dolomite; values persist in saved sessions.
+- Added Waxman-Smits and Dual-Water results to saturation diagnostics, including visible no-root and solver-failure warnings.
+- Added resilient rotating file logging initialized during application startup.
+
+### Data integrity and calculation improvements
+
+- Hardened LAS, core, and formation-top parsing with per-load state resets, clearer caller-visible errors, UTF-8-first decoding, depth-alias resolution, sorted depth data, and safer overlap handling.
+- Hardened LAS merge/export validation, curve mnemonic and metadata handling, null replacement, and numeric dtype checks.
+- Added validation for petrophysical formula parameters, safer PHIE selection and fallback behavior, and consistent external-series alignment for statistics.
+- Made analysis-result storage, session files, and exported outputs safer through atomic state updates and atomic writes.
+
+### UI and visualization improvements
+
+- Restored supported analysis parameters more completely when loading sessions and added `set_params` helpers to parameter widgets.
+- Displayed every available water-saturation curve in the composite log and improved summary handling for NaN and numeric values.
+- Standardized theme APIs and refreshed diagnostic plots, histograms, QC charts, summary charts, and interactive logs immediately when the theme changes.
+- Reset tabs and derived results reliably when source LAS/QC/analysis data changes or becomes unavailable.
+- Sanitized detailed error messages shown in the UI while preserving actionable information in logs.
+
+### Documentation and quality
+
+- Reorganized the README into focused installation, user-guide, formats, calculations, visualization/export, session, troubleshooting, build, changelog, and licensing documentation.
+- Removed committed bytecode and other local/sensitive artifacts from version control.
+- Hardened Windows packaging by using the selected Conda interpreter, bundling forwarded MKL runtime dependencies, removing stale duplicate Qt MSVC runtimes, and supporting current-user registry installation.
+- Added broad regression coverage for I/O, statistics, petrophysics, services, models, themes, QC, UI state, and build configuration.
+
+## v1.4.0 (Build 20260113)
 
 ### New features
 

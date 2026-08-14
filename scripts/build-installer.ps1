@@ -158,7 +158,7 @@ try {
         
         # Run PyInstaller via conda run
         Write-Host ""
-        & conda run -n $CondaEnv --no-capture-output pyinstaller --noconfirm --clean $SpecFile
+        & conda run -n $CondaEnv --no-capture-output python -m PyInstaller --noconfirm --clean $SpecFile
         
         if ($LASTEXITCODE -ne 0) {
             throw "PyInstaller failed with exit code $LASTEXITCODE"

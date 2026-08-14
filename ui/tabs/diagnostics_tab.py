@@ -445,28 +445,17 @@ class DiagnosticsTab(QWidget):
             ax = self.sw_hist.figure.add_subplot(111)
             ax.set_facecolor(self.sw_hist._axes_color)
 
-            # Define colors and labels for each method
+            # Resolve colors only for methods present in this result set.
+            method_labels = {
+                "SW_ARCHIE": "Archie",
+                "SW_INDO": "Indonesian",
+                "SW_SIMAN": "Simandoux",
+                "SW_WS": "Waxman-Smits",
+                "SW_DW": "Dual-Water",
+            }
             method_config = {
-                "SW_ARCHIE": {
-                    "color": get_plot_color("SW_ARCHIE"),
-                    "label": "Archie",
-                },
-                "SW_INDO": {
-                    "color": get_plot_color("SW_INDO"),
-                    "label": "Indonesian",
-                },
-                "SW_SIMAN": {
-                    "color": get_plot_color("SW_SIMAN"),
-                    "label": "Simandoux",
-                },
-                "SW_WS": {
-                    "color": get_plot_color("SW_WS"),
-                    "label": "Waxman-Smits",
-                },
-                "SW_DW": {
-                    "color": get_plot_color("SW_DW"),
-                    "label": "Dual-Water",
-                },
+                col: {"color": get_plot_color(col), "label": method_labels[col]}
+                for col in available_sw
             }
 
             # Use consistent bins for all methods

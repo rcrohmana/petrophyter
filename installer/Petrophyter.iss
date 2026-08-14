@@ -20,8 +20,8 @@
 ; -----------------------------------------------------------------------------
 #define AppId           "{{978A90D9-EDFB-4F2E-AB78-840138C1574F}"
 #define AppName         "Petrophyter"
-#define AppVersion      "1.4.0 (Build 20260113)"
-#define AppVersionFile  "1.4.0_Build20260113"
+#define AppVersion      "1.5.0 (Build 20260814)"
+#define AppVersionFile  "1.5.0_Build20260814"
 #define AppPublisher    "Petrophysics TAU Research Group"
 #define AppURL          "https://github.com/rcrohmana/petrophyter"
 #define AppExeName      "Petrophyter.exe"
@@ -128,7 +128,7 @@ Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(
 ; -----------------------------------------------------------------------------
 [Registry]
 ; App Paths registration (allows running from Run dialog)
-Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{#AppExeName}"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{#AppExeName}"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName}"; Flags: uninsdeletekey
 
 ; -----------------------------------------------------------------------------
 ; UNINSTALL DELETE (clean up user data - optional)

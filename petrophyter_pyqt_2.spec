@@ -2,6 +2,9 @@
 # Petrophyter PyQt - Optimized PyInstaller spec file
 # Reduced size by excluding unused Qt modules (Qt3D, QML, WebEngine, SQL, etc.)
 
+import os
+import sys
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
 
 block_cipher = None
@@ -25,6 +28,11 @@ try:
 except Exception:
     lasio_datas, lasio_binaries, lasio_hiddenimports = [], [], []
 
+# Conda's BLAS/LAPACK forwarding DLLs resolve exports through mkl_rt.3.dll,
+# which PyInstaller cannot discover as a regular PE import.
+mkl_runtime = os.path.join(sys.prefix, "Library", "bin", "mkl_rt.3.dll")
+mkl_binaries = [(mkl_runtime, ".")] if os.path.exists(mkl_runtime) else []
+
 # =============================================================================
 # ANALYSIS
 # =============================================================================
@@ -32,7 +40,7 @@ except Exception:
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=mpl_binaries + pg_binaries + lasio_binaries,
+    binaries=mpl_binaries + pg_binaries + lasio_binaries + mkl_binaries,
     datas=[
         ('icons', 'icons'),  # Include icons folder
     ] + mpl_datas + pg_datas + lasio_datas,
@@ -244,6 +252,14 @@ unwanted_dlls = [
 def should_exclude_binary(name):
     """Check if a binary/plugin should be excluded."""
     name_lower = name.lower()
+    normalized_name = name_lower.replace("\\", "/")
+
+    # Qt ships stale duplicate MSVC runtimes beside its DLLs in some wheels.
+    # Keep PyInstaller's current root runtimes and remove only the Qt copies.
+    if "pyqt6/qt6/bin/" in normalized_name:
+        filename = normalized_name.rsplit("/", 1)[-1]
+        if filename.startswith(("msvcp140", "vcruntime140")):
+            return True
     
     # Check plugin directories
     for plugin in unwanted_plugins:
