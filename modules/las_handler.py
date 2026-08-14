@@ -648,6 +648,68 @@ def validate_same_well(las_objects: List[Any]) -> Tuple[bool, List[str]]:
     return len(unique_names) == 1, well_names
 
 
+_LAS_UNIT_DEFAULTS = {
+    "DEPTH": "FT",
+    "GR": "API",
+    "RHOB": "G/CC",
+    "NPHI": "V/V",
+    "DT": "US/F",
+    "RT": "OHMM",
+    "RM": "OHMM",
+    "RS": "OHMM",
+    "SP": "MV",
+    "CALI": "IN",
+    "DRHO": "G/CC",
+    "PEF": "B/E",
+    "SW": "V/V",
+    "SW_ARCHIE": "V/V",
+    "SW_INDO": "V/V",
+    "SW_SIMAN": "V/V",
+    "SW_WS": "V/V",
+    "SW_DW": "V/V",
+    "PHIE": "V/V",
+    "PHID": "V/V",
+    "PHIN": "V/V",
+    "PHIT": "V/V",
+}
+
+
+def _safe_las_text(value: Any, default: str) -> str:
+    """Return one-line LAS text without delimiter/control characters."""
+    text = default if value is None else str(value)
+    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+    return text.replace(":", "_") or default
+
+
+def _safe_las_mnemonics(columns: List[str]) -> List[Tuple[str, str]]:
+    """Map source columns to deterministic LAS-safe unique mnemonics."""
+    pairs = []
+    used = {"DEPTH"}
+    for column in columns:
+        if column == "DEPTH":
+            continue
+        base = re.sub(r"[^A-Za-z0-9]+", "_", str(column).strip()).strip("_").upper()
+        base = base or "CURVE"
+        candidate = base
+        suffix = 2
+        while candidate in used:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        used.add(candidate)
+        pairs.append((column, candidate))
+    return pairs
+
+
+def _resolve_las_unit(source_column: str, safe_mnemonic: str, well_info: Dict) -> str:
+    """Resolve a deterministic, delimiter-safe unit for a curve."""
+    curve_info = well_info.get("curve_info", {}) if isinstance(well_info, dict) else {}
+    source_info = curve_info.get(source_column, {}) if isinstance(curve_info, dict) else {}
+    declared = source_info.get("unit") if isinstance(source_info, dict) else None
+    unit = declared or _LAS_UNIT_DEFAULTS.get(safe_mnemonic, "UNITLESS")
+    unit = re.sub(r"[^A-Za-z0-9/%._-]+", "", str(unit).upper())
+    return unit or "UNITLESS"
+
+
 def export_merged_las(merged_df: pd.DataFrame, 
                       well_info: Dict,
                       output_path: str = None) -> str:
@@ -675,6 +737,7 @@ def export_merged_las(merged_df: pd.DataFrame,
     # calculating header ranges/step or serializing rows, rather than emitting
     # a syntactically plausible but non-monotonic file.
     merged_df = merged_df.sort_values('DEPTH', kind='stable').reset_index(drop=True)
+    curve_pairs = _safe_las_mnemonics(list(merged_df.columns))
     
     lines = []
     
@@ -685,7 +748,12 @@ def export_merged_las(merged_df: pd.DataFrame,
     lines.append("")
     
     # Well section
-    well_name = well_info.get('well_name', 'MERGED') if isinstance(well_info, dict) else 'MERGED'
+    raw_well_name = (
+        well_info.get('well_name', 'MERGED')
+        if isinstance(well_info, dict)
+        else 'MERGED'
+    )
+    well_name = _safe_las_text(raw_well_name, 'MERGED')
     lines.append("~WELL INFORMATION")
     lines.append(f" WELL.                 {well_name} : WELL NAME")
     lines.append(f" STRT.FT            {merged_df['DEPTH'].min():.2f} : START DEPTH")
@@ -701,27 +769,27 @@ def export_merged_las(merged_df: pd.DataFrame,
     # Curve section
     lines.append("~CURVE INFORMATION")
     lines.append(" DEPTH.FT                        : DEPTH")
-    for col in merged_df.columns:
-        if col != 'DEPTH':
-            lines.append(f" {col}.                           : {col}")
+    for source_col, safe_col in curve_pairs:
+        unit = _resolve_las_unit(source_col, safe_col, well_info)
+        description = _safe_las_text(source_col, safe_col)
+        lines.append(f" {safe_col}.{unit:<12} : {description}")
     lines.append("")
     
     # Data section
-    lines.append("~A DEPTH " + " ".join(merged_df.columns[merged_df.columns != 'DEPTH']))
+    lines.append("~A DEPTH " + " ".join(safe for _, safe in curve_pairs))
     
     for idx, row in merged_df.iterrows():
         values = [f"{row['DEPTH']:.2f}"]
-        for col in merged_df.columns:
-            if col != 'DEPTH':
-                val = row[col]
-                if pd.isna(val):
-                    values.append("-999.2500")
-                elif isinstance(val, (int, float, np.integer, np.floating)):
-                    values.append(f"{val:.4f}")
-                else:
-                    # Preserve discrete/string curve labels instead of
-                    # applying a numeric format specifier to them.
-                    values.append(str(val))
+        for source_col, _safe_col in curve_pairs:
+            val = row[source_col]
+            if pd.isna(val):
+                values.append("-999.2500")
+            elif isinstance(val, (int, float, np.integer, np.floating)):
+                values.append(f"{val:.4f}")
+            else:
+                # Preserve discrete/string curve labels instead of applying a
+                # numeric format specifier to them.
+                values.append(_safe_las_text(val, ""))
         lines.append(" ".join(values))
     
     content = "\n".join(lines)
