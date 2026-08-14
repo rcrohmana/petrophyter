@@ -30,6 +30,7 @@ from PyQt6.QtGui import QIcon
 
 from ui.main_window import MainWindow
 from themes import ThemeManager
+from services.logging_setup import configure_logging
 
 
 def main():
@@ -44,6 +45,7 @@ def main():
     app.setApplicationName("Petrophyter")
     app.setOrganizationName("Petrophyter Team")
     app.setApplicationVersion("1.2.0")
+    configure_logging()
 
     # Set application icon (rock/stone icon)
     icon_path = resource_path(os.path.join("icons", "app_icon.svg"))
