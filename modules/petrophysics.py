@@ -69,6 +69,35 @@ class PetrophysicsCalculator:
         """
         return pd.Series([fill_value] * len(self.data), index=self.data.index)
 
+    @staticmethod
+    def _validate_positive_parameter(name: str, value, allow_nan: bool = False):
+        """Reject non-physical scalar/array parameters at formula boundaries."""
+        try:
+            values = np.asarray(value, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must contain finite values greater than 0") from exc
+
+        if values.size == 0:
+            raise ValueError(f"{name} must contain finite values greater than 0")
+        if allow_nan:
+            invalid = np.isinf(values) | (np.isfinite(values) & (values <= 0))
+        else:
+            invalid = ~np.isfinite(values) | (values <= 0)
+        if np.any(invalid):
+            raise ValueError(f"{name} must contain finite values greater than 0")
+
+    @staticmethod
+    def _validate_gas_factor(name: str, value):
+        """Require gas correction factors in the formula-safe range [0, 1)."""
+        try:
+            values = np.asarray(value, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be finite and in the range [0, 1)") from exc
+        if values.size == 0 or np.any(~np.isfinite(values)) or np.any(
+            (values < 0) | (values >= 1)
+        ):
+            raise ValueError(f"{name} must be finite and in the range [0, 1)")
+
     # =========================================================================
     # VSHALE CALCULATIONS
     # =========================================================================
@@ -651,6 +680,9 @@ class PetrophysicsCalculator:
         Returns:
             Gas-corrected effective porosity series
         """
+        self._validate_gas_factor("gas_nphi_factor", gas_nphi_factor)
+        self._validate_gas_factor("gas_rhob_factor", gas_rhob_factor)
+
         phid = self.results.get("PHID", self._make_series(np.nan))
         phin = self.results.get("PHIN", self._make_series(np.nan))
 
@@ -740,6 +772,11 @@ class PetrophysicsCalculator:
             return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
+        self._validate_positive_parameter("rw", rw)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
 
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
@@ -790,6 +827,12 @@ class PetrophysicsCalculator:
             return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
+        self._validate_positive_parameter("rw", rw)
+        self._validate_positive_parameter("rsh", rsh)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
 
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
@@ -863,6 +906,12 @@ class PetrophysicsCalculator:
             return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
+        self._validate_positive_parameter("rw", rw)
+        self._validate_positive_parameter("rsh", rsh)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
 
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
@@ -958,6 +1007,13 @@ class PetrophysicsCalculator:
             return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
+        self._validate_positive_parameter("rw", rw)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
+        self._validate_positive_parameter("qv", qv, allow_nan=False)
+        self._validate_positive_parameter("B", B, allow_nan=False)
 
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
@@ -1055,6 +1111,14 @@ class PetrophysicsCalculator:
             return self._make_series(np.nan)
 
         rt = self.data[rt_curve]
+        self._validate_positive_parameter("rw", rw)
+        self._validate_positive_parameter("rwb", rwb)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
+        if not np.isfinite(swb) or not 0 <= swb < 1:
+            raise ValueError("swb must be finite and in the range [0, 1)")
 
         # Dual water ideally uses PHIT, but we operate with whatever 'phie' is passed.
         # If the user selected DW, they should ideally check if they want to pass PHIT.
