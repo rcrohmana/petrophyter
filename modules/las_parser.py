@@ -83,6 +83,7 @@ class LASParser:
         Returns:
             True if successful, False otherwise
         """
+        self.last_error = None
         try:
             self.las = lasio.read(file_path)
             self._extract_well_info()
@@ -104,6 +105,7 @@ class LASParser:
         Returns:
             True if successful, False otherwise
         """
+        self.last_error = None
         try:
             import io
 
