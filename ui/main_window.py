@@ -36,6 +36,7 @@ from PyQt6.QtGui import QIcon
 import traceback
 import threading
 import logging
+import re
 
 import sys
 import os
@@ -63,6 +64,28 @@ from modules.core_handler import CoreDataHandler
 
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_error_detail(detail, max_length: int = 240) -> str:
+    """Keep actionable first-line errors while removing secrets and paths."""
+    if detail is None:
+        return ""
+    first_line = next(
+        (line.strip() for line in str(detail).splitlines() if line.strip()), ""
+    )
+    first_line = re.sub(
+        r"(?i)\b(password|token|secret|api[_ -]?key)\b\s*[:=]\s*\S+",
+        r"\1=[redacted]",
+        first_line,
+    )
+    first_line = re.sub(r"(?i)(?:[A-Za-z]:[\\/]|/)[^\s)]+", "<path>", first_line)
+    return first_line[:max_length]
+
+
+def _failure_message(generic: str, detail=None) -> str:
+    """Build a concise user-facing failure message with optional detail."""
+    safe_detail = _sanitize_error_detail(detail)
+    return f"{generic}:\n{safe_detail}" if safe_detail else generic
 
 
 class MainWindow(QMainWindow):
@@ -338,11 +361,20 @@ class MainWindow(QMainWindow):
                 if getattr(parser, "depth_unit_warning", None):
                     QMessageBox.warning(self, "Depth Unit", parser.depth_unit_warning)
             else:
-                QMessageBox.critical(self, "Error", "Failed to load LAS file")
+                detail = getattr(parser, "last_error", None)
+                logger.error("Failed to load LAS file %s: %s", file_path, detail)
+                QMessageBox.critical(
+                    self,
+                    "Error",
+                    _failure_message("Failed to load LAS file", detail),
+                )
                 self.statusBar.showMessage("Failed to load LAS file")
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load LAS file:\n{str(e)}")
+            logger.exception("Unexpected failure loading LAS file %s", file_path)
+            QMessageBox.critical(
+                self, "Error", _failure_message("Failed to load LAS file", e)
+            )
             self.statusBar.showMessage("Error loading file")
 
     def _prepare_merge(self, file_paths: list):
@@ -350,6 +382,7 @@ class MainWindow(QMainWindow):
         try:
             self._loaded_parsers = []
             self._loaded_file_names = []
+            parse_details = []
 
             for path in file_paths:
                 parser = LASParser()
@@ -357,6 +390,14 @@ class MainWindow(QMainWindow):
                     if parser.read_las_from_buffer(f):
                         self._loaded_parsers.append(parser)
                         self._loaded_file_names.append(os.path.basename(path))
+                    else:
+                        detail = getattr(parser, "last_error", None)
+                        logger.error("Failed to parse LAS file %s: %s", path, detail)
+                        safe_detail = _sanitize_error_detail(detail)
+                        if safe_detail:
+                            parse_details.append(
+                                f"{os.path.basename(path)}: {safe_detail}"
+                            )
 
             if len(self._loaded_parsers) >= 2:
                 self.sidebar.update_multiple_files_info(len(self._loaded_parsers))
@@ -364,12 +405,16 @@ class MainWindow(QMainWindow):
                     f"{len(self._loaded_parsers)} LAS files ready for merge"
                 )
             else:
-                QMessageBox.warning(
-                    self, "Warning", "Need at least 2 valid LAS files to merge"
-                )
+                message = "Need at least 2 valid LAS files to merge"
+                if parse_details:
+                    message += "\n" + "\n".join(parse_details)
+                QMessageBox.warning(self, "Warning", message)
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to prepare files:\n{str(e)}")
+            logger.exception("Unexpected failure preparing LAS files")
+            QMessageBox.critical(
+                self, "Error", _failure_message("Failed to prepare files", e)
+            )
 
     def _on_merge_requested(self):
         """Handle merge request."""
@@ -491,13 +536,22 @@ class MainWindow(QMainWindow):
                     # Update QC tab
                     self.qc_tab.update_display()
                 else:
+                    detail = getattr(tops, "last_error", None)
+                    logger.error(
+                        "Failed to parse formation tops file %s: %s",
+                        file_path,
+                        detail,
+                    )
                     QMessageBox.warning(
-                        self, "Warning", "Failed to parse formation tops file"
+                        self,
+                        "Warning",
+                        _failure_message("Failed to parse formation tops file", detail),
                     )
 
         except Exception as e:
+            logger.exception("Unexpected failure loading formation tops %s", file_path)
             QMessageBox.critical(
-                self, "Error", f"Failed to load formation tops:\n{str(e)}"
+                self, "Error", _failure_message("Failed to load formation tops", e)
             )
 
     def _on_core_file_selected(self, file_path: str):
