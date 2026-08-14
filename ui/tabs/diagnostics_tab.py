@@ -150,6 +150,10 @@ class DiagnosticsTab(QWidget):
 
         content_layout.addWidget(sw_group)
 
+        self.sw_warnings = QLabel("")
+        self.sw_warnings.setWordWrap(True)
+        content_layout.addWidget(self.sw_warnings)
+
         # =====================================================================
         # PERMEABILITY VALIDATION
         # =====================================================================
@@ -402,7 +406,20 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # WATER SATURATION VALIDATION
         # =====================================================================
-        sw_cols = ["SW_ARCHIE", "SW_INDO", "SW_SIMAN"]
+        solver_warnings = []
+        for method, diagnostics in (summary or {}).get("solver_diagnostics", {}).items():
+            no_root = int(diagnostics.get("no_root", 0))
+            failed = int(diagnostics.get("failed", 0))
+            if no_root or failed:
+                solver_warnings.append(
+                    f"⚠️ {method}: {no_root} no-root, {failed} failed solver points"
+                )
+        self.sw_warnings.setText("\n".join(solver_warnings))
+        self.sw_warnings.setStyleSheet(
+            "color: orange;" if solver_warnings else ""
+        )
+
+        sw_cols = ["SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
         available_sw = [
             c for c in sw_cols if c in results.columns and results[c].notna().sum() > 0
         ]
@@ -441,6 +458,14 @@ class DiagnosticsTab(QWidget):
                 "SW_SIMAN": {
                     "color": get_plot_color("SW_SIMAN"),
                     "label": "Simandoux",
+                },
+                "SW_WS": {
+                    "color": get_plot_color("SW_WS"),
+                    "label": "Waxman-Smits",
+                },
+                "SW_DW": {
+                    "color": get_plot_color("SW_DW"),
+                    "label": "Dual-Water",
                 },
             }
 
@@ -955,6 +980,8 @@ class DiagnosticsTab(QWidget):
         # Reset Sw section
         self.sw_hist.clear()
         self.sw_stats_model.set_dataframe(pd.DataFrame())
+        self.sw_warnings.setText("")
+        self.sw_warnings.setStyleSheet("")
 
         # Reset permeability section
         self.perm_crossplot.clear()
