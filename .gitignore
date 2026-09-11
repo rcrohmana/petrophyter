@@ -19,6 +19,7 @@
 /docs/claude/
 /docs/plan/
 /docs/superpowers/
+/docs/internal/
 
 # Python bytecode and caches
 __pycache__/
