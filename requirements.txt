@@ -9,7 +9,7 @@ PyQt6-Qt6>=6.5.0
 lasio>=0.31
 
 # Data Processing
-pandas>=2.0.0
+pandas>=2.0.0,<3.0
 numpy>=1.24.0
 scipy>=1.11.0
 
