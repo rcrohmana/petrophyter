@@ -126,7 +126,7 @@ class TestAnalysisServiceFixes:
             def estimate_rsh(self, *args):
                 return 5.0
 
-        monkeypatch.setattr("services.analysis_service.StatisticsUtils", SpyStatistics)
+        monkeypatch.setattr("modules.pipeline.StatisticsUtils", SpyStatistics)
         errors = []
         worker = AnalysisWorker(model)
         worker.signals.error.connect(errors.append)

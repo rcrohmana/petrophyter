@@ -14,7 +14,8 @@ import traceback
 logger = logging.getLogger(__name__)
 
 from modules.petrophysics import PetrophysicsCalculator
-from modules.statistics_utils import StatisticsUtils, get_default_matrix_parameters
+from modules.pipeline import PipelineError, resolve_nphi_matrix, run_pipeline, vsh_reference
+from modules.statistics_utils import StatisticsUtils
 
 
 class AnalysisSignals(QObject):
@@ -27,393 +28,41 @@ class AnalysisSignals(QObject):
 
 
 class AnalysisWorker(QRunnable):
-    """
-    Worker for running petrophysics analysis in background thread.
+    """Run :func:`modules.pipeline.run_pipeline` on a pool thread.
+
+    Everything the pipeline needs is snapshotted in ``__init__``, which runs on
+    the GUI thread, so the model is never read from the worker thread.
     """
 
     def __init__(self, model):
         super().__init__()
         self.model = model
         self.signals = AnalysisSignals()
+        las_data = model.las_data
+        self._data = las_data.copy() if las_data is not None else None
+        self._params = model.to_params()
+        self._formation_tops = model.formation_tops
 
     def run(self):
-        """Execute the analysis."""
+        """Execute the analysis and report through signals."""
         try:
             self.signals.started.emit()
-            self.signals.progress.emit("Preparing data...", 5)
-
-            if self.model.las_data is None:
-                self.signals.error.emit(
-                    "No data loaded. Please load a LAS file first."
-                )
+            if self._data is None:
+                self.signals.progress.emit("Preparing data...", 5)
+                self.signals.error.emit("No data loaded. Please load a LAS file first.")
                 return
 
-            data = self.model.las_data.copy()
-            analysis_warnings = []
-
-            # Apply formation filter if Per-Formation mode
-            analysis_mode = self.model.analysis_mode
-            selected_formations = self.model.selected_formations
-
-            if (
-                analysis_mode == "Per-Formation"
-                and selected_formations
-                and self.model.formation_tops
-            ):
-                data = self.model.formation_tops.filter_by_formations(
-                    data, selected_formations, "DEPTH"
-                )
-
-            if len(data) == 0:
-                self.signals.error.emit("No data in selected formation(s)")
-                return
-
-            self.signals.progress.emit("Initializing calculator...", 10)
-
-            # Initialize calculator
-            calc = PetrophysicsCalculator(data)
-
-            # Get curve mappings
-            gr_curve = self.model.curve_mapping.get("GR", "GR")
-            rhob_curve = self.model.curve_mapping.get("RHOB", "RHOB")
-            nphi_curve = self.model.curve_mapping.get("NPHI", "NPHI")
-            dt_curve = self.model.curve_mapping.get("DT", "DT")
-            rt_curve = self.model.curve_mapping.get("RT", "RT")
-
-            # Initialize statistics utility
-            stats_util = StatisticsUtils(data)
-
-            self.signals.progress.emit("Calculating VShale...", 20)
-
-            # Calculate GR baselines
-            if self.model.vsh_baseline_method == "Custom (Manual)":
-                gr_min = self.model.gr_min_manual
-                gr_max = self.model.gr_max_manual
-            elif gr_curve and gr_curve != "None" and gr_curve in data.columns:
-                gr_min, gr_max = stats_util.estimate_gr_baseline(gr_curve)
-            else:
-                gr_min, gr_max = 20, 120
-
-            # Calculate Vshale
-            vsh_methods_selected = self.model.vsh_methods
-            if not vsh_methods_selected:
-                vsh_methods_selected = ["Linear"]
-
-            method_map = {
-                "Linear": "linear",
-                "Larionov Tertiary": "larionov_tertiary",
-                "Larionov Older": "larionov_older",
-            }
-            methods_to_calc = [
-                method_map[m] for m in vsh_methods_selected if m in method_map
-            ] or ["linear"]
-
-            has_gr = bool(gr_curve and gr_curve != "None" and gr_curve in data.columns)
-            if has_gr:
-                calc.calculate_all_vshale(
-                    gr_curve, gr_min, gr_max, methods_to_calc
-                )
-                vsh, _ = AnalysisService._get_vsh_reference(
-                    calc, methods_to_calc, data, gr_curve
-                )
-            else:
-                vsh = pd.Series([0.3] * len(data), index=data.index)
-                calc.results["VSH"] = vsh
-                analysis_warnings.append(
-                    "VSH defaulted to 0.3 because no GR curve was available."
-                )
-
-            self.signals.progress.emit("Calculating porosity...", 35)
-
-            # Calculate porosities
-            rho_matrix = self.model.rho_matrix
-            rho_fluid = self.model.rho_fluid
-            dt_matrix = self.model.dt_matrix
-            dt_fluid = self.model.dt_fluid
-
-            if rhob_curve and rhob_curve != "None" and rhob_curve in data.columns:
-                phid = calc.calculate_porosity_density(
-                    rhob_curve, rho_matrix, rho_fluid
-                )
-
-            if nphi_curve and nphi_curve != "None" and nphi_curve in data.columns:
-                nphi_matrix = AnalysisService._get_nphi_matrix(self.model)
-                phin = calc.calculate_porosity_neutron(nphi_curve, nphi_matrix)
-
-            has_density = bool(
-                rhob_curve and rhob_curve != "None" and rhob_curve in data.columns
+            results, summary = run_pipeline(
+                self._data,
+                self._params["curve_mapping"],
+                self._params,
+                progress=self.signals.progress.emit,
+                formation_tops=self._formation_tops,
             )
-            has_neutron = bool(
-                nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
-            )
-            if dt_curve and dt_curve != "None" and dt_curve in data.columns:
-                phis = calc.calculate_porosity_sonic(dt_curve, dt_matrix, dt_fluid)
-
-            # Total porosity (N-D crossplot) only when an input exists.
-            if has_density or has_neutron:
-                phit = calc.calculate_phit_neutron_density()
-            else:
-                analysis_warnings.append(
-                    "PHIT was not calculated because no RHOB or NPHI curve was available."
-                )
-
-            self.signals.progress.emit("Calculating effective porosity...", 45)
-
-            # Calculate all PHIE methods
-            nphi_shale = self.model.nphi_shale
-            rho_shale = self.model.rho_shale
-            dt_shale = self.model.dt_shale
-
-            # Gas correction parameters (v1.2)
-            gas_correction = getattr(self.model, "gas_correction_enabled", False)
-            gas_nphi_factor = getattr(self.model, "gas_nphi_factor", 0.30)
-            gas_rhob_factor = getattr(self.model, "gas_rhob_factor", 0.15)
-
-            # Primary PHIE method
-            primary_phie_method = getattr(self.model, "primary_phie_method", "PHIE_DN")
-
-            calc.calculate_all_phie(
-                vsh=vsh,
-                nphi_shale=nphi_shale,
-                rhob_shale=rho_shale,
-                dt_shale=dt_shale,
-                rho_matrix=rho_matrix,
-                rho_fluid=rho_fluid,
-                dt_matrix=dt_matrix,
-                dt_fluid=dt_fluid,
-                gas_correction=gas_correction,
-                gas_nphi_factor=gas_nphi_factor,
-                gas_rhob_factor=gas_rhob_factor,
-                primary_method=primary_phie_method,
-            )
-
-            self.signals.progress.emit("Calculating water saturation...", 55)
-
-            # Water saturation
-            rw = self.model.rw
-            rsh = self.model.rsh
-            a = self.model.a
-            m = self.model.m
-            n = self.model.n
-
-            # Data-driven Rw/Rsh estimation if needed
-            has_rt = bool(rt_curve and rt_curve != "None" and rt_curve in data.columns)
-            phi_proxy = (
-                nphi_curve
-                if has_neutron
-                else ("NPHI" if "NPHI" in data.columns else None)
-            )
-            if rw <= 0.01 and has_rt:
-                rw_est = stats_util.estimate_rw_from_rt_water_zone(
-                    rt_curve, phi_proxy, 0.15, a, m
-                )
-                if rw_est:
-                    rw = rw_est
-
-            if has_rt:
-                rsh_est = stats_util.estimate_rsh(rt_curve, vsh)
-                if rsh_est:
-                    rsh = rsh_est
-
-            phie = calc.results.get("PHIE")
-            if phie is None:
-                phie = pd.Series([0.15] * len(data), index=data.index)
-                analysis_warnings.append(
-                    "PHIE defaulted to 0.15 because no usable porosity method was available."
-                )
-
-            if has_rt:
-                # Retrieve selected models (defaults if missing)
-                selected_methods = getattr(self.model, "sw_methods", ["Simandoux"])
-                primary_method = getattr(self.model, "sw_primary_method", "Simandoux")
-
-                # Retrieve extra params
-                qv = getattr(self.model, "ws_qv", 0.2)
-                B = getattr(self.model, "ws_b", 1.0)
-                swb = getattr(self.model, "dw_swb", 0.1)
-                rwb = getattr(self.model, "dw_rwb", 0.2)
-
-                # Calculate selected
-                if "Archie" in selected_methods:
-                    calc.calculate_sw_archie(rt_curve, phie, rw, a, m, n)
-                if "Indonesian" in selected_methods:
-                    calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw, rsh, a, m, n)
-                if "Simandoux" in selected_methods:
-                    calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw, rsh, a, m, n)
-                if "Waxman-Smits" in selected_methods:
-                    calc.calculate_sw_waxman_smits(rt_curve, phie, rw, a, m, n, qv, B)
-                if "Dual-Water" in selected_methods:
-                    calc.calculate_sw_dual_water(rt_curve, phie, rw, a, m, n, swb, rwb)
-
-                # Set Primary SW
-                # Method Name -> Column Name map
-                method_to_col = {
-                    "Archie": "SW_ARCHIE",
-                    "Indonesian": "SW_INDO",
-                    "Simandoux": "SW_SIMAN",
-                    "Waxman-Smits": "SW_WS",
-                    "Dual-Water": "SW_DW",
-                }
-
-                primary_col = method_to_col.get(primary_method, "SW_SIMAN")
-
-                # Check if primary result exists
-                if primary_col in calc.results.columns:
-                    calc.results["SW"] = calc.results[primary_col]
-                    # Also set for internal use in this function scope if needed
-                    sw_primary_series = calc.results[primary_col]
-                else:
-                    # Fallback
-                    available = [
-                        c for c in method_to_col.values() if c in calc.results.columns
-                    ]
-                    if available:
-                        calc.results["SW"] = calc.results[available[0]]
-                        sw_primary_series = calc.results[available[0]]
-                    else:
-                        calc.results["SW"] = pd.Series(
-                            [1.0] * len(data), index=data.index
-                        )
-                        analysis_warnings.append(
-                            "Water saturation defaulted to 1.0 because no selected method produced a result."
-                        )
-                        sw_primary_series = calc.results["SW"]
-
-            self.signals.progress.emit("Calculating Swirr...", 65)
-
-            # Calculate Swirr
-            swirr_method = self.model.swirr_method
-            k_buckles = self.model.k_buckles
-
-            # Use Primary SW for Swirr logic (if it uses Sw input)
-            sw_for_swirr = calc.results.get(
-                "SW", pd.Series([0.5] * len(data), index=data.index)
-            )
-
-            if swirr_method == "Hierarchical (Recommended)":
-                swirr, swirr_info = calc.calculate_swirr_hierarchical(
-                    phie=phie, sw=sw_for_swirr, vsh=vsh, k_buckles=k_buckles
-                )
-                swirr_actual_method = swirr_info["method"]
-            else:
-                method_map = {
-                    "Buckles Number": ["buckles"],
-                    "Clean Zone": ["clean_zone"],
-                    "Statistical": ["statistical"],
-                    "All Methods": ["buckles", "clean_zone", "statistical"],
-                }
-                swirr_methods_to_use = method_map.get(swirr_method, ["buckles"])
-
-                swirr_results = calc.calculate_all_swirr(
-                    phie=phie,
-                    sw=sw_for_swirr,
-                    vsh=vsh,
-                    k_buckles=k_buckles,
-                    vsh_threshold=0.2,
-                    methods=swirr_methods_to_use,
-                )
-                swirr_actual_method = swirr_method
-
-            swirr = calc.results.get(
-                "SWIRR", pd.Series([0.2] * len(data), index=data.index)
-            )
-            swirr_mean = swirr.mean()
-
-            self.signals.progress.emit("Calculating permeability...", 75)
-
-            # Permeability
-            C = self.model.perm_C
-            P = self.model.perm_P
-            Q = self.model.perm_Q
-
-            perm_timur = calc.calculate_permeability_timur(phie, swirr)
-            perm_wr = calc.calculate_permeability_wyllie_rose(phie, swirr, C, P, Q)
-
-            # Flow Unit Classification
-            flow_units = calc.classify_flow_units(perm_timur)
-            perm_flags = calc.get_permeability_quality_flags(perm_timur, swirr, phie)
-
-            self.signals.progress.emit("Calculating net pay...", 85)
-
-            # Net pay calculations
-            vsh_cutoff = self.model.vsh_cutoff
-            phi_cutoff = self.model.phi_cutoff
-            sw_cutoff = self.model.sw_cutoff
-
-            sw_for_pay = calc.results.get(
-                "SW", pd.Series([1.0] * len(data), index=data.index)
-            )
-            summary = calc.calculate_net_pay(
-                vsh, phie, sw_for_pay, vsh_cutoff, phi_cutoff, sw_cutoff
-            )
-
-            self.signals.progress.emit("Calculating HCPV...", 88)
-
-            # Calculate HCPV
-            # Use primary SW (already set in calc.results['SW'])
-            hcpv_results = calc.calculate_hcpv(
-                phie=phie,
-                sw=sw_for_pay,
-                depth=data["DEPTH"],
-                net_res_flag=calc.results.get("NET_RES_FLAG"),
-                net_pay_flag=calc.results.get("NET_PAY_FLAG"),
-            )
-
-            self.signals.progress.emit("Finalizing results...", 95)
-
-            # Store results
-            results = calc.export_results()
-            summary["gr_min"] = gr_min
-            summary["gr_max"] = gr_max
-            summary["rw"] = rw
-            summary["rsh"] = rsh
-            summary["swirr_method"] = swirr_method
-            summary["swirr_mean"] = swirr_mean
-            summary["analysis_mode"] = analysis_mode
-            summary["selected_formations"] = selected_formations
-            summary["data_points"] = len(data)
-
-            solver_diagnostics = {}
-            for method, diagnostics in calc.solver_diagnostics.items():
-                counts = {
-                    "no_root": int(diagnostics.get("no_root", 0)),
-                    "failed": int(diagnostics.get("failed", 0)),
-                }
-                solver_diagnostics[method] = counts
-                if counts["no_root"] or counts["failed"]:
-                    analysis_warnings.append(
-                        f"{method}: {counts['no_root']} no-root, "
-                        f"{counts['failed']} failed solver points."
-                    )
-            summary["solver_diagnostics"] = solver_diagnostics
-
-            if not has_rt:
-                analysis_warnings.append(
-                    "Water saturation defaulted to 1.0 because no RT curve was available."
-                )
-            summary["warnings"] = analysis_warnings
-
-            # Add HCPV summary statistics
-            if "HCPV_CUM" in hcpv_results:
-                summary["hcpv_gross"] = (
-                    float(hcpv_results["HCPV_CUM"].iloc[-1])
-                    if len(hcpv_results["HCPV_CUM"]) > 0
-                    else 0.0
-                )
-                summary["hcpv_net_res"] = (
-                    float(hcpv_results["HCPV_CUM_NET_RES"].iloc[-1])
-                    if len(hcpv_results["HCPV_CUM_NET_RES"]) > 0
-                    else 0.0
-                )
-                summary["hcpv_net_pay"] = (
-                    float(hcpv_results["HCPV_CUM_NET_PAY"].iloc[-1])
-                    if len(hcpv_results["HCPV_CUM_NET_PAY"]) > 0
-                    else 0.0
-                )
-
-            self.signals.progress.emit("Analysis complete!", 100)
             self.signals.completed.emit(results, summary)
 
+        except PipelineError as e:
+            self.signals.error.emit(str(e))
         except Exception as e:
             self.signals.error.emit(
                 f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
@@ -438,24 +87,13 @@ class AnalysisService(QObject):
 
     @staticmethod
     def _get_nphi_matrix(model) -> float:
-        """Resolve the configured neutron matrix response compatibly.
-
-        Explicit session/calibration values win. Older models do not have the
-        optional field, so their selected lithology supplies the historical
-        sandstone default or the matching carbonate/dolomite response.
-        """
-        configured = getattr(model, "nphi_matrix", None)
-        if configured is not None:
-            return configured
-
-        preset = str(getattr(model, "lithology_preset", "sandstone")).lower()
-        if "dolomite" in preset:
-            lithology = "dolomite"
-        elif "carbonate" in preset or "limestone" in preset:
-            lithology = "limestone"
-        else:
-            lithology = "sandstone"
-        return get_default_matrix_parameters(lithology)["nphi_matrix"]
+        """Resolve the neutron matrix response for a model (see pipeline.resolve_nphi_matrix)."""
+        return resolve_nphi_matrix(
+            {
+                "nphi_matrix": getattr(model, "nphi_matrix", None),
+                "lithology_preset": getattr(model, "lithology_preset", "sandstone"),
+            }
+        )
 
     def run_analysis(self, model):
         """Start analysis in background thread."""
@@ -470,11 +108,7 @@ class AnalysisService(QObject):
 
     def _on_completed(self, results: pd.DataFrame, summary: dict):
         """Handle analysis completion."""
-        # print(f"[DEBUG AnalysisService] _on_completed called")
-        # print(f"[DEBUG AnalysisService] results.shape = {results.shape}")
-        # print(f"[DEBUG AnalysisService] Emitting completed signal...")
         self.completed.emit(results, summary)
-        # print(f"[DEBUG AnalysisService] Signal emitted")
 
     def calculate_rw_rsh(self, model) -> Optional[Dict]:
         """Calculate Rw and Rsh from log data (synchronous)."""
@@ -712,33 +346,8 @@ class AnalysisService(QObject):
 
     @staticmethod
     def _get_vsh_reference(calc, methods_to_calc, data, gr_curve):
-        """Get VSH reference series for shale masking."""
-        key_map = {
-            "linear": "VSH_LINEAR",
-            "larionov_tertiary": "VSH_LARIO_TERT",
-            "larionov_older": "VSH_LARIO_OLD",
-        }
-
-        if len(methods_to_calc) == 1:
-            key = key_map.get(methods_to_calc[0], "VSH_LINEAR")
-            vsh_ref = calc.results.get(
-                key,
-                calc.results.get("VSH", pd.Series([0.5] * len(data), index=data.index)),
-            )
-            return vsh_ref, methods_to_calc[0]
-        else:
-            vsh_arrays = [
-                calc.results[key_map.get(m, "VSH")]
-                for m in methods_to_calc
-                if key_map.get(m, "VSH") in calc.results.columns
-            ]
-            if vsh_arrays:
-                vsh_ref = pd.concat(vsh_arrays, axis=1).max(axis=1)
-            else:
-                vsh_ref = calc.results.get(
-                    "VSH", pd.Series([0.5] * len(data), index=data.index)
-                )
-            return vsh_ref, "max(" + ",".join(methods_to_calc) + ")"
+        """Get VSH reference series for shale masking (see pipeline.vsh_reference)."""
+        return vsh_reference(calc, methods_to_calc, data, gr_curve)
 
     def _build_shale_mask(self, vsh_ref, threshold: float) -> Tuple[pd.Series, int]:
         """Build initial shale mask from VSH and threshold."""

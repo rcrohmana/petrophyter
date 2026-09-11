@@ -3,6 +3,7 @@ Application Model for Petrophyter PyQt
 Replaces Streamlit's st.session_state with a Qt-based reactive model.
 """
 
+import copy
 from PyQt6.QtCore import QObject, pyqtSignal
 import pandas as pd
 from typing import Dict, List, Optional, Any
@@ -861,6 +862,23 @@ class AppModel(QObject):
             "DT": "None",
             "RT": "None",
         }
+
+    def to_params(self) -> dict:
+        """Snapshot the analysis parameters as a plain, detached dict.
+
+        Keys follow ``modules.pipeline.PARAM_DEFAULTS``. Workers must call this
+        on the GUI thread and read only the returned dict afterwards, so the
+        model is never touched from a pool thread. Curve mapping is included
+        under ``"curve_mapping"``.
+        """
+        from modules.pipeline import PARAM_DEFAULTS
+
+        params = {
+            key: copy.deepcopy(getattr(self, key, default))
+            for key, default in PARAM_DEFAULTS.items()
+        }
+        params["curve_mapping"] = dict(self._curve_mapping)
+        return params
 
     def get_available_curves(self) -> List[str]:
         """Get list of available curves from loaded LAS data."""

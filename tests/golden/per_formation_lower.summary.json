@@ -1,0 +1,26 @@
+{
+ "analysis_mode": "Per-Formation",
+ "avg_phie_pay": 0.180856871065075,
+ "avg_sw_pay": 0.17496210818605668,
+ "avg_vsh_pay": 0.193292947628788,
+ "data_points": 60,
+ "gr_max": 88.46178696080887,
+ "gr_min": 38.36282133753379,
+ "gross_sand": 25.252525252523128,
+ "hcpv_gross": 4.94272630847781,
+ "hcpv_net_pay": 3.782364368108087,
+ "hcpv_net_res": 3.782364368108087,
+ "net_pay": 25.252525252523128,
+ "net_reservoir": 25.252525252523128,
+ "ng_pay": 1.0,
+ "ng_reservoir": 1.0,
+ "rsh": 50.0,
+ "rw": 0.05,
+ "selected_formations": [
+  "Lower"
+ ],
+ "solver_diagnostics": {},
+ "swirr_mean": 0.2802931180708407,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": []
+}
