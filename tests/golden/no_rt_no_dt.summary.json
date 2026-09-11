@@ -1,0 +1,26 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": NaN,
+ "avg_sw_pay": NaN,
+ "avg_vsh_pay": NaN,
+ "data_points": 100,
+ "gr_max": 88.41562199612135,
+ "gr_min": 42.68115511379288,
+ "gross_sand": 37.37373737373423,
+ "hcpv_gross": 0.0,
+ "hcpv_net_pay": 0.0,
+ "hcpv_net_res": 0.0,
+ "net_pay": 0.0,
+ "net_reservoir": 37.37373737373423,
+ "ng_pay": 0.0,
+ "ng_reservoir": 1.0,
+ "rsh": 5.0,
+ "rw": 0.05,
+ "selected_formations": [],
+ "solver_diagnostics": {},
+ "swirr_mean": 0.28550053173854034,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": [
+  "Water saturation defaulted to 1.0 because no RT curve was available."
+ ]
+}

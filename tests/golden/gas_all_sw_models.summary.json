@@ -1,0 +1,35 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.2816729846109307,
+ "avg_sw_pay": 0.03949323116051629,
+ "avg_vsh_pay": 0.17723076870741994,
+ "data_points": 50,
+ "gr_max": 39.699098521619945,
+ "gr_min": 30.205844942958024,
+ "gross_sand": 24.489795918367236,
+ "hcpv_gross": 12.437151274378358,
+ "hcpv_net_pay": 6.627490984158184,
+ "hcpv_net_res": 6.627490984158184,
+ "net_pay": 24.489795918367236,
+ "net_reservoir": 24.489795918367236,
+ "ng_pay": 1.0,
+ "ng_reservoir": 1.0,
+ "rsh": 50.0,
+ "rw": 0.05,
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_DW": {
+   "failed": 0,
+   "no_root": 31
+  },
+  "SW_WS": {
+   "failed": 0,
+   "no_root": 0
+  }
+ },
+ "swirr_mean": 0.07968011136620251,
+ "swirr_method": "All Methods",
+ "warnings": [
+  "SW_DW: 31 no-root, 0 failed solver points."
+ ]
+}
