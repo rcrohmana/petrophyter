@@ -5,9 +5,9 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.5.0_(Build_20260814)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.6.0_(Build_20261009)-orange.svg)
 
-![Petrophyter application](<icons/Screenshot 1.2.png>)
+![Petrophyter main window with the interactive log display](docs/images/petrophyter-main-window.png)
 
 ## Overview
 
@@ -28,26 +28,28 @@ Key capabilities include:
 
 ## Quick Start
 
-### Requirements
+### Windows installer
 
-- Python 3.10 or higher
-- pip package manager
+Download the latest `Petrophyter_Setup_*.exe` from [Releases](https://github.com/rcrohmana/petrophyter/releases/latest), run it, and launch **Petrophyter** from the Start Menu.
 
-### Install and Run
+### Run from source
+
+Requires Python 3.10 or higher.
 
 ```bash
-cd petrophyter_pyqt
 pip install -r requirements.txt
 python main.py
 ```
+
+On the development machine, double-click `run_petrophyter.bat` in the repository root. It launches the app in the `mldl` Conda environment.
 
 See [Installation](docs/installation.md) for dependency versions and complete setup information.
 
 ## Basic Workflow
 
-1. **Load data:** Open a LAS file or merge multiple files from the same well.
-2. **Configure:** Select calculation methods and adjust shale, matrix, fluid, and cutoff parameters.
-3. **Analyze:** Run the petrophysical calculations.
+1. **Load data:** Use **File → Open LAS File(s)…** (`Ctrl+O`). Select several files from the same well to merge them.
+2. **Configure:** In the Parameters window (`Ctrl+P`), select calculation methods and adjust shale, matrix, fluid, and cutoff parameters.
+3. **Analyze:** Run the petrophysical calculations (`F5`).
 4. **Review:** Inspect logs, crossplots, diagnostics, core validation, and net-pay results.
 5. **Export:** Save the results or session for later use.
 
@@ -81,7 +83,7 @@ See [Licensing](docs/licensing.md) for the detailed scope, commercial PyQt6 opti
 
 ## Citation
 
-Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.5.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
+Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.6.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 
