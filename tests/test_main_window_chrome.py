@@ -86,3 +86,63 @@ def test_action_icons_refresh_on_theme_change(window):
         set_current_theme("light")
         clear_icon_cache()
     assert before != after
+
+
+def test_parameters_window_is_modeless_tool(window):
+    from PyQt6.QtCore import Qt
+    pw = window.params_window
+    assert not pw.isModal()
+    assert pw.windowFlags() & Qt.WindowType.Tool
+    assert pw.parent() is window
+
+
+def test_parameter_menus_cover_pages(window):
+    from ui.parameters_window import PAGES
+    window.params_window.set_core_available(True)  # page_core is disabled without core data
+    window._refresh_core_actions()
+    for key, title, _menu in PAGES:
+        action = window.actions_[f"page_{key}"]
+        assert action.text() == f"{title}…"
+        action.trigger()
+        assert window.params_window.isVisible()
+        assert window.params_window.current_page() == key
+    keys = {k for k, _, _ in PAGES}
+    page_actions = {k[5:] for k in window.actions_ if k.startswith("page_")}
+    assert page_actions == keys
+
+
+def test_menu_order(window):
+    titles = [a.text().replace("&", "") for a in window.menuBar().actions()]
+    assert titles == ["File", "Session", "Analysis", "Parameters", "Corrections", "View", "Help"]
+
+
+def test_core_matching_needs_core(window):
+    assert not window.actions_["page_core"].isEnabled()
+    assert not window.params_window.core_unit_combo.isEnabled()
+    window.params_window.set_core_available(True)
+    window._refresh_core_actions()
+    assert window.actions_["page_core"].isEnabled()
+    assert window.params_window.core_unit_combo.isEnabled()
+
+
+def test_sidebar_has_no_parameter_widgets(window):
+    assert not hasattr(window.sidebar, "vsh_params_widget")
+    assert not hasattr(window.sidebar, "analysis_mode_widget")
+
+
+def test_params_actions_and_shortcuts(window):
+    from PyQt6.QtCore import Qt
+    assert window.actions_["params_window"].text() == "Parameters Window"
+    assert window.actions_["params_window"].shortcut().toString() == "Ctrl+P"
+    for key in ("run_analysis", "toggle_browser", "params_window"):
+        assert window.actions_[key].shortcutContext() == Qt.ShortcutContext.ApplicationShortcut
+    assert window._action_icons["params_window"] == "sliders-horizontal"
+    assert window.params_button.property("variant") == "ghost"
+
+
+def test_params_page_headers_not_selectable(window):
+    from PyQt6.QtCore import Qt
+    lst = window.params_window.page_list
+    headers = [lst.item(i) for i in range(lst.count()) if not lst.item(i).data(Qt.ItemDataRole.UserRole + 1)]
+    assert [h.text() for h in headers] == ["ANALYSIS", "PARAMETERS", "CORRECTIONS"]
+    assert all(not (h.flags() & Qt.ItemFlag.ItemIsSelectable) for h in headers)

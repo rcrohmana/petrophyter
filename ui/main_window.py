@@ -50,6 +50,7 @@ from services.session_service import SessionService
 from .sidebar_panel import SidebarPanel
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
+from .parameters_window import PAGES, ParametersWindow
 from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
@@ -180,6 +181,7 @@ class MainWindow(QMainWindow):
         # =====================================================================
         self.sidebar = SidebarPanel(self.model)
         splitter.addWidget(self.sidebar)
+        self.params_window = ParametersWindow(self.model, self)
 
         # =====================================================================
         # MAIN CONTENT (TABS)
@@ -241,10 +243,10 @@ class MainWindow(QMainWindow):
             self._open_las_dialog, self._open_tops_dialog, self._open_core_dialog
         )
         self.sidebar.download_merged_clicked.connect(self._on_download_merged)
-        self.sidebar.calculate_rw_rsh_clicked.connect(self._on_calculate_rw_rsh)
-        self.sidebar.calculate_shale_clicked.connect(self._on_calculate_shale)
-        self.sidebar.apply_shale_clicked.connect(self._on_apply_shale)
-        self.sidebar.calculate_perm_clicked.connect(self._on_calculate_perm)
+        self.params_window.calculate_rw_rsh_clicked.connect(self._on_calculate_rw_rsh)
+        self.params_window.calculate_shale_clicked.connect(self._on_calculate_shale)
+        self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
+        self.params_window.calculate_perm_clicked.connect(self._on_calculate_perm)
 
         # Analysis service signals
         self.analysis_service.started.connect(self._on_analysis_started)
@@ -365,6 +367,14 @@ class MainWindow(QMainWindow):
         act("theme_dark", "Dark", "moon", None, lambda: self._set_theme("dark"), checkable=True)
         act("user_guide", "User Guide", "book-open", None, self._open_user_guide)
         act("about", "About Petrophyter", "info", None, self._on_about_triggered)
+        for key, title, _menu in PAGES:
+            act(f"page_{key}", f"{title}…", None, None,
+                lambda _=False, k=key: self.params_window.open_page(k))
+        act("params_window", "Parameters Window", "sliders-horizontal", "Ctrl+P",
+            lambda: self.params_window.open_page(self.params_window.current_page()))
+        for key in ("run_analysis", "toggle_browser", "params_window"):
+            self.actions_[key].setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.actions_["page_core"].setEnabled(False)
         group = QActionGroup(self)
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
@@ -390,6 +400,16 @@ class MainWindow(QMainWindow):
         view.addAction(self.actions_["toggle_browser"])
         self._menus["view"] = view
         self._menus["view_theme_sep"] = view.addSeparator()
+        analysis.addSeparator()
+        menus = {"Analysis": analysis}
+        for name in ("Parameters", "Corrections"):
+            menus[name] = QMenu(f"&{name}", self)
+            bar.insertMenu(view.menuAction(), menus[name])
+        for key, _title, menu in PAGES:
+            if key == "rock":
+                menus[menu].addSeparator()  # Basic | Advanced split (spec §2.2)
+            menus[menu].addAction(self.actions_[f"page_{key}"])
+        view.insertAction(self._menus["view_theme_sep"], self.actions_["params_window"])
         theme_menu = view.addMenu("Theme")
         theme_menu.addAction(self.actions_["theme_light"])
         theme_menu.addAction(self.actions_["theme_dark"])
@@ -408,6 +428,13 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         toolbar.addAction(self.actions_["open_las"])
         toolbar.addAction(self.actions_["save_session"])
+        params_button = QToolButton()
+        params_button.setDefaultAction(self.actions_["params_window"])
+        params_button.setText("Parameters")
+        params_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        params_button.setProperty("variant", "ghost")
+        toolbar.addWidget(params_button)
+        self.params_button = params_button
         toolbar.addSeparator()
         self.run_button = QToolButton()
         self.run_button.setDefaultAction(self.actions_["run_analysis"])
@@ -421,6 +448,13 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.well_indicator)
         self.addToolBar(toolbar)
         self.main_toolbar = toolbar
+
+    def _sync_model_from_ui(self):
+        self.params_window.update_model_from_ui()
+        self.sidebar.update_model_from_ui()  # merge fields only; replaced in Task 12B
+
+    def _refresh_core_actions(self):
+        self.actions_["page_core"].setEnabled(self.params_window.core_unit_combo.isEnabled())
 
     def _refresh_action_icons(self):
         """Re-render action icons in the current theme's color."""
@@ -492,7 +526,7 @@ class MainWindow(QMainWindow):
                     found = parser.find_curve_by_type(ctype)
                     if found:
                         detected[ctype] = found
-                self.sidebar.update_available_curves(curves, detected)
+                self.params_window.update_available_curves(curves, detected)
                 self.model.curve_mapping = {
                     ctype: detected.get(ctype, "None")
                     for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
@@ -578,7 +612,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Need at least 2 LAS files to merge")
             return
 
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()
         self.sidebar.merge_btn.setEnabled(False)
 
         self.merge_service.merge_files(
@@ -629,7 +663,7 @@ class MainWindow(QMainWindow):
             found = self.model.las_parser.find_curve_by_type(ctype)
             if found:
                 detected[ctype] = found
-        self.sidebar.update_available_curves(curves, detected)
+        self.params_window.update_available_curves(curves, detected)
         self.model.curve_mapping = {
             ctype: detected.get(ctype, "None")
             for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
@@ -687,7 +721,7 @@ class MainWindow(QMainWindow):
                     self.model.formation_tops = tops
 
                     self.sidebar.update_tops_info(len(tops.formations))
-                    self.sidebar.update_formations_list(tops.get_formation_list())
+                    self.params_window.update_formations_list(tops.get_formation_list())
 
                     self.statusBar.showMessage(
                         f"Loaded {len(tops.formations)} formations"
@@ -720,7 +754,7 @@ class MainWindow(QMainWindow):
     def _on_core_file_selected(self, file_path: str):
         """Handle core data file selection."""
         try:
-            self.sidebar.update_model_from_ui()
+            self._sync_model_from_ui()
 
             handler = CoreDataHandler()
             with open(file_path, "r") as f:
@@ -728,6 +762,8 @@ class MainWindow(QMainWindow):
                     f, depth_unit=self.model.core_depth_unit
                 ):
                     self.model.core_data = handler
+                    self.params_window.set_core_available(True)
+                    self._refresh_core_actions()
 
                     summary = handler.get_summary()
                     self.sidebar.update_core_info(
@@ -764,7 +800,7 @@ class MainWindow(QMainWindow):
 
         # Update model from UI and close the double-click window before the
         # background worker can emit its asynchronous started signal.
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()
         self.actions_["run_analysis"].setEnabled(False)
 
         # Start analysis
@@ -849,11 +885,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No data loaded")
             return
 
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()
         result = self.analysis_service.calculate_rw_rsh(self.model)
 
         if result:
-            self.sidebar.show_calculated_rw_rsh(result["rw"], result["rsh"])
+            self.params_window.show_calculated_rw_rsh(result["rw"], result["rsh"])
         else:
             QMessageBox.warning(self, "Warning", "Could not calculate Rw/Rsh from data")
 
@@ -863,12 +899,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No data loaded")
             return
 
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()
         result = self.analysis_service.calculate_shale_parameters(self.model)
 
         if result:
             self.model.calculated_shale = result
-            self.sidebar.show_calculated_shale(result)
+            self.params_window.show_calculated_shale(result)
         else:
             QMessageBox.warning(
                 self, "Warning", "Could not calculate shale parameters from data"
@@ -877,7 +913,7 @@ class MainWindow(QMainWindow):
     def _on_apply_shale(self):
         """Apply calculated shale parameters."""
         if self.model.calculated_shale:
-            self.sidebar.shale_params_widget.set_params(
+            self.params_window.shale_params_widget.set_params(
                 self.model.calculated_shale["rho_shale"],
                 self.model.calculated_shale["dt_shale"],
                 self.model.calculated_shale["nphi_shale"],
@@ -956,7 +992,7 @@ class MainWindow(QMainWindow):
 
                         if result.success:
                             C, P, Q = result.x
-                            self.sidebar.perm_params_widget.show_calculated_result(
+                            self.params_window.perm_params_widget.show_calculated_result(
                                 C, P, Q
                             )
                             self.statusBar.showMessage(
@@ -989,7 +1025,7 @@ class MainWindow(QMainWindow):
                 # Low porosity - tight formation
                 C, P, Q = 5000.0, 5.0, 2.2
 
-            self.sidebar.perm_params_widget.show_calculated_result(C, P, Q)
+            self.params_window.perm_params_widget.show_calculated_result(C, P, Q)
             self.statusBar.showMessage(
                 f"Estimated from porosity (mean={phi_mean:.3f}): C={C:.0f}, P={P:.2f}, Q={Q:.2f}"
             )
@@ -1028,7 +1064,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QFileDialog
 
         # Update model from UI first
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -1089,6 +1125,8 @@ class MainWindow(QMainWindow):
 
         # Reset sidebar UI
         self.sidebar.reset_ui()
+        self.params_window.reset_ui()
+        self._refresh_core_actions()
         self.actions_["run_analysis"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.well_indicator.set_empty()
@@ -1110,10 +1148,10 @@ class MainWindow(QMainWindow):
 
         def restore_analysis_mode():
             per_formation = self.model.analysis_mode == "Per-Formation"
-            self.sidebar.analysis_mode_widget.per_formation_radio.setChecked(
+            self.params_window.analysis_mode_widget.per_formation_radio.setChecked(
                 per_formation
             )
-            formation_list = self.sidebar.analysis_mode_widget.formation_list
+            formation_list = self.params_window.analysis_mode_widget.formation_list
             existing = {
                 formation_list.item(index).text()
                 for index in range(formation_list.count())
@@ -1127,7 +1165,7 @@ class MainWindow(QMainWindow):
 
         def restore_curve_mapping():
             for curve_type, curve_name in self.model.curve_mapping.items():
-                combo = self.sidebar.curve_mapping_widget.curve_combos.get(curve_type)
+                combo = self.params_window.curve_mapping_widget.curve_combos.get(curve_type)
                 if combo is None:
                     continue
                 if curve_name != "None" and combo.findText(curve_name) < 0:
@@ -1135,20 +1173,20 @@ class MainWindow(QMainWindow):
                 combo.setCurrentText(curve_name)
 
         restored_widgets = [
-            self.sidebar.analysis_mode_widget,
-            self.sidebar.curve_mapping_widget,
-            self.sidebar.vsh_params_widget,
-            self.sidebar.porosity_method_widget,
-            self.sidebar.matrix_params_widget,
-            self.sidebar.fluid_params_widget,
-            self.sidebar.shale_params_widget,
-            self.sidebar.archie_params_widget,
-            self.sidebar.sw_models_widget,
-            self.sidebar.res_params_widget,
-            self.sidebar.perm_params_widget,
-            self.sidebar.swir_params_widget,
-            self.sidebar.cutoff_params_widget,
-            self.sidebar.gas_correction_widget,
+            self.params_window.analysis_mode_widget,
+            self.params_window.curve_mapping_widget,
+            self.params_window.vsh_params_widget,
+            self.params_window.porosity_method_widget,
+            self.params_window.matrix_params_widget,
+            self.params_window.fluid_params_widget,
+            self.params_window.shale_params_widget,
+            self.params_window.archie_params_widget,
+            self.params_window.sw_models_widget,
+            self.params_window.res_params_widget,
+            self.params_window.perm_params_widget,
+            self.params_window.swir_params_widget,
+            self.params_window.cutoff_params_widget,
+            self.params_window.gas_correction_widget,
         ]
         for widget in restored_widgets:
             widget.blockSignals(True)
@@ -1158,7 +1196,7 @@ class MainWindow(QMainWindow):
             ("curve mapping", restore_curve_mapping),
             (
                 "VShale",
-                lambda: self.sidebar.vsh_params_widget.set_params(
+                lambda: self.params_window.vsh_params_widget.set_params(
                     self.model.vsh_baseline_method,
                     self.model.gr_min_manual,
                     self.model.gr_max_manual,
@@ -1167,25 +1205,25 @@ class MainWindow(QMainWindow):
             ),
             (
                 "porosity method",
-                lambda: self.sidebar.porosity_method_widget.set_params(
+                lambda: self.params_window.porosity_method_widget.set_params(
                     {"primary_phie_method": self.model.primary_phie_method}
                 ),
             ),
             (
                 "matrix",
-                lambda: self.sidebar.matrix_params_widget.set_params(
+                lambda: self.params_window.matrix_params_widget.set_params(
                     self.model.rho_matrix, self.model.dt_matrix
                 ),
             ),
             (
                 "fluid",
-                lambda: self.sidebar.fluid_params_widget.set_params(
+                lambda: self.params_window.fluid_params_widget.set_params(
                     self.model.rho_fluid, self.model.dt_fluid
                 ),
             ),
             (
                 "shale",
-                lambda: self.sidebar.shale_params_widget.set_params(
+                lambda: self.params_window.shale_params_widget.set_params(
                     self.model.rho_shale,
                     self.model.dt_shale,
                     self.model.nphi_shale,
@@ -1203,7 +1241,7 @@ class MainWindow(QMainWindow):
             ),
             (
                 "Archie",
-                lambda: self.sidebar.archie_params_widget.set_params(
+                lambda: self.params_window.archie_params_widget.set_params(
                     self.model.a,
                     self.model.m,
                     self.model.n,
@@ -1212,7 +1250,7 @@ class MainWindow(QMainWindow):
             ),
             (
                 "water saturation",
-                lambda: self.sidebar.sw_models_widget.set_params(
+                lambda: self.params_window.sw_models_widget.set_params(
                     {
                         "sw_methods": self.model.sw_methods,
                         "sw_primary_method": self.model.sw_primary_method,
@@ -1225,19 +1263,19 @@ class MainWindow(QMainWindow):
             ),
             (
                 "resistivity",
-                lambda: self.sidebar.res_params_widget.set_params(
+                lambda: self.params_window.res_params_widget.set_params(
                     self.model.rw, self.model.rsh
                 ),
             ),
             (
                 "permeability",
-                lambda: self.sidebar.perm_params_widget.set_params(
+                lambda: self.params_window.perm_params_widget.set_params(
                     self.model.perm_C, self.model.perm_P, self.model.perm_Q
                 ),
             ),
             (
                 "Swirr",
-                lambda: self.sidebar.swir_params_widget.set_params(
+                lambda: self.params_window.swir_params_widget.set_params(
                     self.model.swirr_method,
                     self.model.buckles_preset,
                     self.model.k_buckles,
@@ -1245,7 +1283,7 @@ class MainWindow(QMainWindow):
             ),
             (
                 "cutoffs",
-                lambda: self.sidebar.cutoff_params_widget.set_params(
+                lambda: self.params_window.cutoff_params_widget.set_params(
                     self.model.vsh_cutoff,
                     self.model.phi_cutoff,
                     self.model.sw_cutoff,
@@ -1263,15 +1301,15 @@ class MainWindow(QMainWindow):
             (
                 "core settings",
                 lambda: (
-                    self.sidebar.core_unit_combo.setCurrentText(
+                    self.params_window.core_unit_combo.setCurrentText(
                         self.model.core_depth_unit
                     ),
-                    self.sidebar.core_dist_spin.setValue(self.model.core_max_dist),
+                    self.params_window.core_dist_spin.setValue(self.model.core_max_dist),
                 ),
             ),
             (
                 "gas correction",
-                lambda: self.sidebar.gas_correction_widget.set_params(
+                lambda: self.params_window.gas_correction_widget.set_params(
                     self.model.gas_correction_enabled,
                     self.model.gas_nphi_factor,
                     self.model.gas_rhob_factor,
@@ -1292,4 +1330,4 @@ class MainWindow(QMainWindow):
                 widget.blockSignals(False)
 
         # Reconcile the model once after every supported control has restored.
-        self.sidebar.update_model_from_ui()
+        self._sync_model_from_ui()

@@ -60,18 +60,19 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
 
     window._update_ui_from_model()
     sidebar = window.sidebar
+    pw = window.params_window
 
-    assert sidebar.analysis_mode_widget.get_mode() == "Per-Formation"
-    assert sidebar.analysis_mode_widget.get_selected_formations() == ["Zone A"]
-    assert sidebar.vsh_params_widget.get_params() == {
+    assert pw.analysis_mode_widget.get_mode() == "Per-Formation"
+    assert pw.analysis_mode_widget.get_selected_formations() == ["Zone A"]
+    assert pw.vsh_params_widget.get_params() == {
         "baseline_method": "Custom (Manual)",
         "gr_min": 31.0,
         "gr_max": 141.0,
         "methods": ["Larionov Older"],
     }
-    assert sidebar.matrix_params_widget.get_params() == {"rho_matrix": 2.71, "dt_matrix": 49.0}
-    assert sidebar.fluid_params_widget.get_params() == {"rho_fluid": 1.08, "dt_fluid": 175.0}
-    shale = sidebar.shale_params_widget.get_params()
+    assert pw.matrix_params_widget.get_params() == {"rho_matrix": 2.71, "dt_matrix": 49.0}
+    assert pw.fluid_params_widget.get_params() == {"rho_fluid": 1.08, "dt_fluid": 175.0}
+    shale = pw.shale_params_widget.get_params()
     assert shale["approach"] == "Statistical (Auto)"
     assert (shale["rho_shale"], shale["dt_shale"], shale["nphi_shale"]) == (2.51, 112.0, 0.41)
     assert shale["shale_selection_mode"] == "quantile"
@@ -79,35 +80,35 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
     assert shale["shale_vsh_quantile"] == 0.94
     assert shale["shale_min_points"] == 77
     assert shale["shale_gate_logs"] is False and shale["shale_iqr_filter"] is False
-    assert sidebar.archie_params_widget.get_params() == {
+    assert pw.archie_params_widget.get_params() == {
         "lithology": "Custom", "a": 1.11, "m": 2.31, "n": 2.2
     }
-    assert sidebar.res_params_widget.get_params() == {"rw": 0.123, "rsh": 7.4}
-    assert sidebar.perm_params_widget.get_params() == {"C": 4321.0, "P": 5.1, "Q": 2.7}
-    assert sidebar.swir_params_widget.get_params() == {
+    assert pw.res_params_widget.get_params() == {"rw": 0.123, "rsh": 7.4}
+    assert pw.perm_params_widget.get_params() == {"C": 4321.0, "P": 5.1, "Q": 2.7}
+    assert pw.swir_params_widget.get_params() == {
         "method": "Buckles Number", "buckles_preset": "Custom", "k_buckles": 0.037
     }
-    assert sidebar.cutoff_params_widget.get_params() == {
+    assert pw.cutoff_params_widget.get_params() == {
         "vsh_cutoff": 0.51, "phi_cutoff": 0.13, "sw_cutoff": 0.72
     }
-    assert sidebar.sw_models_widget.get_params() == {
+    assert pw.sw_models_widget.get_params() == {
         "sw_methods": ["Waxman-Smits", "Dual-Water"],
         "sw_primary_method": "Dual-Water",
         "ws_qv": 0.44, "ws_b": 1.7, "dw_swb": 0.18, "dw_rwb": 0.33,
     }
-    assert sidebar.porosity_method_widget.get_params()["primary_phie_method"] == "PHIE_S"
+    assert pw.porosity_method_widget.get_params()["primary_phie_method"] == "PHIE_S"
     assert sidebar.merge_step_spin.value() == 1.0
     assert sidebar.merge_gap_spin.value() == 8.0
-    assert sidebar.core_unit_combo.currentText() == "FT"
-    assert sidebar.core_dist_spin.value() == 4.5
-    assert sidebar.gas_correction_widget.get_params() == {
+    assert pw.core_unit_combo.currentText() == "FT"
+    assert pw.core_dist_spin.value() == 4.5
+    assert pw.gas_correction_widget.get_params() == {
         "enabled": True, "nphi_factor": 0.4, "rhob_factor": 0.2
     }
 
 
 def test_session_ui_restore_continues_after_one_widget_failure(window, monkeypatch, caplog):
     monkeypatch.setattr(
-        window.sidebar.vsh_params_widget,
+        window.params_window.vsh_params_widget,
         "set_params",
         lambda *args: (_ for _ in ()).throw(RuntimeError("broken vsh widget")),
     )
@@ -116,7 +117,7 @@ def test_session_ui_restore_continues_after_one_widget_failure(window, monkeypat
     with caplog.at_level(logging.ERROR):
         window._update_ui_from_model()
 
-    assert window.sidebar.matrix_params_widget.rho_matrix_spin.value() == 2.72
+    assert window.params_window.matrix_params_widget.rho_matrix_spin.value() == 2.72
     assert "broken vsh widget" in caplog.text
 
 
@@ -177,7 +178,7 @@ def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypat
     window.model._las_data = pd.DataFrame({"DEPTH": [100.0]})
     window.actions_["run_analysis"].setEnabled(True)
     states = []
-    monkeypatch.setattr(window.sidebar, "update_model_from_ui", lambda: None)
+    monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
     monkeypatch.setattr(
         window.analysis_service,
         "run_analysis",
@@ -194,7 +195,7 @@ def test_merge_button_is_disabled_before_merge_service_starts(window, monkeypatc
     window._loaded_file_names = ["a.las", "b.las"]
     window.sidebar.merge_btn.setEnabled(True)
     states = []
-    monkeypatch.setattr(window.sidebar, "update_model_from_ui", lambda: None)
+    monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
     monkeypatch.setattr(
         window.merge_service,
         "merge_files",
@@ -207,12 +208,12 @@ def test_merge_button_is_disabled_before_merge_service_starts(window, monkeypatc
 
 
 def test_sidebar_reset_restores_whole_well_analysis_mode(window):
-    window.sidebar.analysis_mode_widget.per_formation_radio.setChecked(True)
-    assert window.sidebar.analysis_mode_widget.get_mode() == "Per-Formation"
+    window.params_window.analysis_mode_widget.per_formation_radio.setChecked(True)
+    assert window.params_window.analysis_mode_widget.get_mode() == "Per-Formation"
 
-    window.sidebar.reset_ui()
+    window.params_window.reset_ui()
 
-    assert window.sidebar.analysis_mode_widget.get_mode() == "Whole Well"
+    assert window.params_window.analysis_mode_widget.get_mode() == "Whole Well"
 
 
 def test_analysis_completion_refreshes_each_tab_once_with_matching_summary(
@@ -603,7 +604,7 @@ def test_diagnostics_core_overlay_consumes_canonical_plot_palette(qtbot, monkeyp
 def test_shale_approach_change_live_syncs_sidebar_model(window):
     assert window.model.shale_approach == "Custom (Manual)"
 
-    window.sidebar.shale_params_widget.approach_combo.setCurrentText(
+    window.params_window.shale_params_widget.approach_combo.setCurrentText(
         "Statistical (Auto)"
     )
 
@@ -613,6 +614,6 @@ def test_shale_approach_change_live_syncs_sidebar_model(window):
 def test_shale_selection_mode_change_live_syncs_sidebar_model(window):
     assert window.model.shale_selection_mode == "fixed_threshold"
 
-    window.sidebar.shale_params_widget.selection_mode_combo.setCurrentText("Quantile")
+    window.params_window.shale_params_widget.selection_mode_combo.setCurrentText("Quantile")
 
     assert window.model.shale_selection_mode == "quantile"

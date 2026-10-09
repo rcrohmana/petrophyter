@@ -5,7 +5,6 @@ from .notification_banner import NotificationBanner
 from .info_strip import InfoStrip
 from .table_model import PandasTableModel
 from .parameter_groups import (
-    CollapsibleGroupBox,
     AnalysisModeGroup,
     CurveMappingGroup,
     VShaleParamsGroup,
@@ -27,7 +26,6 @@ __all__ = [
     'NotificationBanner',
     'InfoStrip',
     'PandasTableModel',
-    'CollapsibleGroupBox',
     'AnalysisModeGroup',
     'CurveMappingGroup',
     'VShaleParamsGroup',
