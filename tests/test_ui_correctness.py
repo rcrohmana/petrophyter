@@ -206,7 +206,7 @@ def test_merge_button_is_disabled_before_merge_service_starts(window, monkeypatc
     assert states == [False]
 
 
-def test_sidebar_reset_restores_whole_well_analysis_mode(window):
+def test_params_window_reset_restores_whole_well_analysis_mode(window):
     window.params_window.analysis_mode_widget.per_formation_radio.setChecked(True)
     assert window.params_window.analysis_mode_widget.get_mode() == "Per-Formation"
 
@@ -600,7 +600,7 @@ def test_diagnostics_core_overlay_consumes_canonical_plot_palette(qtbot, monkeyp
     assert to_hex(perm_axis.collections[0].get_facecolor()[0]) == colors["CORE_PERM"].lower()
 
 
-def test_shale_approach_change_live_syncs_sidebar_model(window):
+def test_shale_approach_change_live_syncs_model(window):
     assert window.model.shale_approach == "Custom (Manual)"
 
     window.params_window.shale_params_widget.approach_combo.setCurrentText(
@@ -610,7 +610,7 @@ def test_shale_approach_change_live_syncs_sidebar_model(window):
     assert window.model.shale_approach == "Statistical (Auto)"
 
 
-def test_shale_selection_mode_change_live_syncs_sidebar_model(window):
+def test_shale_selection_mode_change_live_syncs_model(window):
     assert window.model.shale_selection_mode == "fixed_threshold"
 
     window.params_window.shale_params_widget.selection_mode_combo.setCurrentText("Quantile")

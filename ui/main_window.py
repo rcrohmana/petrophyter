@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 
-from .sidebar_panel import SidebarPanel
 from .tabs import (
     QCTab,
     PetrophysicsTab,
@@ -48,10 +47,11 @@ from services.analysis_service import AnalysisService
 from services.merge_service import MergeService
 from services.export_service import ExportService
 from services.session_service import SessionService
-from .sidebar_panel import SidebarPanel
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
 from .parameters_window import PAGES, ParametersWindow
+from .data_browser import DataBrowserPanel
+from themes.tokens import METRICS
 from .widgets.merge_dialog import MergeDialog
 from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
@@ -179,10 +179,14 @@ class MainWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)  # Prevent accidental collapse
 
         # =====================================================================
-        # LEFT SIDEBAR
+        # LEFT DATA BROWSER
         # =====================================================================
-        self.sidebar = SidebarPanel(self.model)
-        splitter.addWidget(self.sidebar)
+        self.data_browser = DataBrowserPanel(self.model)
+        splitter.addWidget(self.data_browser)
+        self.data_browser.set_actions(self.actions_)
+        self.data_browser.action_requested.connect(
+            lambda key: self.actions_[key].trigger()
+        )
         self.params_window = ParametersWindow(self.model, self)
         self.merge_dialog = MergeDialog(self)
 
@@ -220,11 +224,11 @@ class MainWindow(QMainWindow):
         splitter.addWidget(content_widget)
 
         # Use stretch factors for responsive sizing
-        splitter.setStretchFactor(0, 0)  # Sidebar: fixed width, don't stretch
+        splitter.setStretchFactor(0, 0)  # Data Browser: fixed width, don't stretch
         splitter.setStretchFactor(1, 1)  # Content: stretch to fill available space
 
-        # Set initial sizes (sidebar : content)
-        splitter.setSizes([360, 1040])
+        # Set initial sizes (data browser : content)
+        splitter.setSizes([METRICS["panel_default_width"], 1140])
 
         # Store reference for potential later use
         self.main_splitter = splitter
@@ -240,10 +244,13 @@ class MainWindow(QMainWindow):
 
     def _setup_connections(self):
         """Connect signals and slots."""
-        # Sidebar signals
-        self.sidebar.set_open_callbacks(
-            self._open_las_dialog, self._open_tops_dialog, self._open_core_dialog
-        )
+        # Data browser refresh on any data change
+        for signal in (
+            self.model.formation_tops_loaded,
+            self.model.core_data_loaded,
+            self.params_window.curve_mapping_widget.mapping_changed,
+        ):
+            signal.connect(lambda *_: self.data_browser.rebuild())
         self.params_window.calculate_rw_rsh_clicked.connect(self._on_calculate_rw_rsh)
         self.params_window.calculate_shale_clicked.connect(self._on_calculate_shale)
         self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
@@ -315,7 +322,7 @@ class MainWindow(QMainWindow):
 
     def _toggle_browser(self, checked: bool):
         """Show or hide the left panel (retargeted to the Data Browser in Task 12C)."""
-        self.sidebar.setVisible(checked)
+        self.data_browser.setVisible(checked)
 
     def _open_user_guide(self):
         from PyQt6.QtCore import QUrl
@@ -452,6 +459,11 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         self.main_toolbar = toolbar
 
+    def _set_progress(self, value: int, message: str = None):
+        """Interim progress sink (replaced by the status-bar progress in Task 13)."""
+        if message:
+            self.statusBar.showMessage(message)
+
     def _sync_model_from_ui(self):
         self.params_window.update_model_from_ui()
         self.merge_dialog.update_model(self.model)
@@ -470,8 +482,8 @@ class MainWindow(QMainWindow):
         """Refresh widgets when theme changes."""
         self._refresh_action_icons()
         is_dark = self.theme_manager.is_dark() if self.theme_manager else False
-        if hasattr(self, "sidebar"):
-            self.sidebar.refresh_theme()
+        if hasattr(self, "data_browser"):
+            self.data_browser.refresh_theme()
         for tab in [
             getattr(self, "qc_tab", None),
             getattr(self, "petro_tab", None),
@@ -517,9 +529,10 @@ class MainWindow(QMainWindow):
                 qc = QCModule(parser.data, well_name)
                 self.model.qc_report = qc.run_qc()
 
-                # Update sidebar
-                self.sidebar.update_las_info(
-                    file_path, len(parser.data), len(parser.data.columns)
+                self.data_browser.set_las_sources(
+                    [(os.path.basename(file_path), len(parser.data))],
+                    merged=False,
+                    pending=False,
                 )
 
                 # Update curve mapping
@@ -602,6 +615,17 @@ class MainWindow(QMainWindow):
                     ]
                 )
                 self.actions_["merge_las"].setEnabled(True)
+                self.data_browser.set_las_sources(
+                    [
+                        (name, len(parser.data))
+                        for name, parser in zip(
+                            self._loaded_file_names, self._loaded_parsers
+                        )
+                    ],
+                    merged=False,
+                    pending=True,
+                )
+                self.data_browser.rebuild()
                 self.statusBar.showMessage(
                     f"{len(self._loaded_parsers)} LAS files ready for merge"
                 )
@@ -641,17 +665,17 @@ class MainWindow(QMainWindow):
 
     def _on_merge_started(self):
         """Handle merge started."""
-        self.sidebar.set_progress(0, "Merging...")
+        self._set_progress(0, "Merging...")
         self.statusBar.showMessage("Merging LAS files...")
 
     def _on_merge_progress(self, message: str, percent: int):
         """Handle merge progress."""
-        self.sidebar.set_progress(percent, message)
+        self._set_progress(percent, message)
 
     def _on_merge_completed(self, merged_df, merge_report):
         """Handle merge completion."""
         self.actions_["merge_las"].setEnabled(False)  # nothing pending any more
-        self.sidebar.set_progress(100, "Complete")
+        self._set_progress(100, "Complete")
 
         # Store merged data
         self.model.las_parser = self._loaded_parsers[0]
@@ -665,12 +689,13 @@ class MainWindow(QMainWindow):
         qc = QCModule(merged_df, merge_report.well_name)
         self.model.qc_report = qc.run_qc()
 
-        # Update sidebar
-        self.sidebar.update_las_info(
-            self.model.las_filename,
-            len(merged_df),
-            len(merged_df.columns),
-            is_merged=True,
+        self.data_browser.set_las_sources(
+            [
+                (name, len(parser.data))
+                for name, parser in zip(self._loaded_file_names, self._loaded_parsers)
+            ],
+            merged=True,
+            pending=False,
         )
 
         # Update curve mapping
@@ -702,7 +727,7 @@ class MainWindow(QMainWindow):
     def _on_merge_error(self, error: str):
         """Handle merge error."""
         self.actions_["merge_las"].setEnabled(True)
-        self.sidebar.set_progress(0, "")
+        self._set_progress(0, "")
         QMessageBox.critical(self, "Merge Error", error)
         self.statusBar.showMessage("Merge failed")
 
@@ -737,7 +762,6 @@ class MainWindow(QMainWindow):
                     tops.convert_to_feet()
                     self.model.formation_tops = tops
 
-                    self.sidebar.update_tops_info(len(tops.formations))
                     self.params_window.update_formations_list(tops.get_formation_list())
 
                     self.statusBar.showMessage(
@@ -783,11 +807,6 @@ class MainWindow(QMainWindow):
                     self._refresh_core_actions()
 
                     summary = handler.get_summary()
-                    self.sidebar.update_core_info(
-                        summary["n_samples"],
-                        summary.get("depth_unit", "FT"),
-                        handler.porosity_converted,
-                    )
 
                     self.statusBar.showMessage(
                         f"Loaded {summary['n_samples']} core samples"
@@ -826,12 +845,12 @@ class MainWindow(QMainWindow):
     def _on_analysis_started(self):
         """Handle analysis started."""
         self.actions_["run_analysis"].setEnabled(False)
-        self.sidebar.set_progress(0, "Analyzing...")
+        self._set_progress(0, "Analyzing...")
         self.statusBar.showMessage("Running petrophysics analysis...")
 
     def _on_analysis_progress(self, message: str, percent: int):
         """Handle analysis progress."""
-        self.sidebar.set_progress(percent, message)
+        self._set_progress(percent, message)
         self.statusBar.showMessage(message)
 
     def _on_analysis_completed(self, results, summary):
@@ -842,7 +861,7 @@ class MainWindow(QMainWindow):
         # print(f"[DEBUG MainWindow] results.shape = {results.shape}")
         # print(f"[DEBUG MainWindow] results.columns = {list(results.columns)[:10]}...")
 
-        self.sidebar.set_progress(100, "Complete")
+        self._set_progress(100, "Complete")
         self.actions_["run_analysis"].setEnabled(True)
 
         # Store both pieces of the analysis result atomically so observers see
@@ -870,7 +889,7 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_error(self, error: str):
         """Handle analysis error."""
-        self.sidebar.set_progress(0, "")
+        self._set_progress(0, "")
         self.actions_["run_analysis"].setEnabled(True)
         QMessageBox.critical(self, "Analysis Error", error)
         self.statusBar.showMessage("Analysis failed")
@@ -885,6 +904,7 @@ class MainWindow(QMainWindow):
 
     def _update_all_tabs(self):
         """Update all tabs with current results."""
+        self.data_browser.rebuild()
         self.qc_tab.update_display()
         self.petro_tab.update_display()
         self.log_tab.update_display()
@@ -1140,8 +1160,9 @@ class MainWindow(QMainWindow):
         self._loaded_parsers = []
         self._loaded_file_names = []
 
-        # Reset sidebar UI
-        self.sidebar.reset_ui()
+        # Reset data browser
+        self.data_browser.set_las_sources([], merged=False, pending=False)
+        self.data_browser.rebuild()
         self.params_window.reset_ui()
         self._refresh_core_actions()
         self.actions_["run_analysis"].setEnabled(False)

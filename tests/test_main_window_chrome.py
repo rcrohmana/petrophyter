@@ -48,12 +48,12 @@ def test_menu_registry_keys(window):
     assert window._menus["view_theme_sep"].isSeparator()
 
 
-def test_toggle_browser_hides_sidebar(window):
+def test_toggle_browser_hides_data_browser(window):
     window.actions_["toggle_browser"].setChecked(False)
     window._toggle_browser(False)
-    assert window.sidebar.isHidden()
+    assert window.data_browser.isHidden()
     window._toggle_browser(True)
-    assert not window.sidebar.isHidden()
+    assert not window.data_browser.isHidden()
 
 
 def test_well_indicator_states(window):
@@ -125,11 +125,6 @@ def test_core_matching_needs_core(window):
     assert window.params_window.core_unit_combo.isEnabled()
 
 
-def test_sidebar_has_no_parameter_widgets(window):
-    assert not hasattr(window.sidebar, "vsh_params_widget")
-    assert not hasattr(window.sidebar, "analysis_mode_widget")
-
-
 def test_params_actions_and_shortcuts(window):
     from PyQt6.QtCore import Qt
     assert window.actions_["params_window"].text() == "Parameters Window"
@@ -182,3 +177,78 @@ def test_prepare_merge_populates_dialog_and_enables_action(window, monkeypatch):
     assert window.actions_["merge_las"].isEnabled()
     assert window.merge_dialog.file_model.rowCount() == 2
     assert "2 LAS files" in window.merge_dialog.summary_label.text()
+
+
+# Tree tests use a standalone panel: setting model data on the window would fire
+# data_loaded -> _update_all_tabs, which needs a full QC report.
+@pytest.fixture()
+def browser(qtbot):
+    from models.app_model import AppModel
+    from ui.data_browser import DataBrowserPanel
+    panel = DataBrowserPanel(AppModel())
+    qtbot.addWidget(panel)
+    return panel
+
+
+def _group(panel, name):
+    root = panel.tree_model.item(0)
+    for row in range(root.rowCount()):
+        if root.child(row, 0).text() == name:
+            return root.child(row, 0), root.child(row, 1)
+    raise AssertionError(name)
+
+
+def test_browser_empty_state(browser):
+    browser.rebuild()
+    assert browser.empty_label.isVisibleTo(browser)
+    assert not browser.tree.isVisibleTo(browser)
+
+
+def test_browser_tree_from_model(browser, sample_log_data):
+    browser.model.las_data = sample_log_data
+    browser.set_las_sources([("Atti_A-01.las", len(sample_log_data))], merged=False, pending=False)
+    browser.rebuild()
+    root = browser.tree_model.item(0)
+    assert [root.child(r, 0).text() for r in range(root.rowCount())] == [
+        "LAS files", "Curves", "Formation tops", "Core data"]   # Results appears only after analysis
+    curves, _info = _group(browser, "Curves")
+    assert curves.rowCount() == len(sample_log_data.columns)
+    assert _group(browser, "Formation tops")[1].text() == "Not loaded"
+
+
+def test_browser_results_stale(browser, sample_log_data):
+    browser.model.las_data = sample_log_data
+    browser.model.results = sample_log_data.assign(VSH=0.3)   # any non-None frame marks results
+    browser.rebuild()
+    browser.set_results_stale(True)
+    assert _group(browser, "Results")[1].text() == "out of date"
+
+
+def test_browser_stale_flag_safe_without_results_and_reapplied(browser, sample_log_data):
+    browser.set_results_stale(True)   # no tree yet: must not raise
+    browser.model.las_data = sample_log_data
+    browser.model.results = sample_log_data.assign(VSH=0.3)
+    browser.rebuild()
+    assert _group(browser, "Results")[1].text() == "out of date"
+
+
+def test_browser_role_tags_and_muted_missing_groups(browser, sample_log_data):
+    browser.model.las_data = sample_log_data
+    browser.model.curve_mapping = {"GR": "GR", "RHOB": "None"}
+    browser.rebuild()
+    curves, _ = _group(browser, "Curves")
+    infos = {curves.child(r, 0).text(): curves.child(r, 1).text() for r in range(curves.rowCount())}
+    assert infos["GR"].startswith("GR")
+    from PyQt6.QtCore import Qt
+    tops_info = _group(browser, "Formation tops")[1]
+    assert tops_info.data(Qt.ItemDataRole.ForegroundRole) is not None
+
+
+def test_browser_action_requested_from_empty_link(browser, qtbot):
+    with qtbot.waitSignal(browser.action_requested) as blocker:
+        browser.empty_label.linkActivated.emit("open")
+    assert blocker.args == ["open_las"]
+
+
+def test_no_sidebar_left(window):
+    assert not hasattr(window, "sidebar")
