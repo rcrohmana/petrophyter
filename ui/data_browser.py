@@ -143,6 +143,11 @@ class DataBrowserPanel(QWidget):
         if tooltip:
             name_item.setToolTip(tooltip)
             info_item.setToolTip(tooltip)
+        else:
+            # Names or info that elide in a narrow panel stay readable.
+            name_item.setToolTip(name)
+            if info:
+                info_item.setToolTip(info)
         if group:
             font = QFont()
             font.setWeight(QFont.Weight.DemiBold)

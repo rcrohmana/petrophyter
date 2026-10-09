@@ -7,9 +7,17 @@ from PyQt6.QtGui import QFont
 class PandasTableModel(QAbstractTableModel):
     """Table model for displaying pandas DataFrames."""
 
-    def __init__(self, df: pd.DataFrame = None, parent=None):
+    def __init__(self, df: pd.DataFrame = None, parent=None, float_decimals=None):
+        """float_decimals: int for all float columns, or {column name: int}; default 4."""
         super().__init__(parent)
         self._df = df if df is not None else pd.DataFrame()
+        self._float_decimals = float_decimals
+
+    def _decimals_for(self, col: int) -> int:
+        spec = self._float_decimals
+        if isinstance(spec, dict):
+            return spec.get(str(self._df.columns[col]), 4)
+        return 4 if spec is None else spec
 
     def rowCount(self, parent=None):
         return len(self._df)
@@ -25,7 +33,7 @@ class PandasTableModel(QAbstractTableModel):
             if pd.isna(value):
                 return ""
             if isinstance(value, float):
-                return f"{value:.4f}"
+                return f"{value:.{self._decimals_for(index.column())}f}"
             return str(value)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             if self._is_numeric_column(index.column()):
