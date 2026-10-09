@@ -163,4 +163,8 @@ QFrame#NotificationBanner[kind="success"] { background-color: $success_subtle; b
 QFrame#NotificationBanner[kind="warning"] { background-color: $warning_subtle; border-color: $warning; }
 QFrame#NotificationBanner[kind="info"] { background-color: $accent_subtle; border-color: $accent; }
 QFrame#NotificationBanner QLabel { background: transparent; }
+QLabel#StatusDot { min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
+                   border-radius: 4px; background-color: $text_muted; }
+QLabel#StatusDot[kind="ok"] { background-color: $success; }
+QLabel#StatusDot[kind="warn"] { background-color: $warning; }
 """
