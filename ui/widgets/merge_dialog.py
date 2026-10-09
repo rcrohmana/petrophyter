@@ -62,11 +62,15 @@ class MergeDialog(QDialog):
         ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         ok_button.setText("Merge")
         ok_button.setIcon(get_icon("merge"))
+        self._ok_button = ok_button
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
         self.set_files([])
+
+    def refresh_theme(self):
+        self._ok_button.setIcon(get_icon("merge"))
 
     def set_files(self, rows: list):
         """rows: (name, row count, top, bottom) per pending file."""

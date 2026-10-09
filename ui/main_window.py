@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QToolBar, QToolButton
 
         toolbar = QToolBar("Main")
+        toolbar.setObjectName("MainToolbar")
         toolbar.setMovable(False)
         toolbar.setFloatable(False)
         toolbar.setIconSize(QSize(18, 18))
@@ -594,9 +595,10 @@ class MainWindow(QMainWindow):
     def _handle_theme_change(self, theme: str):
         """Refresh widgets when theme changes."""
         self._refresh_action_icons()
-        is_dark = self.theme_manager.is_dark() if self.theme_manager else False
-        if hasattr(self, "data_browser"):
-            self.data_browser.refresh_theme()
+        self.data_browser.refresh_theme()
+        self.params_window.refresh_theme()
+        self.merge_dialog.refresh_theme()
+        self.banner.refresh_theme()
         for tab in [
             getattr(self, "qc_tab", None),
             getattr(self, "petro_tab", None),
@@ -638,6 +640,12 @@ class MainWindow(QMainWindow):
                 self.model.calculated = False
                 self._clear_results_stale()
                 self.model.merge_report = None
+
+                # A single file supersedes any pending multi-file selection.
+                self._loaded_parsers = []
+                self._loaded_file_names = []
+                self._loaded_row_counts = []
+                self.actions_["merge_las"].setEnabled(False)
 
                 # Run QC
                 well_name = parser.well_info.get("well_name", "Unknown")
@@ -702,18 +710,18 @@ class MainWindow(QMainWindow):
     def _prepare_merge(self, file_paths: list):
         """Prepare multiple LAS files for merge."""
         try:
-            self._loaded_parsers = []
-            self._loaded_file_names = []
-            self._loaded_row_counts = []
+            parsers = []
+            names = []
+            row_counts = []
             parse_details = []
 
             for path in file_paths:
                 parser = LASParser()
                 with open(path, "r") as f:
                     if parser.read_las_from_buffer(f):
-                        self._loaded_parsers.append(parser)
-                        self._loaded_file_names.append(os.path.basename(path))
-                        self._loaded_row_counts.append(len(parser.data))
+                        parsers.append(parser)
+                        names.append(os.path.basename(path))
+                        row_counts.append(len(parser.data))
                     else:
                         detail = getattr(parser, "last_error", None)
                         logger.error("Failed to parse LAS file %s: %s", path, detail)
@@ -723,7 +731,10 @@ class MainWindow(QMainWindow):
                                 f"{os.path.basename(path)}: {safe_detail}"
                             )
 
-            if len(self._loaded_parsers) >= 2:
+            if len(parsers) >= 2:
+                self._loaded_parsers = parsers
+                self._loaded_file_names = names
+                self._loaded_row_counts = row_counts
                 self.merge_dialog.set_files(
                     [
                         (name, len(parser.data), *parser.get_depth_range())
@@ -954,8 +965,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Update model from UI and close the double-click window before the
-        # background worker can emit its asynchronous started signal.
+        # Update model from UI and disable Run before the background worker
+        # can emit its asynchronous started signal.
         self._sync_model_from_ui()
         self.actions_["run_analysis"].setEnabled(False)
 
@@ -1272,7 +1283,6 @@ class MainWindow(QMainWindow):
         # Clear loaded parsers for merge
         self._loaded_parsers = []
         self._loaded_file_names = []
-        self._loaded_row_counts = []
         self._loaded_row_counts = []  # per-source rows, captured before any merge
 
         self._clear_results_stale()

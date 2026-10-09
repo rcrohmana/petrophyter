@@ -156,16 +156,18 @@ class InteractiveLogPlot(QWidget):
         # Reset view button
         from PyQt6.QtWidgets import QPushButton
 
-        reset_btn = QPushButton("Reset View")
-        reset_btn.setIcon(get_icon("refresh-cw"))
-        reset_btn.clicked.connect(self.reset_view)
-        controls_layout.addWidget(reset_btn)
+        self.reset_btn = QPushButton("Reset View")
+        self.reset_btn.setIcon(get_icon("refresh-cw"))
+        self.reset_btn.clicked.connect(self.reset_view)
+        controls_layout.addWidget(self.reset_btn)
 
         layout.addWidget(controls)
 
     def refresh_theme(self):
         """Apply theme-aware plot chrome while keeping curve colors stable."""
         self._chrome = get_plot_chrome()
+        if hasattr(self, "reset_btn"):  # refresh_theme also runs during __init__
+            self.reset_btn.setIcon(get_icon("refresh-cw"))
         if not HAS_PYQTGRAPH or not self.plot_widgets:
             return
 
