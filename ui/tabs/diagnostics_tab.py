@@ -21,9 +21,11 @@ import logging
 import pandas as pd
 import numpy as np
 
-from .qc_tab import MetricCard, PandasTableModel
+from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
-from themes.colors import get_color, get_plot_color
+from ..widgets.table_model import PandasTableModel
+from themes.colors import get_plot_chrome, get_plot_color
+from themes.helpers import set_status
 
 
 logger = logging.getLogger(__name__)
@@ -40,11 +42,6 @@ class DiagnosticsTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title
-        title = QLabel("🔍 Diagnostics & Validation")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -54,7 +51,7 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # SHALE PARAMETERS CROSS-VALIDATION
         # =====================================================================
-        shale_group = QGroupBox("📐 Shale Parameters Cross-Validation")
+        shale_group = QGroupBox("Shale Parameters Cross-Validation")
         shale_layout = QHBoxLayout(shale_group)
 
         # Current values
@@ -90,7 +87,7 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # POROSITY CROSS-VALIDATION
         # =====================================================================
-        por_group = QGroupBox("📊 Porosity (PHIE) Cross-Validation")
+        por_group = QGroupBox("Porosity (PHIE) Cross-Validation")
         por_layout = QVBoxLayout(por_group)
 
         # Control row: dropdown + update button
@@ -135,7 +132,7 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # WATER SATURATION CROSS-VALIDATION
         # =====================================================================
-        sw_group = QGroupBox("💧 Water Saturation (Sw) Cross-Validation")
+        sw_group = QGroupBox("Water Saturation (Sw) Cross-Validation")
         sw_layout = QHBoxLayout(sw_group)
 
         self.sw_hist = HistogramPlot()
@@ -157,7 +154,7 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # PERMEABILITY VALIDATION
         # =====================================================================
-        perm_group = QGroupBox("🔑 Permeability (k) Validation")
+        perm_group = QGroupBox("Permeability (k) Validation")
         perm_layout = QHBoxLayout(perm_group)
 
         self.perm_crossplot = CrossPlot()
@@ -179,22 +176,16 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # NET PAY VALIDATION
         # =====================================================================
-        pay_group = QGroupBox("📏 Net Pay Validation")
+        pay_group = QGroupBox("Net Pay Validation")
         pay_layout = QHBoxLayout(pay_group)
 
-        self.net_pay_card = MetricCard("Net Pay", "- ft")
-        self.gross_sand_card = MetricCard("Gross Sand", "- ft")
-        self.ng_pay_card = MetricCard("N/G Pay", "- %")
-
-        self.metric_cards = [
-            self.net_pay_card,
-            self.gross_sand_card,
-            self.ng_pay_card,
-        ]
-
-        pay_layout.addWidget(self.net_pay_card)
-        pay_layout.addWidget(self.gross_sand_card)
-        pay_layout.addWidget(self.ng_pay_card)
+        self.pay_strip = InfoStrip()
+        self.pay_strip.add_block("net_pay", "Net Pay")
+        self.pay_strip.add_block("gross_sand", "Gross Sand")
+        self.pay_strip.add_block("ng_pay", "N/G Pay")
+        for key, text in (("net_pay", "- ft"), ("gross_sand", "- ft"), ("ng_pay", "- %")):
+            self.pay_strip.set_value(key, text)
+        pay_layout.addWidget(self.pay_strip)
         pay_layout.addStretch()
 
         content_layout.addWidget(pay_group)
@@ -206,24 +197,15 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # CORE DATA VALIDATION (conditional)
         # =====================================================================
-        self.core_group = QGroupBox("🔬 Core Data Validation")
+        self.core_group = QGroupBox("Core Data Validation")
         core_layout = QVBoxLayout(self.core_group)
 
         # Core summary metrics
-        core_metrics = QHBoxLayout()
-        self.core_samples_card = MetricCard("Core Samples", "-")
-        self.core_depth_card = MetricCard("Core Depth Range", "-")
-        self.core_props_card = MetricCard("Properties", "-")
-
-        self.metric_cards.extend(
-            [self.core_samples_card, self.core_depth_card, self.core_props_card]
-        )
-
-        core_metrics.addWidget(self.core_samples_card)
-        core_metrics.addWidget(self.core_depth_card)
-        core_metrics.addWidget(self.core_props_card)
-
-        core_layout.addLayout(core_metrics)
+        self.core_strip = InfoStrip()
+        self.core_strip.add_block("samples", "Core Samples")
+        self.core_strip.add_block("depth", "Core Depth Range")
+        self.core_strip.add_block("props", "Properties")
+        core_layout.addWidget(self.core_strip)
 
         # Porosity validation
         por_valid_layout = QHBoxLayout()
@@ -256,7 +238,7 @@ class DiagnosticsTab(QWidget):
         core_layout.addLayout(perm_valid_layout)
 
         # Depth tracks with core overlay
-        depth_track_label = QLabel("<b>📏 Depth Track with Core Points</b>")
+        depth_track_label = QLabel("<b>Depth Track with Core Points</b>")
         core_layout.addWidget(depth_track_label)
 
         depth_track_layout = QHBoxLayout()
@@ -279,10 +261,8 @@ class DiagnosticsTab(QWidget):
         content_layout.addWidget(self.core_group)
 
         # Placeholder
-        self.placeholder = QLabel("👈 Run analysis first to view diagnostics")
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Run analysis to view diagnostics")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
 
@@ -292,8 +272,6 @@ class DiagnosticsTab(QWidget):
         layout.addWidget(scroll)
 
     def refresh_theme(self):
-        for card in getattr(self, "metric_cards", []):
-            card.refresh_theme()
         for plot in (
             self.phie_hist,
             self.sw_hist,
@@ -304,9 +282,6 @@ class DiagnosticsTab(QWidget):
             self.core_perm_depth_plot,
         ):
             plot.refresh_theme()
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
 
     def update_display(self):
         """Update display with analysis results."""
@@ -369,16 +344,16 @@ class DiagnosticsTab(QWidget):
                 has_high_dev = True
 
             if has_high_dev:
-                self.shale_warnings.setText("⚠️ High deviation in shale parameters")
-                self.shale_warnings.setStyleSheet("color: orange; font-weight: bold;")
+                self.shale_warnings.setText("High deviation in shale parameters")
+                set_status(self.shale_warnings, "warning")
             else:
-                self.shale_warnings.setText("✅ Shale parameters within expected range")
-                self.shale_warnings.setStyleSheet("color: green;")
+                self.shale_warnings.setText("Shale parameters within expected range")
+                set_status(self.shale_warnings, "success")
         else:
             self.shale_stat_label.setText("(No shale stats available)")
             self.shale_dev_label.setText("-")
-            self.shale_warnings.setText("✅ Shale parameters set")
-            self.shale_warnings.setStyleSheet("color: green;")
+            self.shale_warnings.setText("Shale parameters set")
+            set_status(self.shale_warnings, "success")
 
         # =====================================================================
         # POROSITY VALIDATION
@@ -412,12 +387,10 @@ class DiagnosticsTab(QWidget):
             failed = int(diagnostics.get("failed", 0))
             if no_root or failed:
                 solver_warnings.append(
-                    f"⚠️ {method}: {no_root} no-root, {failed} failed solver points"
+                    f"{method}: {no_root} no-root, {failed} failed solver points"
                 )
         self.sw_warnings.setText("\n".join(solver_warnings))
-        self.sw_warnings.setStyleSheet(
-            "color: orange;" if solver_warnings else ""
-        )
+        set_status(self.sw_warnings, "warning" if solver_warnings else None)
 
         sw_cols = ["SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
         available_sw = [
@@ -466,7 +439,10 @@ class DiagnosticsTab(QWidget):
             all_counts = []
             for col in available_sw:
                 data = results[col].dropna()
-                config = method_config.get(col, {"color": "#808080", "label": col})
+                config = method_config.get(col) or {
+                    "color": get_plot_color("SW_DEFAULT"),
+                    "label": col,
+                }
 
                 # Calculate counts first (for labels)
                 counts, bin_edges = np.histogram(data, bins=bins)
@@ -502,7 +478,7 @@ class DiagnosticsTab(QWidget):
                             ha="center",
                             va="bottom",
                             fontsize=6,
-                            color="#4A4540",
+                            color=get_plot_chrome()["text"],
                         )
 
             # Styling
@@ -569,16 +545,16 @@ class DiagnosticsTab(QWidget):
                 high_k = (k > 50000).sum()
                 low_k = (k < 0.001).sum()
                 if high_k > 0:
-                    warnings.append(f"⚠️ {col}: {high_k} points with k > 50,000 mD")
+                    warnings.append(f"{col}: {high_k} points with k > 50,000 mD")
                 if low_k > 0:
-                    warnings.append(f"⚠️ {col}: {low_k} points with k < 0.001 mD")
+                    warnings.append(f"{col}: {low_k} points with k < 0.001 mD")
 
             if warnings:
                 self.perm_warnings.setText("\n".join(warnings))
-                self.perm_warnings.setStyleSheet("color: orange;")
+                set_status(self.perm_warnings, "warning")
             else:
-                self.perm_warnings.setText("✅ No permeability outliers detected")
-                self.perm_warnings.setStyleSheet("color: green;")
+                self.perm_warnings.setText("No permeability outliers detected")
+                set_status(self.perm_warnings, "success")
 
         # =====================================================================
         # NET PAY VALIDATION
@@ -588,25 +564,25 @@ class DiagnosticsTab(QWidget):
             gross_sand = summary.get("gross_sand", 0)
             ng_pay = summary.get("ng_pay", 0) * 100
 
-            self.net_pay_card.set_value(f"{net_pay:.1f} ft")
-            self.gross_sand_card.set_value(f"{gross_sand:.1f} ft")
-            self.ng_pay_card.set_value(f"{ng_pay:.1f}%")
+            self.pay_strip.set_value("net_pay", f"{net_pay:.1f} ft")
+            self.pay_strip.set_value("gross_sand", f"{gross_sand:.1f} ft")
+            self.pay_strip.set_value("ng_pay", f"{ng_pay:.1f}%")
 
             # Warnings
             warnings = []
             if net_pay < 1:
                 warnings.append(
-                    f"⚠️ Net Pay ({net_pay:.1f} ft) < 1 ft - may be too thin"
+                    f"Net Pay ({net_pay:.1f} ft) < 1 ft - may be too thin"
                 )
             if gross_sand > 0 and ng_pay > 50:
-                warnings.append(f"⚠️ N/G Pay ({ng_pay:.1f}%) > 50% - verify cutoffs")
+                warnings.append(f"N/G Pay ({ng_pay:.1f}%) > 50% - verify cutoffs")
 
             if warnings:
                 self.pay_warnings.setText("\n".join(warnings))
-                self.pay_warnings.setStyleSheet("color: orange;")
+                set_status(self.pay_warnings, "warning")
             else:
-                self.pay_warnings.setText("✅ Net Pay values within expected range")
-                self.pay_warnings.setStyleSheet("color: green;")
+                self.pay_warnings.setText("Net Pay values within expected range")
+                set_status(self.pay_warnings, "success")
 
         # =====================================================================
         # CORE DATA VALIDATION
@@ -617,15 +593,15 @@ class DiagnosticsTab(QWidget):
 
             # Summary metrics
             summary_core = core.get_summary()
-            self.core_samples_card.set_value(str(summary_core.get("n_samples", 0)))
+            self.core_strip.set_value("samples", str(summary_core.get("n_samples", 0)))
 
             depth_range = summary_core.get("depth_range", (0, 0))
-            self.core_depth_card.set_value(
+            self.core_strip.set_value("depth", 
                 f"{depth_range[0]:.0f} - {depth_range[1]:.0f} ft"
             )
 
             props = summary_core.get("properties", [])
-            self.core_props_card.set_value(", ".join(props))
+            self.core_strip.set_value("props", ", ".join(props))
 
             # Validation
             if "DEPTH" in results.columns and "PHIE" in results.columns:
@@ -761,19 +737,19 @@ class DiagnosticsTab(QWidget):
                 warnings = list(overlay_warnings)
                 if por_result and por_result.r_squared and por_result.r_squared < 0.5:
                     warnings.append(
-                        f"⚠️ Porosity R² = {por_result.r_squared:.2f} (low correlation)"
+                        f"Porosity R² = {por_result.r_squared:.2f} (low correlation)"
                     )
                 if por_result and abs(por_result.bias) > 0.05:
-                    warnings.append(f"⚠️ Porosity bias = {por_result.bias:.3f} (>0.05)")
+                    warnings.append(f"Porosity bias = {por_result.bias:.3f} (>0.05)")
 
                 if warnings:
                     self.core_warnings.setText("\n".join(warnings))
-                    self.core_warnings.setStyleSheet("color: orange;")
+                    set_status(self.core_warnings, "warning")
                 else:
                     self.core_warnings.setText(
-                        "✅ Core validation within acceptable range"
+                        "Core validation within acceptable range"
                     )
-                    self.core_warnings.setStyleSheet("color: green;")
+                    set_status(self.core_warnings, "success")
         else:
             self.core_group.setVisible(False)
 
@@ -883,8 +859,8 @@ class DiagnosticsTab(QWidget):
         self.core_perm_depth_plot.canvas.draw()
 
         if overlay_warnings:
-            self.core_warnings.setText("⚠️ " + "; ".join(overlay_warnings))
-            self.core_warnings.setStyleSheet("color: orange;")
+            self.core_warnings.setText("" + "; ".join(overlay_warnings))
+            set_status(self.core_warnings, "warning")
         return overlay_warnings
 
     def _update_phie_plot(self):
@@ -897,14 +873,14 @@ class DiagnosticsTab(QWidget):
 
         # Check if selected method exists in results
         if selected_method not in results.columns:
-            self.phie_warnings.setText(f"⚠️ {selected_method} not available in results")
-            self.phie_warnings.setStyleSheet("color: orange;")
+            self.phie_warnings.setText(f"{selected_method} not available in results")
+            set_status(self.phie_warnings, "warning")
             return
 
         data = results[selected_method].dropna()
         if len(data) == 0:
-            self.phie_warnings.setText(f"⚠️ {selected_method} has no valid data")
-            self.phie_warnings.setStyleSheet("color: orange;")
+            self.phie_warnings.setText(f"{selected_method} has no valid data")
+            set_status(self.phie_warnings, "warning")
             return
 
         # Update histogram
@@ -922,7 +898,7 @@ class DiagnosticsTab(QWidget):
         for col in available_phie:
             col_data = results[col].dropna()
             # Highlight selected method
-            method_name = col if col != selected_method else f"► {col}"
+            method_name = f"{col} (selected)" if col == selected_method else col
             stats_data.append(
                 {
                     "Method": method_name,
@@ -939,18 +915,18 @@ class DiagnosticsTab(QWidget):
         high_phie = (data > 0.45).sum()
         low_phie = (data < 0).sum()
         if high_phie > 0:
-            warnings.append(f"⚠️ {high_phie} points with {selected_method} > 0.45")
+            warnings.append(f"{high_phie} points with {selected_method} > 0.45")
         if low_phie > 0:
             warnings.append(
-                f"⚠️ {low_phie} points with {selected_method} < 0 (negative)"
+                f"{low_phie} points with {selected_method} < 0 (negative)"
             )
 
         if warnings:
             self.phie_warnings.setText("\n".join(warnings))
-            self.phie_warnings.setStyleSheet("color: orange;")
+            set_status(self.phie_warnings, "warning")
         else:
-            self.phie_warnings.setText(f"✅ No {selected_method} outliers detected")
-            self.phie_warnings.setStyleSheet("color: green;")
+            self.phie_warnings.setText(f"No {selected_method} outliers detected")
+            set_status(self.phie_warnings, "success")
 
     def reset_ui(self):
         """Reset UI to fresh state for New Project."""
@@ -970,7 +946,7 @@ class DiagnosticsTab(QWidget):
         self.sw_hist.clear()
         self.sw_stats_model.set_dataframe(pd.DataFrame())
         self.sw_warnings.setText("")
-        self.sw_warnings.setStyleSheet("")
+        set_status(self.sw_warnings, None)
 
         # Reset permeability section
         self.perm_crossplot.clear()
@@ -978,15 +954,15 @@ class DiagnosticsTab(QWidget):
         self.perm_warnings.setText("")
 
         # Reset net pay section
-        self.net_pay_card.set_value("- ft")
-        self.gross_sand_card.set_value("- ft")
-        self.ng_pay_card.set_value("- %")
+        self.pay_strip.set_value("net_pay", "- ft")
+        self.pay_strip.set_value("gross_sand", "- ft")
+        self.pay_strip.set_value("ng_pay", "- %")
         self.pay_warnings.setText("")
 
         # Reset core validation section
-        self.core_samples_card.set_value("-")
-        self.core_depth_card.set_value("-")
-        self.core_props_card.set_value("-")
+        self.core_strip.set_value("samples", "-")
+        self.core_strip.set_value("depth", "-")
+        self.core_strip.set_value("props", "-")
         self.core_por_crossplot.clear()
         self.core_por_stats_model.set_dataframe(pd.DataFrame())
         self.core_perm_crossplot.clear()
