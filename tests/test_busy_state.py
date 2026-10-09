@@ -5,7 +5,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pandas as pd
 import pytest
-from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import MainWindow
@@ -234,16 +233,16 @@ def test_close_while_busy_asks_for_confirmation(window, monkeypatch, kind, text,
     window._set_busy(kind)
     gen = window._analysis_gen
 
-    event = QCloseEvent()
-    window.closeEvent(event)
+    # The real close path: QWidget.close() returns whether the event was accepted.
+    accepted = window.close()
 
     assert asked == [text]
     if answer == QMessageBox.StandardButton.Yes:
-        assert event.isAccepted()
+        assert accepted
         assert cancelled == [True]
         assert window._analysis_gen == gen + 1  # a late result is dropped
     else:
-        assert not event.isAccepted()
+        assert not accepted
         assert cancelled == []
         assert window._busy == kind
 
@@ -251,7 +250,5 @@ def test_close_while_busy_asks_for_confirmation(window, monkeypatch, kind, text,
 def test_close_when_idle_does_not_ask(window, monkeypatch):
     asked = []
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a))
-    event = QCloseEvent()
-    window.closeEvent(event)
+    assert window.close()
     assert asked == []
-    assert event.isAccepted()
