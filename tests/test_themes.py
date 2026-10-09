@@ -10,8 +10,6 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 from themes.colors import (
-    DARK_COLORS,
-    LIGHT_COLORS,
     PLOT_COLORS,
     get_color,
     get_current_theme,
@@ -20,7 +18,12 @@ from themes.colors import (
     is_dark_theme,
     set_current_theme,
 )
+from themes.renderer import render_qss
 from themes.theme_manager import ThemeManager
+from themes.tokens import COLORS
+
+DARK_COLORS = COLORS["dark"]
+LIGHT_COLORS = COLORS["light"]
 from ui.tabs.qc_tab import QCTab
 from ui.widgets.interactive_log import InteractiveLogPlot
 from ui.widgets.plot_widget import PlotWidget, TripleComboPlot
@@ -65,8 +68,8 @@ class TestThemeColors:
         assert required <= light.keys()
         assert required <= dark.keys()
         assert light != dark
-        assert light["figure"] == "#F0EBE1"
-        assert dark["figure"] == "#1E1E1E"
+        assert light["figure"] == LIGHT_COLORS["bg_surface"]
+        assert dark["figure"] == DARK_COLORS["bg_surface"]
         assert light["text"] != dark["text"]
         assert get_plot_color("bg", "dark") == dark["figure"]
         assert get_plot_color("grid", "dark") == dark["grid"]
@@ -81,23 +84,12 @@ class TestThemeColors:
         assert "unknown color key" in caplog.text.lower()
         assert "unknown theme" in caplog.text.lower()
 
-    def test_css_names_are_normalized_and_tooltip_token_exists(self):
-        assert LIGHT_COLORS["success_text"].startswith("#")
-        assert LIGHT_COLORS["warning_text"].startswith("#")
+    def test_css_names_are_normalized_and_tooltip_token_renders(self):
         assert PLOT_COLORS["MEDIAN_LINE"].startswith("#")
-        assert "tooltip_border" in LIGHT_COLORS
-        assert "tooltip_border" in DARK_COLORS
-
-    def test_palette_module_aliases_remain_compatible(self):
-        from themes.light import LIGHT_COLORS as light_palette
-        from themes.light import LIGHT_PALETTE
-        from themes.dark import DARK_COLORS as dark_palette
-        from themes.dark import DARK_PALETTE
-
-        assert light_palette is LIGHT_PALETTE
-        assert dark_palette is DARK_PALETTE
-        assert light_palette["background"] == LIGHT_COLORS["bg_primary"]
-        assert dark_palette["background"] == DARK_COLORS["bg_primary"]
+        for theme in ("light", "dark"):
+            qss = render_qss(theme)
+            assert COLORS[theme]["tooltip_bg"] in qss
+            assert "$" not in qss
 
 
 class TestThemeManager:
@@ -112,7 +104,7 @@ class TestThemeManager:
         assert received[-1] == "dark"
         assert manager.get_current_theme() == get_current_theme() == "dark"
         assert manager.is_dark() is is_dark_theme() is True
-        assert manager.get_color("bg_primary") == DARK_COLORS["bg_primary"]
+        assert manager.get_color("bg_base") == DARK_COLORS["bg_base"]
         assert manager.get_plot_color("PHIE") == PLOT_COLORS["PHIE"]
         assert manager.get_plot_color("RT") == DARK_COLORS["text_primary"]
 

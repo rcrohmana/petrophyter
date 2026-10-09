@@ -3,9 +3,8 @@ Theme system for Petrophyter PyQt.
 Provides light and dark theme support with centralized color management.
 """
 
+from . import tokens
 from .colors import (
-    LIGHT_COLORS,
-    DARK_COLORS,
     PLOT_COLORS,
     PLOT_CHROME,
     get_color,
@@ -16,16 +15,19 @@ from .colors import (
     get_colors_dict,
     is_dark_theme,
 )
+from .helpers import set_status, set_variant
+from .icon_loader import clear_icon_cache, get_icon
+from .renderer import render_qss
 from .theme_manager import ThemeManager
-from .light import LIGHT_THEME
-from .dark import DARK_THEME
 
 __all__ = [
     "ThemeManager",
-    "LIGHT_THEME",
-    "DARK_THEME",
-    "LIGHT_COLORS",
-    "DARK_COLORS",
+    "tokens",
+    "render_qss",
+    "get_icon",
+    "clear_icon_cache",
+    "set_status",
+    "set_variant",
     "PLOT_COLORS",
     "PLOT_CHROME",
     "get_color",
