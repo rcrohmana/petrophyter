@@ -175,13 +175,13 @@ def test_stale_results_cannot_drive_perm_or_export(window, monkeypatch):
 
 def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypatch):
     window.model._las_data = pd.DataFrame({"DEPTH": [100.0]})
-    window.sidebar.run_btn.setEnabled(True)
+    window.actions_["run_analysis"].setEnabled(True)
     states = []
     monkeypatch.setattr(window.sidebar, "update_model_from_ui", lambda: None)
     monkeypatch.setattr(
         window.analysis_service,
         "run_analysis",
-        lambda model: states.append(window.sidebar.run_btn.isEnabled()),
+        lambda model: states.append(window.actions_["run_analysis"].isEnabled()),
     )
 
     window._on_run_analysis()

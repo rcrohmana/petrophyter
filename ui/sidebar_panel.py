@@ -49,11 +49,7 @@ class SidebarPanel(QWidget):
     """
 
     # Signals
-    las_files_selected = pyqtSignal(list)  # List of file paths
     merge_requested = pyqtSignal()
-    tops_file_selected = pyqtSignal(str)
-    core_file_selected = pyqtSignal(str)
-    run_analysis_clicked = pyqtSignal()
     download_merged_clicked = pyqtSignal()
 
     # Parameter signals
@@ -64,20 +60,10 @@ class SidebarPanel(QWidget):
     calculate_perm_clicked = pyqtSignal()
     apply_perm_clicked = pyqtSignal()
 
-    # Session signals (v1.2)
-    new_project_clicked = pyqtSignal()
-    save_session_clicked = pyqtSignal()
-    load_session_clicked = pyqtSignal()
-
-    # Help signal
-    help_clicked = pyqtSignal()
-
-    # Theme signal
-    theme_toggle_clicked = pyqtSignal()
-
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
+        self._progress_cb = None
         self.setMinimumWidth(340)  # Slightly wider for better readability
         self.setMaximumWidth(420)  # Increased max width
         self._setup_ui()
@@ -87,35 +73,6 @@ class SidebarPanel(QWidget):
         """Setup the sidebar UI."""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
-
-        # === TOP TOOLBAR (New/Save/Load + Theme) ===
-        toolbar_layout = QHBoxLayout()
-        toolbar_layout.setSpacing(6)
-        toolbar_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Session buttons (icon-only)
-        self.new_btn = self._create_toolbar_button("📄", "New Project - Clear all data")
-        self.new_btn.clicked.connect(self.new_project_clicked.emit)
-        toolbar_layout.addWidget(self.new_btn)
-        toolbar_layout.setStretchFactor(self.new_btn, 1)
-
-        self.save_session_btn = self._create_toolbar_button("💾", "Save Session")
-        self.save_session_btn.clicked.connect(self.save_session_clicked.emit)
-        toolbar_layout.addWidget(self.save_session_btn)
-        toolbar_layout.setStretchFactor(self.save_session_btn, 1)
-
-        self.load_session_btn = self._create_toolbar_button("📂", "Load Session")
-        self.load_session_btn.clicked.connect(self.load_session_clicked.emit)
-        toolbar_layout.addWidget(self.load_session_btn)
-        toolbar_layout.setStretchFactor(self.load_session_btn, 1)
-
-        # Theme toggle button (auto icon based on current theme)
-        self.theme_btn = self._create_toolbar_button("🌙", "Switch to Dark Theme")
-        self.theme_btn.clicked.connect(self._on_theme_toggle)
-        toolbar_layout.addWidget(self.theme_btn)
-        toolbar_layout.setStretchFactor(self.theme_btn, 1)
-
-        main_layout.addLayout(toolbar_layout)
 
         # Create scroll area
         scroll = QScrollArea()
@@ -131,20 +88,6 @@ class SidebarPanel(QWidget):
         # DATA INPUT SECTION
         # =====================================================================
         self._create_data_input_section()
-
-        # =====================================================================
-        # RUN ANALYSIS BUTTON (after data input)
-        # =====================================================================
-        self.run_btn = QPushButton("🚀 Run Analysis")
-        self.run_btn.setStyleSheet(self._get_run_button_style())
-        self.run_btn.setEnabled(False)
-        self.run_btn.clicked.connect(self.run_analysis_clicked.emit)
-        self.content_layout.addWidget(self.run_btn)
-
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.content_layout.addWidget(self.progress_bar)
 
         # =====================================================================
         # FORMATION TOPS SECTION
@@ -172,66 +115,6 @@ class SidebarPanel(QWidget):
         scroll.setWidget(content)
         main_layout.addWidget(scroll)
 
-        # Help Button (Bottom Left)
-        self.help_btn = QPushButton("❓ About Petrophyter")
-        self.help_btn.setFlat(True)
-        self.help_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._apply_help_style()
-        self.help_btn.clicked.connect(self.help_clicked.emit)
-        main_layout.addWidget(self.help_btn)
-
-    def _create_toolbar_button(self, icon: str, tooltip: str) -> QPushButton:
-        """Create a styled toolbar button with icon and tooltip."""
-        from themes.colors import get_color
-
-        btn = QPushButton(icon)
-        btn.setMinimumHeight(32)
-        btn.setToolTip(tooltip)
-        btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._apply_toolbar_style(btn)
-        return btn
-
-    def _apply_toolbar_style(self, btn: QPushButton):
-        from themes.colors import get_color
-
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                border: 1px solid {get_color("border")};
-                border-radius: 6px;
-                background-color: {get_color("bg_surface_alt")};
-                font-size: 14px;
-                min-width: 0px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_color("bg_surface_hover")};
-            }}
-            QPushButton:pressed {{
-                background-color: {get_color("bg_surface_pressed")};
-            }}
-            """
-        )
-
-    def _get_run_button_style(self) -> str:
-        """Get stylesheet for Run Analysis button."""
-        from themes.colors import get_color
-
-        return f"""
-            QPushButton {{
-                background-color: {get_color("primary")};
-                color: white;
-                font-weight: bold;
-                padding: 10px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_color("primary_dark")};
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color("primary_light")};
-            }}
-        """
-
     def _create_data_input_section(self):
         """Create the data input section."""
         group = QGroupBox("📁 Data Input")
@@ -239,7 +122,6 @@ class SidebarPanel(QWidget):
 
         # LAS file upload button
         self.las_btn = QPushButton("📂 Open LAS File(s)...")
-        self.las_btn.clicked.connect(self._on_open_las)
         layout.addWidget(self.las_btn)
 
         # File info label
@@ -296,7 +178,6 @@ class SidebarPanel(QWidget):
         layout = QVBoxLayout(group)
 
         self.tops_btn = QPushButton("📂 Open Formation Tops...")
-        self.tops_btn.clicked.connect(self._on_open_tops)
         layout.addWidget(self.tops_btn)
 
         self.tops_info_label = QLabel("")
@@ -311,7 +192,6 @@ class SidebarPanel(QWidget):
         layout = QVBoxLayout(group)
 
         self.core_btn = QPushButton("📂 Open Core Data...")
-        self.core_btn.clicked.connect(self._on_open_core)
         layout.addWidget(self.core_btn)
 
         # Core settings
@@ -540,29 +420,11 @@ class SidebarPanel(QWidget):
         self.update_model_from_ui()
         self.parameters_updated.emit()
 
-    def _on_open_las(self):
-        """Open LAS file dialog."""
-        files, _ = QFileDialog.getOpenFileNames(
-            self, "Open LAS File(s)", "", "LAS Files (*.las *.LAS);;All Files (*)"
-        )
-        if files:
-            self.las_files_selected.emit(files)
-
-    def _on_open_tops(self):
-        """Open formation tops file dialog."""
-        file, _ = QFileDialog.getOpenFileName(
-            self, "Open Formation Tops", "", "Text Files (*.txt *.csv);;All Files (*)"
-        )
-        if file:
-            self.tops_file_selected.emit(file)
-
-    def _on_open_core(self):
-        """Open core data file dialog."""
-        file, _ = QFileDialog.getOpenFileName(
-            self, "Open Core Data", "", "Text Files (*.txt *.csv);;All Files (*)"
-        )
-        if file:
-            self.core_file_selected.emit(file)
+    def set_open_callbacks(self, open_las, open_tops, open_core):
+        """Wire the Open buttons to MainWindow's file dialogs."""
+        self.las_btn.clicked.connect(open_las)
+        self.tops_btn.clicked.connect(open_tops)
+        self.core_btn.clicked.connect(open_core)
 
     # =========================================================================
     # PUBLIC METHODS
@@ -584,7 +446,6 @@ class SidebarPanel(QWidget):
 
         # Show parameters section
         self.params_frame.setVisible(True)
-        self.run_btn.setEnabled(True)
 
     def update_multiple_files_info(self, count: int):
         """Show multiple files selected info."""
@@ -624,11 +485,9 @@ class SidebarPanel(QWidget):
         self.perm_params_widget.apply_calculated()
 
     def set_progress(self, value: int, message: str = None):
-        """Set progress bar value."""
-        self.progress_bar.setVisible(value < 100)
-        self.progress_bar.setValue(value)
-        if message:
-            self.progress_bar.setFormat(f"{message} - %p%")
+        """Forward progress to the callback set by MainWindow (status bar)."""
+        if self._progress_cb is not None:
+            self._progress_cb(value, message)
 
     def update_model_from_ui(self):
         """Update model from UI values."""
@@ -754,13 +613,8 @@ class SidebarPanel(QWidget):
         # Reset core data info
         self.core_info_label.setText("")
 
-        # Hide parameters section and disable run button
+        # Hide parameters section
         self.params_frame.setVisible(False)
-        self.run_btn.setEnabled(False)
-
-        # Hide progress bar
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
 
         # Clear curve mapping
         self.curve_mapping_widget.set_available_curves([], None)
@@ -769,46 +623,14 @@ class SidebarPanel(QWidget):
         self.analysis_mode_widget.set_formations([])
         self.analysis_mode_widget.whole_well_radio.setChecked(True)
 
-    def _on_theme_toggle(self):
-        """Handle theme toggle button click."""
-        self.theme_toggle_clicked.emit()
-
-    def update_theme_button(self, is_dark: bool):
-        """Update theme button icon based on current theme."""
-        if is_dark:
-            self.theme_btn.setText("☀️")  # Show sun = click to go light
-            self.theme_btn.setToolTip("Switch to Light Theme")
-        else:
-            self.theme_btn.setText("🌙")  # Show moon = click to go dark
-            self.theme_btn.setToolTip("Switch to Dark Theme")
-
-    def _apply_help_style(self):
-        self.help_btn.setStyleSheet(
-            f"text-align: left; padding: 5px; color: {get_color('text_secondary')};"
-        )
-
     def refresh_theme(self):
         """Refresh widget styling when theme changes."""
-        # Refresh toolbar buttons
-        for btn in [
-            self.new_btn,
-            self.save_session_btn,
-            self.load_session_btn,
-            self.theme_btn,
-        ]:
-            self._apply_toolbar_style(btn)
-
         # Refresh collapsible groups
         for group in self.findChildren(CollapsibleGroupBox):
             if hasattr(group, "refresh_theme"):
                 group.refresh_theme()
 
-        # Refresh Run Analysis button
-        self.run_btn.setStyleSheet(self._get_run_button_style())
-
         # Refresh info labels/help color
         self.las_info_label.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent;"
         )
-        if hasattr(self, "help_btn"):
-            self._apply_help_style()
