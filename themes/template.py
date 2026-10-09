@@ -163,8 +163,21 @@ QFrame#NotificationBanner[kind="success"] { background-color: $success_subtle; b
 QFrame#NotificationBanner[kind="warning"] { background-color: $warning_subtle; border-color: $warning; }
 QFrame#NotificationBanner[kind="info"] { background-color: $accent_subtle; border-color: $accent; }
 QFrame#NotificationBanner QLabel { background: transparent; }
+QLabel#AboutTitle { font-size: $font_max; font-weight: 600; }
 QLabel#StatusDot { min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;
                    border-radius: 4px; background-color: $text_muted; }
 QLabel#StatusDot[kind="ok"] { background-color: $success; }
 QLabel#StatusDot[kind="warn"] { background-color: $warning; }
+QDialog#ParametersWindow { background-color: $bg_base; }
+QListWidget#ParamsPageList { background: transparent; border: none; padding: 4px 0; }
+QListWidget#ParamsPageList::item { height: 26px; padding-left: 12px; border: none;
+    border-left: 2px solid transparent; color: $text_primary; }
+QListWidget#ParamsPageList::item:hover { background-color: $bg_hover; }
+QListWidget#ParamsPageList::item:selected { background-color: $accent_subtle;
+    color: $text_primary; border-left: 2px solid $accent; }
+QListWidget#ParamsPageList::item:disabled { color: $text_muted; padding-top: 8px; }
+QStackedWidget#ParamsStack { background-color: $bg_surface; border: none;
+    border-left: 1px solid $border; }
+QWidget#ParamsPage { background-color: $bg_surface; }
+QWidget#ParamsFooter { background-color: $bg_base; border-top: 1px solid $border; }
 """

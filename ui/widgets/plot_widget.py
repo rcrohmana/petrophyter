@@ -3,10 +3,9 @@ Plot Widget for Petrophyter PyQt
 Matplotlib/pyqtgraph wrapper for plotting.
 """
 
-import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSizePolicy
 from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QIcon, QPalette, QColor
+from PyQt6.QtGui import QPalette, QColor
 import matplotlib
 
 matplotlib.use("QtAgg")
@@ -17,12 +16,19 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict
 
-from themes.colors import get_color, get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color
+from themes.icon_loader import get_icon
 
-# Get icons directory path
-_ICONS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "icons"
-)
+_TOOLBAR_ICONS = {
+    "home": "house",
+    "back": "arrow-left",
+    "forward": "arrow-right",
+    "pan": "move",
+    "zoom": "zoom-in",
+    "save": "save",
+    "tune": "sliders-horizontal",
+    "subplots": "settings-2",
+}
 
 class PlotWidget(QWidget):
     """
@@ -45,7 +51,6 @@ class PlotWidget(QWidget):
         # Set figure with theme background
         self.figure = Figure(figsize=figsize, dpi=100, facecolor=self._bg_color)
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setStyleSheet(f"background-color: {self._bg_color};")
         self.canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -75,10 +80,7 @@ class PlotWidget(QWidget):
             for action in self.toolbar.actions():
                 action.setEnabled(True)
 
-            # Style toolbar with explicit theme-aware foreground/background.
-            self.toolbar.setStyleSheet(self._toolbar_stylesheet())
-
-            # Override toolbar icons with custom dark SVG icons for visibility
+            # Replace the stock matplotlib icons with themed Lucide icons.
             self._apply_custom_toolbar_icons()
 
             layout.addWidget(self.toolbar)
@@ -86,35 +88,6 @@ class PlotWidget(QWidget):
             self.toolbar = None
 
         layout.addWidget(self.canvas)
-
-    def _toolbar_stylesheet(self) -> str:
-        """Build the small toolbar stylesheet from current theme tokens."""
-        return f"""
-            QToolBar {{
-                background-color: {self._bg_color};
-                border: 1px solid {get_color('border')};
-                border-radius: 4px;
-                spacing: 3px;
-                padding: 4px;
-            }}
-            QToolButton {{
-                color: {self._text_color};
-                background-color: transparent;
-                border: 1px solid transparent;
-                border-radius: 4px;
-                padding: 4px;
-                margin: 1px;
-            }}
-            QToolButton:hover {{
-                background-color: {get_color('bg_surface_hover')};
-                border-color: {self._spine_color};
-            }}
-            QToolButton:pressed, QToolButton:checked {{
-                background-color: {get_color('bg_surface_pressed')};
-                border-color: {self._spine_color};
-            }}
-            QToolButton:disabled {{ color: {get_color('text_disabled')}; }}
-        """
 
     def _style_axes(self, ax):
         """Apply current chrome to an existing Matplotlib axes."""
@@ -133,7 +106,6 @@ class PlotWidget(QWidget):
         self._text_color = self._chrome["text"]
         self._spine_color = self._chrome["spine"]
         self.figure.set_facecolor(self._bg_color)
-        self.canvas.setStyleSheet(f"background-color: {self._bg_color};")
         palette = self.canvas.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
         palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
@@ -143,7 +115,7 @@ class PlotWidget(QWidget):
             toolbar_palette.setColor(QPalette.ColorRole.Window, QColor(self._bg_color))
             toolbar_palette.setColor(QPalette.ColorRole.Base, QColor(self._bg_color))
             self.toolbar.setPalette(toolbar_palette)
-            self.toolbar.setStyleSheet(self._toolbar_stylesheet())
+            self._apply_custom_toolbar_icons()
         for ax in self.figure.axes:
             self._style_axes(ax)
         self.canvas.draw_idle()
@@ -153,7 +125,7 @@ class PlotWidget(QWidget):
         self.update_theme_colors()
 
     def _apply_custom_toolbar_icons(self):
-        """Override Matplotlib toolbar icons with custom dark SVG icons."""
+        """Override Matplotlib toolbar icons with themed Lucide icons."""
         if self.toolbar is None:
             return
 
@@ -162,35 +134,33 @@ class PlotWidget(QWidget):
             action_tooltip = action.toolTip().lower()
 
             # Determine which icon to use based on action text/tooltip
-            icon_file = None
+            key = None
 
             if "home" in action_text or "home" in action_tooltip:
-                icon_file = "home.svg"
+                key = "home"
             elif "back" in action_text or "back" in action_tooltip:
-                icon_file = "back.svg"
+                key = "back"
             elif "forward" in action_text or "forward" in action_tooltip:
-                icon_file = "forward.svg"
+                key = "forward"
             elif "pan" in action_text or "pan" in action_tooltip:
-                icon_file = "pan.svg"
+                key = "pan"
             elif "zoom" in action_text or "zoom" in action_tooltip:
-                icon_file = "zoom.svg"
+                key = "zoom"
             elif "save" in action_text or "save" in action_tooltip:
-                icon_file = "save.svg"
+                key = "save"
             # "Configure subplots" or "Edit axis, curve and image parameters"
             elif (
                 "axis, curve" in action_tooltip
                 or "edit axis" in action_tooltip
                 or "customize" in action_text
             ):
-                icon_file = "tune.svg"
+                key = "tune"
             # Regular "Subplots" button (grid layout)
             elif "subplots" in action_text or "subplot" in action_tooltip:
-                icon_file = "subplots.svg"
+                key = "subplots"
 
-            if icon_file:
-                icon_path = os.path.join(_ICONS_DIR, icon_file)
-                if os.path.exists(icon_path):
-                    action.setIcon(QIcon(icon_path))
+            if key:
+                action.setIcon(get_icon(_TOOLBAR_ICONS[key]))
 
     def clear(self):
         """Clear the figure."""
@@ -302,11 +272,13 @@ class HistogramPlot(PlotWidget):
         data: pd.Series,
         title: str = "Histogram",
         bins: int = 50,
-        color: str = "#1E90FF",
+        color: str = None,
         x_label: str = None,
     ):
         """Plot a histogram."""
         self.figure.clear()
+        if color is None:
+            color = get_plot_color("DEFAULT_HISTOGRAM")
         ax = self.figure.add_subplot(111)
         self._style_axes(ax)
 
@@ -702,7 +674,7 @@ class CompositeLogPlot(PlotWidget):
                 for ax in axes:
                     ax.axhline(
                         y=top_depth,
-                        color="#FF6600",
+                        color=get_plot_color("FORMATION_TOP"),
                         linestyle="--",
                         linewidth=1,
                         alpha=0.8,
@@ -714,7 +686,7 @@ class CompositeLogPlot(PlotWidget):
                     top_depth,
                     name,
                     fontsize=6,
-                    color="#FF6600",
+                    color=get_plot_color("FORMATION_TOP"),
                     verticalalignment="bottom",
                     transform=axes[0].get_yaxis_transform(),
                 )
@@ -809,7 +781,7 @@ class TripleComboPlot(PlotWidget):
         if has_gr:
             gr_data = data[gr_curve].values
             ax1.plot(gr_data, depth, color=get_plot_color("GR"), linewidth=0.8, label="GR")
-            ax1.fill_betweenx(depth, 0, gr_data, color="#90EE90", alpha=0.4)
+            ax1.fill_betweenx(depth, 0, gr_data, color=get_plot_color("GR_FILL"), alpha=0.4)
             ax1.set_xlim(0, 150)
             ax1.axvline(75, color=get_plot_color("GR"), linestyle=":", alpha=0.5)
         else:
