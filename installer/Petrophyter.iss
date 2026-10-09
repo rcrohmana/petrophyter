@@ -20,8 +20,8 @@
 ; -----------------------------------------------------------------------------
 #define AppId           "{{978A90D9-EDFB-4F2E-AB78-840138C1574F}"
 #define AppName         "Petrophyter"
-#define AppVersion      "1.5.0 (Build 20260814)"
-#define AppVersionFile  "1.5.0_Build20260814"
+#define AppVersion      "1.6.0 (Build 20261009)"
+#define AppVersionFile  "1.6.0_Build20261009"
 #define AppPublisher    "Petrophysics TAU Research Group"
 #define AppURL          "https://github.com/rcrohmana/petrophyter"
 #define AppExeName      "Petrophyter.exe"
@@ -102,6 +102,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; Main application files from PyInstaller dist folder
 Source: "..\dist\Petrophyter\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; License texts and third-party notices (incl. Lucide icons, ISC)
+Source: "..\LICENSE*"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 
 ; -----------------------------------------------------------------------------
 ; SHORTCUTS (Start Menu and Desktop)

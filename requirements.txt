@@ -15,6 +15,8 @@ scipy>=1.11.0
 
 # Visualization
 matplotlib>=3.7.0
+pyqtgraph>=0.13.0   # Interactive log display engine
+PyOpenGL>=3.1.0     # GPU-accelerated rendering for pyqtgraph
 
 # Excel Export
 openpyxl>=3.1.0
