@@ -9,6 +9,7 @@ import numpy as np
 from typing import Dict, Tuple, Optional
 import logging
 import traceback
+from functools import partial
 
 
 logger = logging.getLogger(__name__)
@@ -27,17 +28,25 @@ class AnalysisSignals(QObject):
     error = pyqtSignal(str)
 
 
+class _Cancelled(Exception):
+    """Raised from the progress callback once the worker has been cancelled."""
+
+
 class AnalysisWorker(QRunnable):
     """Run :func:`modules.pipeline.run_pipeline` on a pool thread.
 
     Everything the pipeline needs is snapshotted in ``__init__``, which runs on
     the GUI thread, so the model is never read from the worker thread.
+    ``generation`` identifies the run so the GUI can drop superseded results;
+    ``cancelled`` stops the pipeline at its next progress checkpoint (used on quit).
     """
 
-    def __init__(self, model):
+    def __init__(self, model, generation: int = 0):
         super().__init__()
         self.model = model
         self.signals = AnalysisSignals()
+        self.generation = generation
+        self.cancelled = False
         las_data = model.las_data
         self._data = las_data.copy() if las_data is not None else None
         self._params = model.to_params()
@@ -56,11 +65,13 @@ class AnalysisWorker(QRunnable):
                 self._data,
                 self._params["curve_mapping"],
                 self._params,
-                progress=self.signals.progress.emit,
+                progress=self._progress,
                 formation_tops=self._formation_tops,
             )
             self.signals.completed.emit(results, summary)
 
+        except _Cancelled:
+            pass
         except PipelineError as e:
             self.signals.error.emit(str(e))
         except Exception as e:
@@ -68,17 +79,25 @@ class AnalysisWorker(QRunnable):
                 f"Analysis failed: {str(e)}\n{traceback.format_exc()}"
             )
 
+    def _progress(self, message: str, percent: int):
+        if self.cancelled:
+            raise _Cancelled()
+        self.signals.progress.emit(message, percent)
+
 
 class AnalysisService(QObject):
     """
     Service for running petrophysics analysis.
     Manages background thread execution.
+
+    Every signal carries the generation passed to :meth:`run_analysis` as its
+    last argument.
     """
 
-    started = pyqtSignal()
-    progress = pyqtSignal(str, int)
-    completed = pyqtSignal(pd.DataFrame, dict)
-    error = pyqtSignal(str)
+    started = pyqtSignal(int)
+    progress = pyqtSignal(str, int, int)
+    completed = pyqtSignal(pd.DataFrame, dict, int)
+    error = pyqtSignal(str, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -95,20 +114,33 @@ class AnalysisService(QObject):
             }
         )
 
-    def run_analysis(self, model):
+    def run_analysis(self, model, generation: int = 0):
         """Start analysis in background thread."""
-        worker = AnalysisWorker(model)
-        worker.signals.started.connect(self.started.emit)
-        worker.signals.progress.connect(self.progress.emit)
-        worker.signals.completed.connect(self._on_completed)
-        worker.signals.error.connect(self.error.emit)
+        worker = AnalysisWorker(model, generation)
+        # PyQt runs these partial slots on the GUI thread (where connect() is called).
+        worker.signals.started.connect(partial(self.started.emit, generation))
+        worker.signals.progress.connect(partial(self._on_progress, generation))
+        worker.signals.completed.connect(partial(self._on_completed, generation))
+        worker.signals.error.connect(partial(self._on_error, generation))
 
         self._current_worker = worker
         self.thread_pool.start(worker)
 
-    def _on_completed(self, results: pd.DataFrame, summary: dict):
+    def cancel(self):
+        """Stop the running worker at its next progress checkpoint and drop queued ones."""
+        self.thread_pool.clear()
+        if self._current_worker is not None:
+            self._current_worker.cancelled = True
+
+    def _on_progress(self, generation: int, message: str, percent: int):
+        self.progress.emit(message, percent, generation)
+
+    def _on_completed(self, generation: int, results: pd.DataFrame, summary: dict):
         """Handle analysis completion."""
-        self.completed.emit(results, summary)
+        self.completed.emit(results, summary, generation)
+
+    def _on_error(self, generation: int, error: str):
+        self.error.emit(error, generation)
 
     def calculate_rw_rsh(self, model) -> Optional[Dict]:
         """Calculate Rw and Rsh from log data (synchronous)."""
