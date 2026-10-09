@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict
 
-from themes.colors import get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 from themes.icon_loader import get_icon
 
 _TOOLBAR_ICONS = {
@@ -290,7 +290,7 @@ class LogTrackPlot(PlotWidget):
     def set_track_title(self, track_idx: int, title: str):
         """Set title for a track."""
         if track_idx < len(self.axes):
-            self.axes[track_idx].set_title(title, fontsize=10)
+            self.axes[track_idx].set_title(title, fontsize=TITLE_SIZE)
 
 
 class HistogramPlot(PlotWidget):
@@ -324,11 +324,11 @@ class HistogramPlot(PlotWidget):
             alpha=0.7,
             edgecolor=self._chrome["figure"],
         )
-        ax.set_title(title, fontsize=10)
+        ax.set_title(title, fontsize=TITLE_SIZE)
 
         if x_label:
-            ax.set_xlabel(x_label, fontsize=9)
-        ax.set_ylabel("Frequency", fontsize=9)
+            ax.set_xlabel(x_label, fontsize=LABEL_SIZE)
+        ax.set_ylabel("Frequency", fontsize=LABEL_SIZE)
 
         # Add mean and median lines
         mean_val = clean_data.mean()
@@ -403,7 +403,7 @@ class CrossPlot(PlotWidget):
             scatter = ax.scatter(x, y, c=c, cmap="viridis", alpha=0.6, s=8, edgecolors='none')
             cbar = self.figure.colorbar(scatter, ax=ax, pad=0.02)
             if colorbar_label:
-                cbar.set_label(colorbar_label, fontsize=9)
+                cbar.set_label(colorbar_label, fontsize=LABEL_SIZE)
             cbar.ax.tick_params(labelsize=8)
         else:
             ax.scatter(
@@ -422,9 +422,9 @@ class CrossPlot(PlotWidget):
         if invert_y:
             ax.invert_yaxis()
 
-        ax.set_xlabel(x_label, fontsize=10, fontweight='bold')
-        ax.set_ylabel(y_label, fontsize=10, fontweight='bold')
-        ax.set_title(title, fontsize=11, fontweight='bold')
+        ax.set_xlabel(x_label, fontsize=LABEL_SIZE)
+        ax.set_ylabel(y_label, fontsize=LABEL_SIZE)
+        ax.set_title(title, fontsize=TITLE_SIZE)
         
         # Professional grid styling
         if grid_style == "both":
@@ -560,7 +560,7 @@ class CompositeLogPlot(PlotWidget):
             self._style_axes(ax)
             axes.append(ax)
 
-        axes[0].set_ylabel("Depth (ft)", fontsize=9)
+        axes[0].set_ylabel("Depth (ft)", fontsize=LABEL_SIZE)
         for ax in axes[1:]:
             ax.tick_params(labelleft=False)
 
@@ -581,8 +581,8 @@ class CompositeLogPlot(PlotWidget):
                 depth, 0, filtered["VSH"].values, color=get_plot_color("VSH"), alpha=0.3
             )
         axes[0].set_xlim(0, 1)
-        axes[0].set_title("GR / Vsh", fontsize=9)
-        axes[0].set_xlabel("Vsh (v/v)", fontsize=8)
+        axes[0].set_title("GR / Vsh", fontsize=TITLE_SIZE)
+        axes[0].set_xlabel("Vsh (v/v)", fontsize=LABEL_SIZE)
 
         # Track 2: Porosity
         porosity_curves = ["PHIE", "PHID", "PHIN", "PHIT"]
@@ -597,8 +597,8 @@ class CompositeLogPlot(PlotWidget):
                     label=curve,
                 )
         axes[1].set_xlim(0, 0.4)
-        axes[1].set_title("Porosity", fontsize=9)
-        axes[1].set_xlabel("φ (v/v)", fontsize=8)
+        axes[1].set_title("Porosity", fontsize=TITLE_SIZE)
+        axes[1].set_xlabel("φ (v/v)", fontsize=LABEL_SIZE)
         axes[1].legend(loc="upper right", fontsize=6)
 
         # Track 3: Water Saturation. Plot every calculated method that is
@@ -614,8 +614,8 @@ class CompositeLogPlot(PlotWidget):
                     label=curve.replace("SW_", ""),
                 )
         axes[2].set_xlim(0, 1)
-        axes[2].set_title("Sw", fontsize=9)
-        axes[2].set_xlabel("Sw (v/v)", fontsize=8)
+        axes[2].set_title("Sw", fontsize=TITLE_SIZE)
+        axes[2].set_xlabel("Sw (v/v)", fontsize=LABEL_SIZE)
         axes[2].legend(loc="upper right", fontsize=6)
 
         # Track 4: Permeability (log scale)
@@ -633,8 +633,8 @@ class CompositeLogPlot(PlotWidget):
                 )
         axes[3].set_xscale("log")
         axes[3].set_xlim(0.01, 10000)
-        axes[3].set_title("Permeability", fontsize=9)
-        axes[3].set_xlabel("K (mD)", fontsize=8)
+        axes[3].set_title("Permeability", fontsize=TITLE_SIZE)
+        axes[3].set_xlabel("K (mD)", fontsize=LABEL_SIZE)
         axes[3].legend(loc="upper right", fontsize=6)
 
         # Track 5: Pay flags (if available)
@@ -654,8 +654,8 @@ class CompositeLogPlot(PlotWidget):
                 depth, 0, res_only, color=get_plot_color("RES_FILL"), alpha=0.5, label="Res"
             )
         axes[4].set_xlim(0, 1)
-        axes[4].set_title("Pay Flags", fontsize=9)
-        axes[4].set_xlabel("Flag", fontsize=8)
+        axes[4].set_title("Pay Flags", fontsize=TITLE_SIZE)
+        axes[4].set_xlabel("Flag", fontsize=LABEL_SIZE)
         if "NET_PAY_FLAG" in filtered.columns or "NET_RES_FLAG" in filtered.columns:
             axes[4].legend(loc="upper right", fontsize=6)
 
@@ -686,8 +686,8 @@ class CompositeLogPlot(PlotWidget):
                     label="HCPV Cum",
                 )
 
-        axes[5].set_title("HCPV", fontsize=9)
-        axes[5].set_xlabel("Volume (ft)", fontsize=8)
+        axes[5].set_title("HCPV", fontsize=TITLE_SIZE)
+        axes[5].set_xlabel("Volume (ft)", fontsize=LABEL_SIZE)
         # axes[5].tick_params(axis="x", colors="#FF4500")
         if (
             "dHCPV_NET_PAY" in filtered.columns
@@ -810,9 +810,9 @@ class TripleComboPlot(PlotWidget):
         # TRACK 1: GR (Gamma Ray)
         # =====================================================================
         ax1 = axes[0]
-        ax1.set_ylabel("Depth (ft)", fontsize=10, fontweight="bold")
-        ax1.set_xlabel("GR (API)", fontsize=9, color=get_plot_color("GR"))
-        ax1.set_title("Track 1: GR", fontsize=10, fontweight="bold")
+        ax1.set_ylabel("Depth (ft)", fontsize=LABEL_SIZE)
+        ax1.set_xlabel("GR (API)", fontsize=LABEL_SIZE, color=get_plot_color("GR"))
+        ax1.set_title("Track 1: GR", fontsize=TITLE_SIZE)
         ax1.grid(True, alpha=0.3, linestyle="--")
         self._style_axes(ax1)
 
@@ -839,8 +839,8 @@ class TripleComboPlot(PlotWidget):
         # =====================================================================
         ax2 = axes[1]
         ax2.tick_params(labelleft=False)
-        ax2.set_xlabel("RT (Ω.m)", fontsize=9, color=get_plot_color("RT"))
-        ax2.set_title("Track 2: RT", fontsize=10, fontweight="bold")
+        ax2.set_xlabel("RT (Ω.m)", fontsize=LABEL_SIZE, color=get_plot_color("RT"))
+        ax2.set_title("Track 2: RT", fontsize=TITLE_SIZE)
         ax2.grid(True, alpha=0.3, linestyle="--", which="both")
         self._style_axes(ax2)
 
@@ -867,7 +867,7 @@ class TripleComboPlot(PlotWidget):
         # =====================================================================
         ax3 = axes[2]
         ax3.tick_params(labelleft=False)
-        ax3.set_title("Track 3: ρ-N-DT", fontsize=10, fontweight="bold")
+        ax3.set_title("Track 3: ρ-N-DT", fontsize=TITLE_SIZE)
         ax3.grid(True, alpha=0.3, linestyle="--")
         self._style_axes(ax3)
 
@@ -887,7 +887,7 @@ class TripleComboPlot(PlotWidget):
                 label="NPHI",
             )
             ax3.set_xlim(0.45, -0.15)  # Reversed scale
-            ax3.set_xlabel("NPHI (v/v)", fontsize=9, color=get_plot_color("NPHI"))
+            ax3.set_xlabel("NPHI (v/v)", fontsize=LABEL_SIZE, color=get_plot_color("NPHI"))
             ax3.tick_params(axis="x", colors=get_plot_color("NPHI"))
         else:
             ax3.set_xlim(0.45, -0.15)
@@ -905,7 +905,7 @@ class TripleComboPlot(PlotWidget):
                 label="RHOB",
             )
             ax3_rhob.set_xlim(1.95, 2.95)  # Standard scale
-            ax3_rhob.set_xlabel("RHOB (g/cc)", fontsize=9, color=get_plot_color("RHOB"))
+            ax3_rhob.set_xlabel("RHOB (g/cc)", fontsize=LABEL_SIZE, color=get_plot_color("RHOB"))
             ax3_rhob.tick_params(axis="x", colors=get_plot_color("RHOB"))
 
             if has_nphi:
@@ -962,7 +962,7 @@ class TripleComboPlot(PlotWidget):
                 label="DT",
             )
             ax3_dt.set_xlim(140, 40)  # Inverted
-            ax3_dt.set_xlabel("DT (µs/ft)", fontsize=8, color=get_plot_color("DT"))
+            ax3_dt.set_xlabel("DT (µs/ft)", fontsize=LABEL_SIZE, color=get_plot_color("DT"))
             ax3_dt.tick_params(axis="x", colors=get_plot_color("DT"), labelsize=8)
 
         # Add legend
@@ -986,7 +986,7 @@ class TripleComboPlot(PlotWidget):
 
         # Final layout
         self.figure.suptitle(
-            "Triple Combo Log (Input QC)", fontsize=12, fontweight="bold", y=0.98
+            "Triple Combo Log (Input QC)", fontsize=TITLE_SIZE, y=0.98
         )
         self.figure.tight_layout(rect=[0, 0, 1, 0.96])
         self.canvas.draw()

@@ -4,6 +4,7 @@ Cross-validation, statistics, and warnings.
 """
 
 from PyQt6.QtWidgets import (
+    QHeaderView,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 import logging
 import pandas as pd
 import numpy as np
@@ -24,11 +26,37 @@ import numpy as np
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
 from ..widgets.table_model import PandasTableModel
-from themes.colors import get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 from themes.helpers import set_status
+from themes.icon_loader import get_icon
 
 
 logger = logging.getLogger(__name__)
+
+
+class SelectedMethodTableModel(PandasTableModel):
+    """Stats table that marks one row (the selected method) with a bold name and check icon."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._selected_row = None
+
+    def set_selected_row(self, row):
+        self._selected_row = row
+        if self.rowCount():
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, 0))
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if index.isValid() and index.column() == 0 and index.row() == self._selected_row:
+            if role == Qt.ItemDataRole.FontRole:
+                font = QFont()
+                font.setBold(True)
+                return font
+            if role == Qt.ItemDataRole.DecorationRole:
+                return get_icon("check", "accent")
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return "Selected porosity method"
+        return super().data(index, role)
 
 
 class DiagnosticsTab(QWidget):
@@ -116,9 +144,10 @@ class DiagnosticsTab(QWidget):
         plot_stats_layout.addWidget(self.phie_hist, stretch=2)
 
         self.phie_stats_table = QTableView()
-        self.phie_stats_model = PandasTableModel()
+        self.phie_stats_model = SelectedMethodTableModel()
         self.phie_stats_table.setModel(self.phie_stats_model)
         self.phie_stats_table.setMaximumWidth(300)
+        self._phie_stats_header = self.phie_stats_table.horizontalHeader()
         plot_stats_layout.addWidget(self.phie_stats_table, stretch=1)
 
         por_layout.addLayout(plot_stats_layout)
@@ -482,10 +511,10 @@ class DiagnosticsTab(QWidget):
                         )
 
             # Styling
-            ax.set_xlabel("Water Saturation (Sw)", fontsize=9)
-            ax.set_ylabel("Density", fontsize=9)
+            ax.set_xlabel("Water Saturation (Sw)", fontsize=LABEL_SIZE)
+            ax.set_ylabel("Density", fontsize=LABEL_SIZE)
             ax.set_title(
-                "Water Saturation Distribution", fontsize=10, fontweight="bold"
+                "Water Saturation Distribution", fontsize=TITLE_SIZE
             )
             ax.set_xlim(0, 1)
 
@@ -797,9 +826,9 @@ class DiagnosticsTab(QWidget):
             overlay_warnings.append("Core porosity overlay unavailable")
 
         ax1.set_xlim(0, 0.4)
-        ax1.set_xlabel("Porosity (v/v)", fontsize=10)
-        ax1.set_ylabel("Depth (ft)", fontsize=10)
-        ax1.set_title("PHIE vs Depth", fontsize=11, fontweight="bold")
+        ax1.set_xlabel("Porosity (v/v)", fontsize=LABEL_SIZE)
+        ax1.set_ylabel("Depth (ft)", fontsize=LABEL_SIZE)
+        ax1.set_title("PHIE vs Depth", fontsize=TITLE_SIZE)
         ax1.invert_yaxis()
         ax1.grid(True, alpha=0.3)
         ax1.legend(loc="upper right", fontsize=8)
@@ -848,9 +877,9 @@ class DiagnosticsTab(QWidget):
 
         ax2.set_xscale("log")
         ax2.set_xlim(0.1, 50000)
-        ax2.set_xlabel("Permeability (mD)", fontsize=10)
-        ax2.set_ylabel("Depth (ft)", fontsize=10)
-        ax2.set_title("Permeability vs Depth", fontsize=11, fontweight="bold")
+        ax2.set_xlabel("Permeability (mD)", fontsize=LABEL_SIZE)
+        ax2.set_ylabel("Depth (ft)", fontsize=LABEL_SIZE)
+        ax2.set_title("Permeability vs Depth", fontsize=TITLE_SIZE)
         ax2.invert_yaxis()
         ax2.grid(True, alpha=0.3, which="both")
         ax2.legend(loc="upper right", fontsize=8)
@@ -895,10 +924,13 @@ class DiagnosticsTab(QWidget):
         ]
 
         stats_data = []
+        selected_row = None
         for col in available_phie:
             col_data = results[col].dropna()
             # Highlight selected method
-            method_name = f"{col} (selected)" if col == selected_method else col
+            if col == selected_method:
+                selected_row = len(stats_data)
+            method_name = col
             stats_data.append(
                 {
                     "Method": method_name,
@@ -909,6 +941,10 @@ class DiagnosticsTab(QWidget):
                 }
             )
         self.phie_stats_model.set_dataframe(pd.DataFrame(stats_data))
+        self.phie_stats_model.set_selected_row(selected_row)
+        header = self._phie_stats_header
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
         # Update warnings
         warnings = []

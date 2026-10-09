@@ -70,6 +70,11 @@ def get_plot_color(color_name: str, theme: str = None) -> str:
     return PLOT_COLORS[color_name]
 
 
+# Shared matplotlib text sizes (pt); titles are normal weight, never bold.
+TITLE_SIZE = 10
+LABEL_SIZE = 9
+
+
 def get_plot_chrome(theme: str = None) -> Dict[str, str]:
     """Return figure/axes/grid/text/spine colors for a plot theme."""
     selected_theme = _normalize_theme(theme)

@@ -91,3 +91,11 @@ BROWSER_INPUT_RE = re.compile(
 def test_data_browser_is_read_only():
     """Spec §2.4: the left panel shows data only, never a parameter control."""
     assert _offending([ROOT / "ui" / "data_browser.py"], BROWSER_INPUT_RE) == []
+
+
+BOLD_WEIGHT_RE = re.compile(r"""(font)?weight\s*=\s*["']bold["']""")
+
+
+def test_no_bold_chart_text():
+    """Chart titles/labels use normal weight; sizes come from themes.colors constants."""
+    assert _offending(UI_FILES, BOLD_WEIGHT_RE) == []
