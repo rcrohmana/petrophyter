@@ -30,6 +30,18 @@ _TOOLBAR_ICONS = {
     "subplots": "settings-2",
 }
 
+class _ChromeCanvas(FigureCanvas):
+    """Canvas that re-applies theme chrome to titles, labels and legends before drawing."""
+
+    def __init__(self, figure, chrome_hook):
+        super().__init__(figure)
+        self._chrome_hook = chrome_hook
+
+    def draw(self):
+        self._chrome_hook()
+        super().draw()
+
+
 class PlotWidget(QWidget):
     """
     Widget for displaying Matplotlib plots.
@@ -50,7 +62,7 @@ class PlotWidget(QWidget):
 
         # Set figure with theme background
         self.figure = Figure(figsize=figsize, dpi=100, facecolor=self._bg_color)
-        self.canvas = FigureCanvas(self.figure)
+        self.canvas = _ChromeCanvas(self.figure, self._apply_text_chrome)
         self.canvas.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -96,6 +108,26 @@ class PlotWidget(QWidget):
         for spine in ax.spines.values():
             spine.set_color(self._spine_color)
         ax.grid(color=self._grid_color)
+
+    def _apply_text_chrome(self):
+        """Titles, axis labels and legends follow the plot chrome (curve colors untouched)."""
+        text = self._text_color
+        for ax in self.figure.axes:
+            for title in (ax.title, ax._left_title, ax._right_title):
+                title.set_color(text)
+            ax.xaxis.label.set_color(text)
+            ax.yaxis.label.set_color(text)
+            legend = ax.get_legend()
+            if legend is not None:
+                frame = legend.get_frame()
+                frame.set_facecolor(self._axes_color)
+                frame.set_edgecolor(self._spine_color)
+                for label in legend.get_texts():
+                    label.set_color(text)
+                if legend.get_title() is not None:
+                    legend.get_title().set_color(text)
+        if self.figure._suptitle is not None:
+            self.figure._suptitle.set_color(text)
 
     def update_theme_colors(self):
         """Update figure, axes, toolbar and text chrome to match the theme."""

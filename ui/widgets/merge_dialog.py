@@ -29,7 +29,7 @@ class MergeDialog(QDialog):
         self.summary_label.setWordWrap(True)
         layout.addWidget(self.summary_label)
 
-        self.file_model = PandasTableModel(pd.DataFrame(columns=_COLUMNS))
+        self.file_model = PandasTableModel(pd.DataFrame(columns=_COLUMNS), float_decimals=1)
         self.file_table = QTableView()
         self.file_table.setModel(self.file_model)
         self.file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

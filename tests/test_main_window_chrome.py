@@ -375,3 +375,110 @@ def test_restoring_guard_is_reentrant(window):
     outer(window)
     assert window._restoring is False
     assert not window.stale_label.isVisibleTo(window)
+
+
+def _write_las(path, top, bottom):
+    import lasio
+    import numpy as np
+
+    depth = np.arange(top, bottom + 0.25, 0.5)
+    las = lasio.LASFile()
+    las.well.WELL.value = "T-01"
+    las.well.NULL.value = -999.25
+    las.append_curve("DEPT", depth, unit="FT")
+    las.append_curve("GR", 50 + 20 * np.sin(depth / 10), unit="GAPI")
+    las.append_curve("RHOB", np.full_like(depth, 2.4), unit="G/C3")
+    with open(path, "w") as handle:
+        las.write(handle, version=2.0)
+    return len(depth)
+
+
+def test_merge_keeps_per_source_row_counts(window, qtbot, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QDialog
+
+    n1 = _write_las(tmp_path / "a.las", 1000, 1100)
+    n2 = _write_las(tmp_path / "b.las", 1090, 1300)
+    monkeypatch.setattr(
+        window.merge_dialog, "exec", lambda *a, **k: QDialog.DialogCode.Accepted
+    )
+    window._on_las_files_selected([str(tmp_path / "a.las"), str(tmp_path / "b.las")])
+    qtbot.waitUntil(lambda: window.model.las_data is not None, timeout=20000)
+    assert window.data_browser._sources == [("a.las", n1), ("b.las", n2)]
+    assert len(window.model.las_data) > n1
+    assert len(window._loaded_parsers[0].data) == n1      # source parser not mutated
+    assert window.model.las_parser is not window._loaded_parsers[0]
+    assert len(window.model.las_parser.data) == len(window.model.las_data)
+
+
+def test_load_session_clears_stale(window, monkeypatch, tmp_path):
+    from PyQt6.QtWidgets import QFileDialog
+
+    window.model.calculated = True
+    window.params_window.parameters_updated.emit()
+    assert window.stale_label.isVisibleTo(window)
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: ("x.json", ""))
+    )
+    monkeypatch.setattr(window.session_service, "load_session", lambda p: {"k": 1})
+    monkeypatch.setattr(
+        window.session_service, "apply_session_to_model", lambda m, d: None
+    )
+    window._on_load_session()
+    assert not window.stale_label.isVisibleTo(window)
+
+
+def test_fresh_load_clears_stale(window, tmp_path):
+    _write_las(tmp_path / "c.las", 1000, 1050)
+    window.model.calculated = True
+    window.params_window.parameters_updated.emit()
+    assert window.stale_label.isVisibleTo(window)
+    window._load_single_las(str(tmp_path / "c.las"))
+    assert not window.stale_label.isVisibleTo(window)
+
+
+def test_browser_names_have_tooltips(window, tmp_path):
+    _write_las(tmp_path / "d.las", 1000, 1050)
+    window._load_single_las(str(tmp_path / "d.las"))
+    root = window.data_browser.tree_model.item(0)
+    las_group = root.child(0, 0)
+    assert las_group.toolTip() == "LAS files"
+    assert las_group.child(0, 0).toolTip() == "d.las"
+
+
+def test_table_model_float_decimals():
+    import pandas as pd
+    from ui.widgets.table_model import PandasTableModel
+
+    df = pd.DataFrame({"Top": [4500.0], "Frac": [0.123456]})
+    default = PandasTableModel(df)
+    assert default.data(default.index(0, 0)) == "4500.0000"
+    one = PandasTableModel(df, float_decimals=1)
+    assert one.data(one.index(0, 0)) == "4500.0"
+    per_col = PandasTableModel(df, float_decimals={"Top": 1})
+    assert per_col.data(per_col.index(0, 0)) == "4500.0"
+    assert per_col.data(per_col.index(0, 1)) == "0.1235"
+
+
+def test_plot_text_chrome_follows_theme(qtbot):
+    import pandas as pd
+    from matplotlib.colors import to_hex
+    from themes import colors as theme_colors
+    from themes.colors import get_plot_chrome
+    from ui.widgets.plot_widget import HistogramPlot
+
+    plot = HistogramPlot()
+    qtbot.addWidget(plot)
+    plot.plot_histogram(pd.Series([0.1, 0.2, 0.2, 0.3]), title="PHIE", x_label="v")
+    ax = plot.figure.axes[0]
+    ax.legend()
+    try:
+        for theme in ("light", "dark"):
+            theme_colors.set_current_theme(theme)
+            plot.update_theme_colors()
+            plot.canvas.draw()
+            chrome = get_plot_chrome()
+            assert to_hex(ax.title.get_color()).lower() == chrome["text"].lower()
+            frame = ax.get_legend().get_frame()
+            assert to_hex(frame.get_facecolor()).lower() == chrome["axes"].lower()
+    finally:
+        theme_colors.set_current_theme("light")

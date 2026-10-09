@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
     QTableView,
     QGroupBox,
     QScrollArea,
+    QHeaderView,
 )
 from PyQt6.QtCore import Qt
 import pandas as pd
@@ -90,8 +91,11 @@ class QCTab(QWidget):
         tops_layout = QVBoxLayout(self.tops_group)
 
         self.tops_table = QTableView()
-        self.tops_table_model = PandasTableModel()
+        self.tops_table_model = PandasTableModel(float_decimals=1)
         self.tops_table.setModel(self.tops_table_model)
+        self.tops_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
         self.tops_table.setMinimumHeight(250)
         tops_layout.addWidget(self.tops_table)
 

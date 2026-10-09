@@ -33,6 +33,7 @@ from .tabs import (
 
 from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QIcon
+import copy
 import functools
 import traceback
 import threading
@@ -156,6 +157,7 @@ class MainWindow(QMainWindow):
         # Store loaded LAS parsers for merge
         self._loaded_parsers = []
         self._loaded_file_names = []
+        self._loaded_row_counts = []  # per-source rows, captured before any merge
 
         # Setup UI
         self._build_actions()
@@ -634,6 +636,7 @@ class MainWindow(QMainWindow):
                 self.model.las_data = parser.data
                 self.model.las_filename = file_path
                 self.model.calculated = False
+                self._clear_results_stale()
                 self.model.merge_report = None
 
                 # Run QC
@@ -701,6 +704,7 @@ class MainWindow(QMainWindow):
         try:
             self._loaded_parsers = []
             self._loaded_file_names = []
+            self._loaded_row_counts = []
             parse_details = []
 
             for path in file_paths:
@@ -709,6 +713,7 @@ class MainWindow(QMainWindow):
                     if parser.read_las_from_buffer(f):
                         self._loaded_parsers.append(parser)
                         self._loaded_file_names.append(os.path.basename(path))
+                        self._loaded_row_counts.append(len(parser.data))
                     else:
                         detail = getattr(parser, "last_error", None)
                         logger.error("Failed to parse LAS file %s: %s", path, detail)
@@ -792,12 +797,15 @@ class MainWindow(QMainWindow):
         self._set_progress(100, "Complete")
 
         # Store merged data
-        self.model.las_parser = self._loaded_parsers[0]
-        self.model.las_parser.data = merged_df
+        # A shallow copy keeps the first source parser's own data intact.
+        merged_parser = copy.copy(self._loaded_parsers[0])
+        merged_parser.data = merged_df
+        self.model.las_parser = merged_parser
         self.model.las_data = merged_df
         self.model.las_filename = f"MERGED_{len(self._loaded_parsers)}_files"
         self.model.merge_report = merge_report
         self.model.calculated = False
+        self._clear_results_stale()
 
         # Run QC on merged data
         qc = QCModule(merged_df, merge_report.well_name)
@@ -805,10 +813,7 @@ class MainWindow(QMainWindow):
         self._refresh_qc_chip()
 
         self.data_browser.set_las_sources(
-            [
-                (name, len(parser.data))
-                for name, parser in zip(self._loaded_file_names, self._loaded_parsers)
-            ],
+            list(zip(self._loaded_file_names, self._loaded_row_counts)),
             merged=True,
             pending=False,
         )
@@ -1242,6 +1247,7 @@ class MainWindow(QMainWindow):
             if session_data:
                 self.session_service.apply_session_to_model(self.model, session_data)
                 self._update_ui_from_model()
+                self._clear_results_stale()  # results and parameters restored together
                 self.statusBar.showMessage(f"Session loaded from {file_path}")
             else:
                 QMessageBox.critical(self, "Error", "Failed to load session")
@@ -1266,6 +1272,8 @@ class MainWindow(QMainWindow):
         # Clear loaded parsers for merge
         self._loaded_parsers = []
         self._loaded_file_names = []
+        self._loaded_row_counts = []
+        self._loaded_row_counts = []  # per-source rows, captured before any merge
 
         self._clear_results_stale()
         self.banner.clear()
