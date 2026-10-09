@@ -249,7 +249,8 @@ class InteractiveLogPlot(QWidget):
                     movable=True,
                 )
                 self.depth_region.setZValue(-10)  # Behind curves
-                plot.addItem(self.depth_region)
+                # ignoreBounds: the default [0, 1] region must not pull auto-range to depth 0
+                plot.addItem(self.depth_region, ignoreBounds=True)
                 self.depth_region.sigRegionChanged.connect(self._on_region_changed)
 
                 # Connect zoom/pan to emit depth_changed
@@ -467,7 +468,7 @@ class InteractiveLogPlot(QWidget):
 
             # Re-add depth region to first track
             if i == 0 and self.depth_region is not None:
-                plot.addItem(self.depth_region)
+                plot.addItem(self.depth_region, ignoreBounds=True)
 
         self.curves_data.clear()
         self.curve_items.clear()
