@@ -82,6 +82,29 @@ def test_icon_references_are_bundled():
     assert missing == set()
 
 
+def test_page_icons_are_bundled():
+    """Icons that reach get_icon through PAGES (not string literals) must exist too."""
+    from ui.parameters_window import PAGES
+    icon_dir = ROOT / "icons" / "lucide"
+    names = [icon for _key, _title, _menu, icon in PAGES]
+    assert len(set(names)) == len(names), "each page needs its own icon"
+    missing = {n for n in names + ["log-out", "palette"]
+               if not (icon_dir / f"{n}.svg").exists()}
+    assert missing == set()
+    for name in names:
+        svg = (icon_dir / f"{name}.svg").read_text(encoding="utf-8")
+        assert 'stroke-width="1.75"' in svg and "currentColor" in svg, name
+
+
+def test_qss_has_menu_icon_and_indicator_rules():
+    from themes.renderer import render_qss
+    for theme in ("light", "dark"):
+        qss = render_qss(theme)
+        assert "QMenu::icon" in qss
+        assert "QMenu::indicator" in qss
+        assert "QMenu::icon:checked" in qss
+
+
 BROWSER_INPUT_RE = re.compile(
     r"\b(QComboBox|QSpinBox|QDoubleSpinBox|QLineEdit|QCheckBox|QRadioButton|"
     r"QSlider|QPushButton)\b|parameter_groups"

@@ -85,6 +85,12 @@ METRICS = {
     "params_window_min_width": 560,
     "params_window_min_height": 420,
     "params_page_list_width": 180,
+    # QMenu geometry (F9): text starts menu_icon_column px from the menu edge
+    # (8 margin + 16 icon + 12 gap); icon box starts menu_icon_margin px from it.
+    # Qt adds its own 20 px icon column to the item padding (measured, Qt 6.9 Fusion).
+    "menu_icon_column": 36,
+    "menu_icon_margin": 8,
+    "menu_qt_icon_column": 20,
     "splitter_handle": 4,
     "scrollbar_width": 10,
 }

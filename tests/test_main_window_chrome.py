@@ -101,13 +101,13 @@ def test_parameter_menus_cover_pages(window):
     from ui.parameters_window import PAGES
     window.params_window.set_core_available(True)  # page_core is disabled without core data
     window._refresh_core_actions()
-    for key, title, _menu in PAGES:
+    for key, title, _menu, _icon in PAGES:
         action = window.actions_[f"page_{key}"]
         assert action.text() == f"{title}…"
         action.trigger()
         assert window.params_window.isVisible()
         assert window.params_window.current_page() == key
-    keys = {k for k, _, _ in PAGES}
+    keys = {k for k, _, _, _ in PAGES}
     page_actions = {k[5:] for k in window.actions_ if k.startswith("page_")}
     assert page_actions == keys
 
@@ -500,7 +500,8 @@ def test_table_model_aligns_numeric_strings_right():
     align = lambda c: model.data(model.index(0, c), Qt.ItemDataRole.TextAlignmentRole)
     assert align(0) == Qt.AlignmentFlag.AlignCenter
     assert align(1) == right and align(2) == right
-    assert align(3) == Qt.AlignmentFlag.AlignCenter
+    assert align(3) == Qt.AlignmentFlag.AlignCenter
+
 
 def _fake_parser_class(valid=True, depth=(100.0, 200.0)):
     import pandas as pd
@@ -612,3 +613,112 @@ def test_banner_refresh_theme_rerenders_kind_icon(window):
 def test_run_disabled_while_analysis_running(window):
     window._on_analysis_started()
     assert not window.actions_["run_analysis"].isEnabled()
+
+
+def _walk_menu_actions(menu):
+    for action in menu.actions():
+        if action.isSeparator():
+            continue
+        yield action
+        if action.menu() is not None:
+            yield from _walk_menu_actions(action.menu())
+
+
+def test_every_menu_action_has_icon(window):
+    """F9: every menubar action (submenus included) carries an icon."""
+    seen = []
+    for top in window.menuBar().actions():
+        for action in _walk_menu_actions(top.menu()):
+            seen.append(action.text())
+            assert not action.icon().isNull(), action.text()
+    assert "Theme" in seen and "Exit" in seen
+
+
+def test_page_actions_use_pages_icons(window):
+    from themes.icon_loader import get_icon
+    from ui.parameters_window import PAGES
+    for key, _title, _menu, icon in PAGES:
+        assert window._action_icons[f"page_{key}"] == icon
+        action = window.actions_[f"page_{key}"]
+        assert action.icon().cacheKey() == get_icon(icon).cacheKey()
+    assert window._action_icons["exit"] == "log-out"
+    assert window._action_icons["theme_menu"] == "palette"
+
+
+def test_parameters_page_list_items_have_icons(window):
+    from PyQt6.QtCore import Qt
+    from ui.parameters_window import PAGES
+    pw = window.params_window
+    icons = {key: icon for key, _t, _m, icon in PAGES}
+    found = set()
+    for row in range(pw.page_list.count()):
+        item = pw.page_list.item(row)
+        key = item.data(Qt.ItemDataRole.UserRole + 1)
+        if key is None:
+            assert item.icon().isNull()  # group headers carry no icon
+            continue
+        found.add(key)
+        assert not item.icon().isNull(), key
+    assert found == set(icons)
+
+
+def test_data_browser_context_actions_have_icons(window):
+    from ui.data_browser import _CONTEXT_ACTIONS
+    for keys in _CONTEXT_ACTIONS.values():
+        for key in keys:
+            assert not window.actions_[key].icon().isNull(), key
+
+
+def test_disabled_icon_uses_text_disabled(qapp):
+    from PyQt6.QtCore import QSize
+    from PyQt6.QtGui import QIcon
+    from themes.colors import get_color, get_current_theme
+    from themes.icon_loader import get_icon
+    icon = get_icon("merge")
+    img = icon.pixmap(QSize(16, 16), QIcon.Mode.Disabled).toImage()
+    target = get_color("text_disabled", get_current_theme()).lstrip("#").lower()
+    colors = {img.pixelColor(x, y).name()[1:] for x in range(16) for y in range(16)
+              if img.pixelColor(x, y).alpha() == 255}
+    assert target in colors
+
+
+def test_menu_geometry_and_checked_icon_frame(window, qtbot):
+    """Icon sits ~8px from the border, text x is identical on every row, and a
+    checked action's icon gets the accent frame (QMenu::icon:checked)."""
+    from themes import ThemeManager
+    from themes.colors import get_color, get_current_theme
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication.instance()
+    manager = ThemeManager(app, "")
+    manager.set_theme("light")
+    try:
+        menu = window._menus["view"]
+        menu.popup(window.mapToGlobal(window.rect().center()))
+        qtbot.waitExposed(menu)
+        img = menu.grab().toImage()
+        accent = get_color("accent", get_current_theme()).lstrip("#").lower()
+        first, second = menu.actions()[0], menu.actions()[1]
+        assert first.isChecked()
+        g1, g2 = menu.actionGeometry(first), menu.actionGeometry(second)
+        bg = img.pixelColor(img.width() // 2, g1.top() + 1)
+
+        def first_x(g, skip_bg):
+            for x in range(2, img.width() - 2):
+                for y in range(g.top() + 2, g.bottom() - 1):
+                    if img.pixelColor(x, y) != skip_bg:
+                        return x
+        icon_x = first_x(g2, bg)  # unchecked row: bare icon pixels
+        assert 5 <= icon_x <= 10, icon_x
+        frame_pixels = [img.pixelColor(x, y).name()[1:]
+                        for x in range(2, 30) for y in range(g1.top() + 1, g1.bottom())]
+        assert accent in frame_pixels  # checked icon frame is drawn
+        # text column: scan right of the icon column for the first glyph pixel
+        def text_x(g):
+            for x in range(30, img.width() - 2):
+                for y in range(g.top() + 2, g.bottom() - 1):
+                    if img.pixelColor(x, y) != bg:
+                        return x
+        assert text_x(g1) == text_x(g2)
+    finally:
+        menu.hide()
+        app.setStyleSheet("")

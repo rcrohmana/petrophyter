@@ -12,6 +12,8 @@ ICONS = [
     "check", "refresh-cw", "house", "arrow-left", "arrow-right", "move",
     "zoom-in", "settings-2", "sliders-horizontal", "copy",
     "file-text", "activity", "sigma",  # Data Browser nodes (Rev 2)
+    "crosshair", "spline", "cylinder", "percent", "mountain", "scissors",  # F9 menu icons
+    "hexagon", "droplets", "waves-horizontal", "flame", "log-out", "palette",
 ]
 BASE = "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/{}.svg"
 OUT = Path(__file__).resolve().parents[1] / "icons" / "lucide"

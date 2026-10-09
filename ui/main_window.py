@@ -392,7 +392,7 @@ class MainWindow(QMainWindow):
         if pw_geometry is not None:
             self.params_window.restoreGeometry(pw_geometry)
         page = settings.value("ui/paramsWindowPage", "scope", type=str)
-        if page in {key for key, _title, _menu in PAGES}:
+        if page in {key for key, _title, _menu, _icon in PAGES}:
             self.params_window.open_page(page, show=False)
         tab = settings.value("ui/activeTab", 0, type=int)
         if 0 <= tab < self.tab_widget.count():
@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
         act("merge_las", "Merge LAS Files…", "merge", None, self._open_merge_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
-        act("exit", "Exit", None, None, self.close)
+        act("exit", "Exit", "log-out", None, self.close)
         act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
         act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
         act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
@@ -454,8 +454,8 @@ class MainWindow(QMainWindow):
         act("theme_dark", "Dark", "moon", None, lambda: self._set_theme("dark"), checkable=True)
         act("user_guide", "User Guide", "book-open", None, self._open_user_guide)
         act("about", "About Petrophyter", "info", None, self._on_about_triggered)
-        for key, title, _menu in PAGES:
-            act(f"page_{key}", f"{title}…", None, None,
+        for key, title, _menu, icon in PAGES:
+            act(f"page_{key}", f"{title}…", icon, None,
                 lambda _=False, k=key: self.params_window.open_page(k))
         act("params_window", "Parameters Window", "sliders-horizontal", "Ctrl+P",
             lambda: self.params_window.open_page(self.params_window.current_page()))
@@ -471,6 +471,8 @@ class MainWindow(QMainWindow):
         self.actions_["toggle_browser"].setChecked(True)
 
     def _build_menus(self):
+        from themes.icon_loader import get_icon
+
         bar = self.menuBar()
         self._menus = {}
         file_menu = bar.addMenu("&File")
@@ -493,12 +495,15 @@ class MainWindow(QMainWindow):
         for name in ("Parameters", "Corrections"):
             menus[name] = QMenu(f"&{name}", self)
             bar.insertMenu(view.menuAction(), menus[name])
-        for key, _title, menu in PAGES:
+        for key, _title, menu, _icon in PAGES:
             if key == "rock":
                 menus[menu].addSeparator()  # Basic | Advanced split (spec §2.2)
             menus[menu].addAction(self.actions_[f"page_{key}"])
         view.insertAction(self._menus["view_theme_sep"], self.actions_["params_window"])
         theme_menu = view.addMenu("Theme")
+        self._action_icons["theme_menu"] = "palette"
+        self.actions_["theme_menu"] = theme_menu.menuAction()
+        theme_menu.menuAction().setIcon(get_icon("palette"))
         theme_menu.addAction(self.actions_["theme_light"])
         theme_menu.addAction(self.actions_["theme_dark"])
         help_menu = bar.addMenu("&Help")

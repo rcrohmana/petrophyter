@@ -16,6 +16,9 @@ def _context(theme: str, qss_icon_dir: str) -> dict:
     ctx["radius"] = f"{METRICS['radius']}px"
     ctx["control_height"] = f"{METRICS['control_height']}px"
     ctx["toolbar_height"] = f"{METRICS['toolbar_height']}px"
+    # Item padding + Qt's own icon column = text x; the icon is shifted via `left`.
+    ctx["menu_item_pad_left"] = f"{METRICS['menu_icon_column'] - METRICS['menu_qt_icon_column']}px"
+    ctx["menu_icon_left"] = f"{METRICS['menu_icon_margin'] - 2}px"
     ctx["scrollbar_width"] = f"{METRICS['scrollbar_width']}px"
     ctx["qss_icons"] = qss_icon_dir
     return ctx

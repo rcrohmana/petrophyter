@@ -15,7 +15,11 @@ QMenuBar { background-color: $bg_base; border-bottom: 1px solid $border; padding
 QMenuBar::item { padding: 4px 10px; background: transparent; border-radius: $radius; }
 QMenuBar::item:selected { background-color: $bg_hover; }
 QMenu { background-color: $bg_surface; border: 1px solid $border; padding: 4px 0; }
-QMenu::item { padding: 5px 24px 5px 28px; }
+QMenu::item { padding: 5px $space_xl 5px $menu_item_pad_left; }
+QMenu::icon { padding-left: 0; left: $menu_icon_left; }
+QMenu::indicator { width: 14px; height: 14px; left: $space_sm; }
+QMenu::icon:checked { background-color: $accent_subtle; border: 1px solid $accent;
+                      border-radius: $radius; }
 QMenu::item:selected { background-color: $accent_subtle; }
 QMenu::item:disabled { color: $text_disabled; }
 QMenu::separator { height: 1px; background: $border; margin: 4px 8px; }
