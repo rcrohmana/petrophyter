@@ -126,6 +126,17 @@ QScrollBar::handle:horizontal:hover { background: $text_muted; }
 QScrollBar::add-line, QScrollBar::sub-line { height: 0; width: 0; }
 QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 
+/* ============ Slider ============ */
+QSlider::groove:horizontal { height: 4px; background: $bg_sunken;
+    border: 1px solid $border; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
+QSlider::sub-page:horizontal:disabled { background: $accent_muted; }
+QSlider::add-page:horizontal { background: $bg_sunken; border-radius: 2px; }
+QSlider::handle:horizontal { width: 14px; height: 14px; margin: -6px 0;
+    background: $bg_surface; border: 1px solid $border_strong; border-radius: 7px; }
+QSlider::handle:horizontal:hover { border-color: $accent; }
+QSlider::handle:horizontal:focus { border-color: $focus_ring; }
+
 /* ============ Splitter / progress / status bar / tooltip ============ */
 QSplitter::handle { background-color: $bg_base; }
 QSplitter::handle:hover { background-color: $border_strong; }
@@ -180,6 +191,34 @@ QListWidget#ParamsPageList::item:disabled { color: $text_muted; padding-top: 8px
 QStackedWidget#ParamsStack { background-color: $bg_surface; border: none;
     border-left: 1px solid $border; }
 QWidget#ParamsPage { background-color: $bg_surface; }
+/* F3: descendants of a page are transparent so plain containers do not paint
+   bg_base bands; controls that own a fill re-assert it (id selector outranks
+   the type/state rules above, so every state is repeated here). */
+QWidget#ParamsPage QWidget { background-color: transparent; }
+QWidget#ParamsPage QLineEdit, QWidget#ParamsPage QSpinBox, QWidget#ParamsPage QDoubleSpinBox,
+QWidget#ParamsPage QComboBox, QWidget#ParamsPage QTextEdit, QWidget#ParamsPage QPlainTextEdit,
+QWidget#ParamsPage QAbstractItemView, QWidget#ParamsPage QPushButton,
+QWidget#ParamsPage QComboBox QWidget { background-color: $bg_surface; }
+QWidget#ParamsPage QLineEdit:disabled, QWidget#ParamsPage QSpinBox:disabled,
+QWidget#ParamsPage QDoubleSpinBox:disabled, QWidget#ParamsPage QComboBox:disabled,
+QWidget#ParamsPage QPushButton:disabled { background-color: $bg_sunken; }
+QWidget#ParamsPage QPushButton:hover { background-color: $bg_hover; }
+QWidget#ParamsPage QPushButton:pressed { background-color: $bg_pressed; }
+QWidget#ParamsPage QPushButton[variant="primary"] { background-color: $accent; }
+QWidget#ParamsPage QPushButton[variant="primary"]:hover { background-color: $accent_hover; }
+QWidget#ParamsPage QPushButton[variant="primary"]:pressed { background-color: $accent_pressed; }
+QWidget#ParamsPage QPushButton[variant="primary"]:disabled { background-color: $bg_sunken; }
+QWidget#ParamsPage QPushButton[variant="ghost"], QWidget#ParamsPage QPushButton[variant="link"] {
+    background-color: transparent; }
+QWidget#ParamsPage QPushButton[variant="ghost"]:hover { background-color: $bg_hover; }
+QWidget#ParamsPage QPushButton[variant="ghost"]:pressed { background-color: $bg_pressed; }
+QWidget#ParamsPage QHeaderView, QWidget#ParamsPage QHeaderView::section { background-color: $bg_base; }
+QWidget#ParamsPage QProgressBar { background-color: $bg_sunken; }
+QWidget#ParamsPage QProgressBar::chunk { background-color: $accent; }
+QWidget#ParamsPage QCheckBox::indicator, QWidget#ParamsPage QRadioButton::indicator {
+    background-color: $bg_surface; }
+QWidget#ParamsPage QCheckBox::indicator:checked { background-color: $accent; }
+QLabel#CutoffValue { font-family: "$font_mono"; min-width: 36px; }
 QWidget#ParamsFooter { background-color: $bg_base; border-top: 1px solid $border; }
 QWidget#DataBrowser { background-color: $bg_base; }
 QTreeView#DataTree { background-color: $bg_base; border: none; outline: none;
