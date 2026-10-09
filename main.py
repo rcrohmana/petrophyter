@@ -24,6 +24,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
@@ -43,6 +44,7 @@ def main():
 
     # Create application
     app = QApplication(sys.argv)
+    app.setFont(QFont("Segoe UI", 9))
     app.setApplicationName("Petrophyter")
     app.setOrganizationName("Petrophyter Team")
     app.setApplicationVersion(APP_VERSION)

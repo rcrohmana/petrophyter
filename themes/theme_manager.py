@@ -15,8 +15,8 @@ from .colors import (
     is_dark_theme,
     set_current_theme,
 )
-from .dark import DARK_THEME
-from .light import LIGHT_THEME
+from .icon_loader import clear_icon_cache, ensure_qss_icons
+from .renderer import render_qss
 
 
 logger = logging.getLogger(__name__)
@@ -55,23 +55,24 @@ class ThemeManager:
         set_current_theme(theme)
         self.settings.setValue("theme/name", theme)
 
+        clear_icon_cache()
         colors = get_colors_dict(theme)
-        stylesheet = LIGHT_THEME if theme == self.LIGHT else DARK_THEME
+        stylesheet = render_qss(theme, ensure_qss_icons(theme))
 
         # Apply the palette from the canonical semantic colors.
         palette = self.app.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(colors["bg_primary"]))
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors["bg_base"]))
         palette.setColor(QPalette.ColorRole.Base, QColor(colors["bg_surface"]))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(colors["bg_surface_alt"]))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(colors["bg_sunken"]))
         palette.setColor(QPalette.ColorRole.Text, QColor(colors["text_primary"]))
         palette.setColor(QPalette.ColorRole.WindowText, QColor(colors["text_primary"]))
-        palette.setColor(QPalette.ColorRole.Button, QColor(colors["bg_surface_alt"]))
+        palette.setColor(QPalette.ColorRole.Button, QColor(colors["bg_surface"]))
         palette.setColor(QPalette.ColorRole.ButtonText, QColor(colors["text_primary"]))
         palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(colors["tooltip_bg"]))
         palette.setColor(QPalette.ColorRole.ToolTipText, QColor(colors["tooltip_text"]))
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["text_placeholder"]))
-        palette.setColor(QPalette.ColorRole.Highlight, QColor(colors["primary"]))
-        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors["white"]))
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["text_muted"]))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(colors["accent"]))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors["text_on_accent"]))
         palette.setColor(
             QPalette.ColorGroup.Disabled,
             QPalette.ColorRole.Text,
@@ -84,16 +85,7 @@ class ThemeManager:
         )
         self.app.setPalette(palette)
 
-        # Preserve the existing stylesheet structure; only substitute the
-        # explicit tooltip token and icon path in this staged-safe change.
-        final_stylesheet = stylesheet.replace(
-            "border: 1px solid #555555;",
-            f"border: 1px solid {colors['tooltip_border']};",
-        ).replace(
-            "border: 1px solid #606060;",
-            f"border: 1px solid {colors['tooltip_border']};",
-        ).replace("{{ICONS_DIR}}", self.icons_dir)
-        self.app.setStyleSheet(final_stylesheet)
+        self.app.setStyleSheet(stylesheet)
 
         for callback in list(self._theme_changed_callbacks):
             try:
