@@ -1,5 +1,6 @@
 """Merge LAS Files task dialog (spec §2.6)."""
 import pandas as pd
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QHeaderView, QLabel, QTableView, QVBoxLayout,
@@ -34,6 +35,7 @@ class MergeDialog(QDialog):
         self.file_table.setModel(self.file_model)
         self.file_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.file_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.file_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.file_table.verticalHeader().setVisible(False)
         self.file_table.horizontalHeader().setStretchLastSection(True)
         self.file_table.horizontalHeader().setSectionResizeMode(

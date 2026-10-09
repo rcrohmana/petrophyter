@@ -7,11 +7,12 @@ Usage:
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PyQt6.QtCore import QEventLoop, QTimer
+from PyQt6.QtCore import QEventLoop, QSettings, QTimer
 from PyQt6.QtWidgets import QApplication
 
 
@@ -72,12 +73,19 @@ def main():
     ap.add_argument("--theme", default="light", choices=["light", "dark", "both"])
     args = ap.parse_args()
 
+    # Throwaway settings so a capture run never touches the user's saved theme/geometry.
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, tempfile.mkdtemp()
+    )
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
     from PyQt6.QtWidgets import QMessageBox
     QMessageBox.information = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
     QMessageBox.warning = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
+    QMessageBox.critical = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Ok)
 
     from themes.theme_manager import ThemeManager
     icons_dir = str(Path(__file__).resolve().parents[1] / "icons").replace("\\", "/")
@@ -106,6 +114,7 @@ def main():
         settle(800)
     for theme in themes:
         capture_all(window, theme_manager, out, theme)
+    theme_manager.set_theme("light")
     print(f"Saved screenshots to {out.resolve()}")
     window.close()
 
