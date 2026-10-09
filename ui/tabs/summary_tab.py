@@ -16,7 +16,7 @@ import numpy as np
 
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import PlotWidget
-from themes.colors import get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color
 
 
 class SummaryTab(QWidget):
@@ -224,7 +224,10 @@ class SummaryTab(QWidget):
             get_plot_color("HCPV"),
         ]
 
-        bars = ax.bar(labels, values, color=colors, edgecolor="white", linewidth=1.2)
+        chrome = get_plot_chrome()
+        bars = ax.bar(
+            labels, values, color=colors, edgecolor=chrome["figure"], linewidth=1.2
+        )
 
         # Add value labels on bars
         for bar, value in zip(bars, values):
@@ -245,6 +248,7 @@ class SummaryTab(QWidget):
                 va="bottom",
                 fontsize=9,
                 fontweight="bold",
+                color=chrome["text"],
             )
 
         ax.set_ylabel("Thickness / Volume (ft)", fontsize=11)

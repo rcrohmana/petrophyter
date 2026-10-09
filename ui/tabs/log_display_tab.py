@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..widgets.plot_widget import CompositeLogPlot, CrossPlot
 from ..widgets.interactive_log import InteractiveLogPlot, HAS_PYQTGRAPH
-from themes.colors import get_color, get_plot_color
+from themes.colors import get_plot_color
 
 
 class LogDisplayTab(QWidget):
@@ -50,11 +50,6 @@ class LogDisplayTab(QWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.setContentsMargins(10, 10, 10, 10)
-
-        # Title
-        title = QLabel("📈 Log Display")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
 
         # =====================================================================
         # CONTROLS BAR
@@ -216,10 +211,8 @@ class LogDisplayTab(QWidget):
         layout.addWidget(self.xplot_group)
 
         # Placeholder
-        self.placeholder = QLabel("👈 Run analysis first to view log display")
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Run analysis to view log display")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.placeholder)
 
@@ -235,9 +228,6 @@ class LogDisplayTab(QWidget):
         self.bottom_spin.valueChanged.connect(self._on_spinbox_depth_changed)
 
     def refresh_theme(self):
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
         for plot in (
             self.interactive_log,
             self.classic_log,

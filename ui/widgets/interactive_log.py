@@ -21,7 +21,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPen
 
-from themes.colors import get_color, get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color
+from themes.helpers import set_status
+from themes.icon_loader import get_icon
 
 try:
     import pyqtgraph as pg
@@ -102,12 +104,12 @@ class InteractiveLogPlot(QWidget):
         if not HAS_PYQTGRAPH:
             # Fallback if pyqtgraph not installed
             fallback_label = QLabel(
-                "⚠️ pyqtgraph not installed.\n"
+                "pyqtgraph not installed.\n"
                 "Install with: pip install pyqtgraph\n"
                 "Using static plots instead."
             )
             fallback_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            fallback_label.setStyleSheet("color: #CC6600; padding: 20px;")
+            set_status(fallback_label, "warning")
             layout.addWidget(fallback_label)
             return
 
@@ -139,11 +141,13 @@ class InteractiveLogPlot(QWidget):
 
         # Depth readout
         self.depth_label = QLabel("Depth: -")
+        self.depth_label.setObjectName("SubsectionLabel")
         self.depth_label.setMinimumWidth(120)
         controls_layout.addWidget(self.depth_label)
 
         # Value readout
         self.value_label = QLabel("")
+        self.value_label.setObjectName("SubsectionLabel")
         self.value_label.setMinimumWidth(300)
         controls_layout.addWidget(self.value_label)
 
@@ -152,7 +156,8 @@ class InteractiveLogPlot(QWidget):
         # Reset view button
         from PyQt6.QtWidgets import QPushButton
 
-        reset_btn = QPushButton("🔄 Reset View")
+        reset_btn = QPushButton("Reset View")
+        reset_btn.setIcon(get_icon("refresh-cw"))
         reset_btn.clicked.connect(self.reset_view)
         controls_layout.addWidget(reset_btn)
 
@@ -161,10 +166,6 @@ class InteractiveLogPlot(QWidget):
     def refresh_theme(self):
         """Apply theme-aware plot chrome while keeping curve colors stable."""
         self._chrome = get_plot_chrome()
-        if hasattr(self, "depth_label"):
-            self.depth_label.setStyleSheet(f"color: {get_color('text_primary')};")
-        if hasattr(self, "value_label"):
-            self.value_label.setStyleSheet(f"color: {get_color('text_secondary')};")
         if not HAS_PYQTGRAPH or not self.plot_widgets:
             return
 

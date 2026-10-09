@@ -285,7 +285,13 @@ class HistogramPlot(PlotWidget):
         # Remove NaN
         clean_data = data.dropna()
 
-        ax.hist(clean_data, bins=bins, color=color, alpha=0.7, edgecolor="white")
+        ax.hist(
+            clean_data,
+            bins=bins,
+            color=color,
+            alpha=0.7,
+            edgecolor=self._chrome["figure"],
+        )
         ax.set_title(title, fontsize=10)
 
         if x_label:
@@ -613,7 +619,7 @@ class CompositeLogPlot(PlotWidget):
                 res_only = res - filtered["NET_PAY_FLAG"].values
                 res_only = np.clip(res_only, 0, 1)
             axes[4].fill_betweenx(
-                depth, 0, res_only, color="yellow", alpha=0.5, label="Res"
+                depth, 0, res_only, color=get_plot_color("RES_FILL"), alpha=0.5, label="Res"
             )
         axes[4].set_xlim(0, 1)
         axes[4].set_title("Pay Flags", fontsize=9)
@@ -943,7 +949,7 @@ class TripleComboPlot(PlotWidget):
                 transform=ax3.transAxes,
                 fontsize=7,
                 verticalalignment="top",
-                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+                bbox=dict(boxstyle="round", facecolor=self._chrome["figure"], alpha=0.8),
             )
 
         # Final layout
