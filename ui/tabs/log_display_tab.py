@@ -60,12 +60,16 @@ class LogDisplayTab(QWidget):
         controls_layout.addWidget(QLabel("Plot Engine:"))
         self.engine_combo = QComboBox()
 
-        # Always add Interactive option, let the widget handle fallback if missing
         self.engine_combo.addItems(["Interactive (pyqtgraph)", "Classic (matplotlib)"])
 
         if not HAS_PYQTGRAPH:
+            # Be honest: interactive engine is unavailable, so disable it
+            # and default to Classic (no modal dialogs).
+            self.engine_combo.setItemText(0, "Interactive (requires pyqtgraph)")
+            self.engine_combo.model().item(0).setEnabled(False)
+            self.engine_combo.setCurrentIndex(1)
             self.engine_combo.setToolTip(
-                "pyqtgraph not detected - Interactive mode will show warning"
+                "pyqtgraph not detected - install it to enable the interactive engine"
             )
 
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
