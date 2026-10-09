@@ -144,6 +144,21 @@ While the analysis runs:
 
 If the analysis fails, an **Analysis Error** dialog opens and the status bar shows **Analysis failed**.
 
+### While an analysis or merge is running
+
+The status bar shows **Analysis running…** or **Merging…**. These actions are unavailable (greyed out; the status tip says "Unavailable while analysis is running" or "Unavailable while merge is running"):
+
+- **New Project**, **Open LAS File(s)…**, **Open Formation Tops…**, **Open Core Data…**
+- **Load Session…**
+- **Merge LAS Files…**
+- **Run Analysis**
+
+Save Session, export, the **View** and **Help** menus, the Parameters window, and theme switching stay available.
+
+If you change parameters during a run, the results are shown when it finishes, and the status bar immediately marks them stale (**Parameters changed — press F5 to update results**).
+
+Closing the window during a run asks **Analysis is still running. Quit anyway?** (or **A merge is still running. Quit anyway?**). Choosing **Yes** quits without waiting for the result.
+
 ### QC chip
 
 After a LAS file is loaded or merged, the status bar shows a QC chip with the overall data quality score, for example **QC 87/100**. It is hidden when no data is loaded.

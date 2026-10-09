@@ -2,6 +2,26 @@
 
 # Version History
 
+## Unreleased
+
+### Interface
+
+- Every menu action now has an icon, and menus use a fixed icon column.
+- The Parameters pages no longer show background bands behind sliders and forms. The Cutoffs page is a single label, slider, and value grid.
+- The Diagnostics porosity table marks the selected method with bold text, a check icon, and a tooltip instead of a "(selected)" suffix.
+- Chart titles and labels use normal weight consistently.
+- Without pyqtgraph, the log engine combo disables the Interactive item, labels it "Interactive (requires pyqtgraph)", and selects Classic.
+- Interactive log track titles, formation-top lines, and the depth region follow the theme.
+
+### Fixes
+
+- New Project, Open LAS/Formation Tops/Core Data, Load Session, Merge LAS Files, and Run Analysis are disabled while an analysis or merge runs, so they cannot replace the data in use.
+- A late result from a superseded run is discarded.
+- Parameter changes during a run mark the new results as stale.
+- Quitting during an analysis or merge asks for confirmation.
+- Numbers use the English (US) format (decimal point) regardless of the Windows regional setting.
+- The Diagnostics method name is no longer truncated.
+
 ## v1.6.0 (Build 20261009) — Current Release
 
 ### New interface

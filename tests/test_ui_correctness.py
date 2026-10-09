@@ -20,7 +20,8 @@ from ui.widgets.plot_widget import CompositeLogPlot
 @pytest.fixture
 def window(qtbot):
     widget = MainWindow()
-    qtbot.addWidget(widget)
+    # Tests may leave a run "in flight"; don't hit the quit prompt on close.
+    qtbot.addWidget(widget, before_close_func=lambda w: w._set_busy(None))
     yield widget
     widget.close()
 
@@ -181,7 +182,7 @@ def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypat
     monkeypatch.setattr(
         window.analysis_service,
         "run_analysis",
-        lambda model: states.append(window.actions_["run_analysis"].isEnabled()),
+        lambda model, generation=0: states.append(window.actions_["run_analysis"].isEnabled()),
     )
 
     window._on_run_analysis()

@@ -158,6 +158,13 @@ class MainWindow(QMainWindow):
         self._loaded_parsers = []
         self._loaded_file_names = []
         self._loaded_row_counts = []  # per-source rows, captured before any merge
+        self._merge_pending = False  # >= 2 parsed files waiting for Merge LAS
+
+        # Busy state (spec F1): see _set_busy / _invalidate_analysis
+        self._busy = None  # None, "analysis" or "merge"
+        self._busy_status_tips = {}
+        self._analysis_gen = 0
+        self._params_dirty_during_run = False
 
         # Setup UI
         self._build_actions()
@@ -203,8 +210,9 @@ class MainWindow(QMainWindow):
         self.data_browser = DataBrowserPanel(self.model)
         splitter.addWidget(self.data_browser)
         self.data_browser.set_actions(self.actions_)
+        # QAction.trigger() ignores isEnabled(), so honour the busy state here.
         self.data_browser.action_requested.connect(
-            lambda key: self.actions_[key].trigger()
+            lambda key: self.actions_[key].isEnabled() and self.actions_[key].trigger()
         )
         self.params_window = ParametersWindow(self.model, self)
         self.merge_dialog = MergeDialog(self)
@@ -289,7 +297,7 @@ class MainWindow(QMainWindow):
         self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
         self.params_window.calculate_perm_clicked.connect(self._on_calculate_perm)
 
-        self.params_window.parameters_updated.connect(self._mark_results_stale)
+        self.params_window.parameters_updated.connect(self._on_parameters_updated)
         self.export_tab.export_succeeded.connect(
             lambda path: self.show_banner("success", f"Exported to {path}")
         )
@@ -359,6 +367,27 @@ class MainWindow(QMainWindow):
             self._on_core_file_selected(file)
 
     def closeEvent(self, event):
+        if self._busy:
+            question = (
+                "Analysis is still running. Quit anyway?"
+                if self._busy == "analysis"
+                else "A merge is still running. Quit anyway?"
+            )
+            reply = QMessageBox.question(
+                self,
+                "Quit Petrophyter",
+                question,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            # Don't wait for the worker: drop its late result and stop it at
+            # the next progress checkpoint; queued runnables are discarded.
+            self._analysis_gen += 1
+            self.analysis_service.cancel()
+            self.merge_service.thread_pool.clear()
         settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
         settings.setValue("ui/geometry", self.saveGeometry())
         settings.setValue("ui/windowState", self.saveState())
@@ -465,8 +494,7 @@ class MainWindow(QMainWindow):
         group = QActionGroup(self)
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
-        self.actions_["run_analysis"].setEnabled(False)
-        self.actions_["merge_las"].setEnabled(False)
+        self._refresh_action_states()
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -569,6 +597,69 @@ class MainWindow(QMainWindow):
         if message:
             self.statusBar.showMessage(message)
 
+    # Actions that could replace the data under a running worker (spec F1).
+    _BUSY_ACTIONS = (
+        "new_project",
+        "open_las",
+        "open_tops",
+        "open_core",
+        "load_session",
+        "merge_las",
+        "run_analysis",
+    )
+
+    def _set_busy(self, kind):
+        """The only place that enables/disables actions for a running analysis or merge.
+
+        ``kind`` is "analysis", "merge" or None (idle: normal gating applies).
+        """
+        if kind:
+            if not self._busy:
+                self._busy_status_tips = {
+                    key: self.actions_[key].statusTip() for key in self._BUSY_ACTIONS
+                }
+            self._busy = kind
+            tip = f"Unavailable while {kind} is running"
+            for key in self._BUSY_ACTIONS:
+                self.actions_[key].setEnabled(False)
+                self.actions_[key].setStatusTip(tip)
+            self.statusBar.showMessage(
+                "Analysis running…" if kind == "analysis" else "Merging…"
+            )
+        else:
+            self._busy = None
+            for key, tip in self._busy_status_tips.items():
+                self.actions_[key].setStatusTip(tip)
+            self._busy_status_tips = {}
+            self._refresh_action_states()
+
+    def _refresh_action_states(self):
+        """Normal gating of the data/run actions; a no-op while busy."""
+        if self._busy:
+            return
+        for key in ("new_project", "open_las", "open_tops", "open_core", "load_session"):
+            self.actions_[key].setEnabled(True)
+        self.actions_["run_analysis"].setEnabled(self.model.las_data is not None)
+        self.actions_["merge_las"].setEnabled(self._merge_pending)
+
+    def _invalidate_analysis(self):
+        """The project data is being replaced: drop any in-flight analysis result."""
+        self._analysis_gen += 1
+        self._params_dirty_during_run = False
+        if self._busy == "analysis":
+            self._set_progress(0)
+            self._set_busy(None)
+
+    def _is_stale_generation(self, generation) -> bool:
+        return generation is not None and generation != self._analysis_gen
+
+    def _on_parameters_updated(self):
+        if self._busy == "analysis":
+            if not self._restoring:
+                self._params_dirty_during_run = True
+            return
+        self._mark_results_stale()
+
     def _mark_results_stale(self):
         """Parameters changed after a successful analysis (spec §2.5)."""
         if self._restoring or not self.model.calculated:
@@ -639,6 +730,7 @@ class MainWindow(QMainWindow):
                 success = parser.read_las_from_buffer(f)
 
             if success and parser.data is not None:
+                self._invalidate_analysis()
                 self.model.las_parser = parser
                 self.model.las_data = parser.data
                 self.model.las_filename = file_path
@@ -650,7 +742,7 @@ class MainWindow(QMainWindow):
                 self._loaded_parsers = []
                 self._loaded_file_names = []
                 self._loaded_row_counts = []
-                self.actions_["merge_las"].setEnabled(False)
+                self._merge_pending = False
 
                 # Run QC
                 well_name = parser.well_info.get("well_name", "Unknown")
@@ -677,7 +769,7 @@ class MainWindow(QMainWindow):
                     for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
                 }
 
-                self.actions_["run_analysis"].setEnabled(True)
+                self._refresh_action_states()
                 self.actions_["save_merged"].setEnabled(False)
                 self.well_indicator.set_well(
                     well_name, len(parser.data), len(parser.data.columns)
@@ -748,7 +840,8 @@ class MainWindow(QMainWindow):
                         )
                     ]
                 )
-                self.actions_["merge_las"].setEnabled(True)
+                self._merge_pending = True
+                self._refresh_action_states()
                 self.data_browser.set_las_sources(
                     [
                         (name, len(parser.data))
@@ -783,12 +876,14 @@ class MainWindow(QMainWindow):
 
     def _on_merge_requested(self):
         """Handle merge request."""
+        if self._busy:
+            return
         if len(self._loaded_parsers) < 2:
             QMessageBox.warning(self, "Warning", "Need at least 2 LAS files to merge")
             return
 
         self._sync_model_from_ui()
-        self.actions_["merge_las"].setEnabled(False)
+        self._set_busy("merge")
 
         self.merge_service.merge_files(
             self._loaded_parsers,
@@ -799,8 +894,7 @@ class MainWindow(QMainWindow):
 
     def _on_merge_started(self):
         """Handle merge started."""
-        self._set_progress(0, "Merging...")
-        self.statusBar.showMessage("Merging LAS files...")
+        self._set_progress(0, "Merging…")
 
     def _on_merge_progress(self, message: str, percent: int):
         """Handle merge progress."""
@@ -809,7 +903,8 @@ class MainWindow(QMainWindow):
     @_restoring_guard
     def _on_merge_completed(self, merged_df, merge_report):
         """Handle merge completion."""
-        self.actions_["merge_las"].setEnabled(False)  # nothing pending any more
+        self._merge_pending = False  # nothing pending any more
+        self._set_busy(None)
         self._set_progress(100, "Complete")
 
         # Store merged data
@@ -847,7 +942,7 @@ class MainWindow(QMainWindow):
             for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
         }
 
-        self.actions_["run_analysis"].setEnabled(True)
+        self._refresh_action_states()
         self.actions_["save_merged"].setEnabled(True)
         self.well_indicator.set_well(
             merge_report.well_name, len(merged_df), len(merged_df.columns)
@@ -862,7 +957,7 @@ class MainWindow(QMainWindow):
 
     def _on_merge_error(self, error: str):
         """Handle merge error."""
-        self.actions_["merge_las"].setEnabled(True)
+        self._set_busy(None)  # the files stay pending, so Merge LAS is re-enabled
         self._set_progress(0, "")
         QMessageBox.critical(self, "Merge Error", error)
         self.statusBar.showMessage("Merge failed")
@@ -964,43 +1059,52 @@ class MainWindow(QMainWindow):
 
     def _on_run_analysis(self):
         """Handle run analysis button click."""
+        if self._busy:
+            return
         if self.model.las_data is None:
             QMessageBox.warning(
                 self, "Warning", "No data loaded. Please load a LAS file first."
             )
             return
 
-        # Update model from UI and disable Run before the background worker
-        # can emit its asynchronous started signal.
+        # Update model from UI and go busy before the background worker can
+        # emit its asynchronous started signal.
         self._sync_model_from_ui()
-        self.actions_["run_analysis"].setEnabled(False)
+        self._analysis_gen += 1
+        self._params_dirty_during_run = False
+        self._set_busy("analysis")
 
         # Start analysis
-        self.analysis_service.run_analysis(self.model)
+        self.analysis_service.run_analysis(self.model, self._analysis_gen)
 
-    def _on_analysis_started(self):
+    # generation=None (direct calls) means "the current run".
+    def _on_analysis_started(self, generation=None):
         """Handle analysis started."""
-        self.actions_["run_analysis"].setEnabled(False)
-        self._set_progress(0, "Analyzing...")
-        self.statusBar.showMessage("Running petrophysics analysis...")
+        if self._is_stale_generation(generation):
+            return
+        self._set_busy("analysis")
+        self._set_progress(0, "Analysis running…")
         self._clear_results_stale()
         self.banner.clear()
 
-    def _on_analysis_progress(self, message: str, percent: int):
+    def _on_analysis_progress(self, message: str, percent: int, generation=None):
         """Handle analysis progress."""
+        if self._is_stale_generation(generation):
+            return
         self._set_progress(percent, message)
-        self.statusBar.showMessage(message)
 
-    def _on_analysis_completed(self, results, summary):
+    def _on_analysis_completed(self, results, summary, generation=None):
         """Handle analysis completion."""
+        if self._is_stale_generation(generation):
+            return  # superseded by New Project / Load Session / Open LAS / a newer run
         # print(
         #     f"[DEBUG MainWindow] _on_analysis_completed called on Thread: {threading.current_thread().name}"
         # )
         # print(f"[DEBUG MainWindow] results.shape = {results.shape}")
         # print(f"[DEBUG MainWindow] results.columns = {list(results.columns)[:10]}...")
 
+        self._set_busy(None)
         self._set_progress(100, "Complete")
-        self.actions_["run_analysis"].setEnabled(True)
 
         # Store both pieces of the analysis result atomically so observers see
         # a matching results/summary pair and only one completion refresh.
@@ -1020,11 +1124,17 @@ class MainWindow(QMainWindow):
             f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
             f"N/G {summary.get('ng_pay', 0) * 100:.1f}%",
         )
+        if self._params_dirty_during_run:
+            self._params_dirty_during_run = False
+            self._mark_results_stale()
 
-    def _on_analysis_error(self, error: str):
+    def _on_analysis_error(self, error: str, generation=None):
         """Handle analysis error."""
+        if self._is_stale_generation(generation):
+            return
+        self._params_dirty_during_run = False
+        self._set_busy(None)
         self._set_progress(0, "")
-        self.actions_["run_analysis"].setEnabled(True)
         QMessageBox.critical(self, "Analysis Error", error)
         self.statusBar.showMessage("Analysis failed")
 
@@ -1261,8 +1371,10 @@ class MainWindow(QMainWindow):
         if file_path:
             session_data = self.session_service.load_session(file_path)
             if session_data:
+                self._invalidate_analysis()
                 self.session_service.apply_session_to_model(self.model, session_data)
                 self._update_ui_from_model()
+                self._refresh_action_states()
                 self._clear_results_stale()  # results and parameters restored together
                 self.statusBar.showMessage(f"Session loaded from {file_path}")
             else:
@@ -1282,6 +1394,8 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
+        self._invalidate_analysis()
+
         # Reset model data
         self.model.reset()
 
@@ -1298,8 +1412,8 @@ class MainWindow(QMainWindow):
         self.data_browser.rebuild()
         self.params_window.reset_ui()
         self._refresh_core_actions()
-        self.actions_["run_analysis"].setEnabled(False)
-        self.actions_["merge_las"].setEnabled(False)
+        self._merge_pending = False
+        self._refresh_action_states()
         self.actions_["save_merged"].setEnabled(False)
         self.well_indicator.set_empty()
         self._refresh_window_title()
