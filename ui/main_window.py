@@ -15,11 +15,10 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QMessageBox,
+    QMenu,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
-
-from themes.colors import get_color
 
 from .sidebar_panel import SidebarPanel
 from .tabs import (
@@ -50,6 +49,7 @@ from services.export_service import ExportService
 from services.session_service import SessionService
 from .sidebar_panel import SidebarPanel
 from .widgets.about_dialog import AboutDialog
+from .widgets.notification_banner import NotificationBanner
 from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
@@ -88,6 +88,31 @@ def _failure_message(generic: str, detail=None) -> str:
     return f"{generic}:\n{safe_detail}" if safe_detail else generic
 
 
+class _WellIndicator(QWidget):
+    """Toolbar-right widget: status dot + well summary text."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("WellIndicator")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 0, 8, 0)
+        layout.setSpacing(6)
+        from ui.widgets.status_dot import StatusDot
+
+        self.dot = StatusDot("off")
+        self.label = QLabel("No data loaded")
+        layout.addWidget(self.dot)
+        layout.addWidget(self.label)
+
+    def set_well(self, name: str, rows: int, curves: int):
+        self.dot.set_kind("ok")
+        self.label.setText(f"{name} · {rows:,} rows · {curves} curves")
+
+    def set_empty(self):
+        self.dot.set_kind("off")
+        self.label.setText("No data loaded")
+
+
 class MainWindow(QMainWindow):
     """
     Main application window for Petrophyter PyQt.
@@ -113,6 +138,7 @@ class MainWindow(QMainWindow):
         self._loaded_file_names = []
 
         # Setup UI
+        self._build_actions()
         self._setup_ui()
         self._setup_connections()
 
@@ -121,18 +147,22 @@ class MainWindow(QMainWindow):
             self.theme_manager.on_theme_changed(self._handle_theme_change)
 
         # Set window properties
-        self.setWindowTitle("Petrophyter - Petrophysics Master")
+        self.setWindowTitle("Petrophyter")
 
         self.setMinimumSize(1400, 900)
         self.showMaximized()
 
-        # Set initial theme button state
+        # Set initial theme action state
         if self.theme_manager:
-            self.sidebar.update_theme_button(self.theme_manager.is_dark())
-            self._handle_theme_change(self.theme_manager.get_current_theme())
+            current = self.theme_manager.get_current_theme()
+            self.actions_["theme_dark" if current == "dark" else "theme_light"].setChecked(True)
+            self._handle_theme_change(current)
 
     def _setup_ui(self):
         """Setup the main UI layout."""
+        self._build_menus()
+        self._build_toolbar()
+
         # Central widget with splitter
         central = QWidget()
         self.setCentralWidget(central)
@@ -158,20 +188,8 @@ class MainWindow(QMainWindow):
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(10, 10, 10, 10)
 
-        # Title
-        from PyQt6.QtWidgets import QLabel
-
-        self.title_label = QLabel(
-            f"<h1 style='color: {get_color('primary')}; text-align: center;'>Petrophyter</h1>"
-        )
-        self.subtitle_label = QLabel(
-            f"<p style='color: {get_color('text_secondary')}; background-color: transparent; text-align: center;'>Petrophysics Master: Semi-Automatic LAS QC & Analysis</p>"
-        )
-
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(self.title_label)
-        content_layout.addWidget(self.subtitle_label)
+        self.banner = NotificationBanner()
+        content_layout.addWidget(self.banner)
 
         # Tab widget
         self.tab_widget = QTabWidget()
@@ -185,12 +203,12 @@ class MainWindow(QMainWindow):
         self.summary_tab = SummaryTab(self.model)
         self.export_tab = ExportTab(self.model)
 
-        self.tab_widget.addTab(self.qc_tab, "📊 Data QC")
-        self.tab_widget.addTab(self.petro_tab, "🧮 Petrophysics")
-        self.tab_widget.addTab(self.log_tab, "📈 Log Display")
-        self.tab_widget.addTab(self.diag_tab, "🔍 Diagnostics")
-        self.tab_widget.addTab(self.summary_tab, "📋 Summary")
-        self.tab_widget.addTab(self.export_tab, "💾 Export")
+        self.tab_widget.addTab(self.qc_tab, "Data QC")
+        self.tab_widget.addTab(self.petro_tab, "Petrophysics")
+        self.tab_widget.addTab(self.log_tab, "Log Display")
+        self.tab_widget.addTab(self.diag_tab, "Diagnostics")
+        self.tab_widget.addTab(self.summary_tab, "Summary")
+        self.tab_widget.addTab(self.export_tab, "Export")
 
         content_layout.addWidget(self.tab_widget)
 
@@ -218,25 +236,15 @@ class MainWindow(QMainWindow):
     def _setup_connections(self):
         """Connect signals and slots."""
         # Sidebar signals
-        self.sidebar.las_files_selected.connect(self._on_las_files_selected)
         self.sidebar.merge_requested.connect(self._on_merge_requested)
-        self.sidebar.tops_file_selected.connect(self._on_tops_file_selected)
-        self.sidebar.core_file_selected.connect(self._on_core_file_selected)
-        self.sidebar.run_analysis_clicked.connect(self._on_run_analysis)
+        self.sidebar.set_open_callbacks(
+            self._open_las_dialog, self._open_tops_dialog, self._open_core_dialog
+        )
         self.sidebar.download_merged_clicked.connect(self._on_download_merged)
         self.sidebar.calculate_rw_rsh_clicked.connect(self._on_calculate_rw_rsh)
         self.sidebar.calculate_shale_clicked.connect(self._on_calculate_shale)
         self.sidebar.apply_shale_clicked.connect(self._on_apply_shale)
         self.sidebar.calculate_perm_clicked.connect(self._on_calculate_perm)
-
-        # Session signals (v1.2)
-        self.sidebar.new_project_clicked.connect(self._on_new_project)
-        self.sidebar.save_session_clicked.connect(self._on_save_session)
-        self.sidebar.load_session_clicked.connect(self._on_load_session)
-        self.sidebar.help_clicked.connect(self._on_about_triggered)
-
-        # Theme toggle signal
-        self.sidebar.theme_toggle_clicked.connect(self._on_theme_toggle)
 
         # Analysis service signals
         self.analysis_service.started.connect(self._on_analysis_started)
@@ -267,16 +275,165 @@ class MainWindow(QMainWindow):
         dialog = AboutDialog(self)
         dialog.exec()
 
-    def _on_theme_toggle(self):
-        """Handle theme toggle button click."""
+    def _set_theme(self, name: str):
+        """Switch theme through the theme manager (if any)."""
         if self.theme_manager:
-            self.theme_manager.toggle_theme()
+            self.theme_manager.set_theme(name)
+
+    def _open_las_dialog(self):
+        """Open LAS file dialog."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Open LAS File(s)", "", "LAS Files (*.las *.LAS);;All Files (*)"
+        )
+        if files:
+            self._on_las_files_selected(files)
+
+    def _open_tops_dialog(self):
+        """Open formation tops file dialog."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        file, _ = QFileDialog.getOpenFileName(
+            self, "Open Formation Tops", "", "Text Files (*.txt *.csv);;All Files (*)"
+        )
+        if file:
+            self._on_tops_file_selected(file)
+
+    def _open_core_dialog(self):
+        """Open core data file dialog."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        file, _ = QFileDialog.getOpenFileName(
+            self, "Open Core Data", "", "Text Files (*.txt *.csv);;All Files (*)"
+        )
+        if file:
+            self._on_core_file_selected(file)
+
+    def _toggle_browser(self, checked: bool):
+        """Show or hide the left panel (retargeted to the Data Browser in Task 12C)."""
+        self.sidebar.setVisible(checked)
+
+    def _open_user_guide(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "docs",
+            "user-guide.md",
+        )
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _refresh_window_title(self):
+        name = None
+        if self.model.las_filename:
+            name = os.path.basename(str(self.model.las_filename))
+        self.setWindowTitle(f"{name} — Petrophyter" if name else "Petrophyter")
+
+    def _build_actions(self):
+        from PyQt6.QtGui import QAction, QActionGroup, QKeySequence
+        from themes.icon_loader import get_icon
+
+        def act(key, text, icon=None, shortcut=None, slot=None, checkable=False):
+            action = QAction(text, self)
+            if icon:
+                action.setIcon(get_icon(icon))
+                self._action_icons[key] = icon
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            if slot:
+                action.triggered.connect(slot)
+            action.setCheckable(checkable)
+            self.actions_[key] = action
+            return action
+
+        self.actions_ = {}
+        self._action_icons = {}
+        act("new_project", "New Project", "file-plus", "Ctrl+N", self._on_new_project)
+        act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
+        act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
+        act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
+        act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
+        act("exit", "Exit", None, None, self.close)
+        act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
+        act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
+        act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
+        act("toggle_browser", "Data Browser", "panel-left", "Ctrl+B",
+            self._toggle_browser, checkable=True)
+        act("theme_light", "Light", "sun", None, lambda: self._set_theme("light"), checkable=True)
+        act("theme_dark", "Dark", "moon", None, lambda: self._set_theme("dark"), checkable=True)
+        act("user_guide", "User Guide", "book-open", None, self._open_user_guide)
+        act("about", "About Petrophyter", "info", None, self._on_about_triggered)
+        group = QActionGroup(self)
+        group.addAction(self.actions_["theme_light"])
+        group.addAction(self.actions_["theme_dark"])
+        self.actions_["run_analysis"].setEnabled(False)
+        self.actions_["save_merged"].setEnabled(False)
+        self.actions_["toggle_browser"].setChecked(True)
+
+    def _build_menus(self):
+        bar = self.menuBar()
+        self._menus = {}
+        file_menu = bar.addMenu("&File")
+        self._menus["file"] = file_menu
+        for key in ("new_project", None, "open_las", "open_tops", "open_core",
+                    None, "save_merged", None, "exit"):
+            file_menu.addSeparator() if key is None else file_menu.addAction(self.actions_[key])
+        session = bar.addMenu("&Session")
+        session.addAction(self.actions_["save_session"])
+        session.addAction(self.actions_["load_session"])
+        analysis = bar.addMenu("&Analysis")
+        analysis.addAction(self.actions_["run_analysis"])
+        self._menus["analysis"] = analysis
+        view = bar.addMenu("&View")
+        view.addAction(self.actions_["toggle_browser"])
+        self._menus["view"] = view
+        self._menus["view_theme_sep"] = view.addSeparator()
+        theme_menu = view.addMenu("Theme")
+        theme_menu.addAction(self.actions_["theme_light"])
+        theme_menu.addAction(self.actions_["theme_dark"])
+        help_menu = bar.addMenu("&Help")
+        help_menu.addAction(self.actions_["user_guide"])
+        help_menu.addAction(self.actions_["about"])
+
+    def _build_toolbar(self):
+        from PyQt6.QtCore import QSize
+        from PyQt6.QtWidgets import QToolBar, QToolButton
+
+        toolbar = QToolBar("Main")
+        toolbar.setMovable(False)
+        toolbar.setFloatable(False)
+        toolbar.setIconSize(QSize(18, 18))
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        toolbar.addAction(self.actions_["open_las"])
+        toolbar.addAction(self.actions_["save_session"])
+        toolbar.addSeparator()
+        self.run_button = QToolButton()
+        self.run_button.setDefaultAction(self.actions_["run_analysis"])
+        self.run_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.run_button.setProperty("variant", "primary")
+        toolbar.addWidget(self.run_button)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        self.well_indicator = _WellIndicator()
+        toolbar.addWidget(self.well_indicator)
+        self.addToolBar(toolbar)
+        self.main_toolbar = toolbar
+
+    def _refresh_action_icons(self):
+        """Re-render action icons in the current theme's color."""
+        from themes.icon_loader import get_icon
+
+        for key, name in self._action_icons.items():
+            self.actions_[key].setIcon(get_icon(name))
 
     def _handle_theme_change(self, theme: str):
         """Refresh widgets when theme changes."""
+        self._refresh_action_icons()
         is_dark = self.theme_manager.is_dark() if self.theme_manager else False
         if hasattr(self, "sidebar"):
-            self.sidebar.update_theme_button(is_dark)
             self.sidebar.refresh_theme()
         for tab in [
             getattr(self, "qc_tab", None),
@@ -288,14 +445,6 @@ class MainWindow(QMainWindow):
         ]:
             if tab and hasattr(tab, "refresh_theme"):
                 tab.refresh_theme()
-        if hasattr(self, "title_label"):
-            self.title_label.setText(
-                f"<h1 style='color: {get_color('primary')}; text-align: center;'>Petrophyter</h1>"
-            )
-        if hasattr(self, "subtitle_label"):
-            self.subtitle_label.setText(
-                f"<p style='color: {get_color('text_secondary')}; background-color: transparent; text-align: center;'>Petrophysics Master: Semi-Automatic LAS QC & Analysis</p>"
-            )
 
     # =========================================================================
     # LAS FILE HANDLING
@@ -348,6 +497,13 @@ class MainWindow(QMainWindow):
                     ctype: detected.get(ctype, "None")
                     for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
                 }
+
+                self.actions_["run_analysis"].setEnabled(True)
+                self.actions_["save_merged"].setEnabled(False)
+                self.well_indicator.set_well(
+                    well_name, len(parser.data), len(parser.data.columns)
+                )
+                self._refresh_window_title()
 
                 self.statusBar.showMessage(
                     f"Loaded: {os.path.basename(file_path)} ({len(parser.data)} rows)"
@@ -479,6 +635,13 @@ class MainWindow(QMainWindow):
             for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
         }
 
+        self.actions_["run_analysis"].setEnabled(True)
+        self.actions_["save_merged"].setEnabled(True)
+        self.well_indicator.set_well(
+            merge_report.well_name, len(merged_df), len(merged_df.columns)
+        )
+        self._refresh_window_title()
+
         self.statusBar.showMessage(
             f"Merged {len(self._loaded_parsers)} files ({len(merged_df)} rows)"
         )
@@ -602,14 +765,14 @@ class MainWindow(QMainWindow):
         # Update model from UI and close the double-click window before the
         # background worker can emit its asynchronous started signal.
         self.sidebar.update_model_from_ui()
-        self.sidebar.run_btn.setEnabled(False)
+        self.actions_["run_analysis"].setEnabled(False)
 
         # Start analysis
         self.analysis_service.run_analysis(self.model)
 
     def _on_analysis_started(self):
         """Handle analysis started."""
-        self.sidebar.run_btn.setEnabled(False)
+        self.actions_["run_analysis"].setEnabled(False)
         self.sidebar.set_progress(0, "Analyzing...")
         self.statusBar.showMessage("Running petrophysics analysis...")
 
@@ -627,7 +790,7 @@ class MainWindow(QMainWindow):
         # print(f"[DEBUG MainWindow] results.columns = {list(results.columns)[:10]}...")
 
         self.sidebar.set_progress(100, "Complete")
-        self.sidebar.run_btn.setEnabled(True)
+        self.actions_["run_analysis"].setEnabled(True)
 
         # Store both pieces of the analysis result atomically so observers see
         # a matching results/summary pair and only one completion refresh.
@@ -655,7 +818,7 @@ class MainWindow(QMainWindow):
     def _on_analysis_error(self, error: str):
         """Handle analysis error."""
         self.sidebar.set_progress(0, "")
-        self.sidebar.run_btn.setEnabled(True)
+        self.actions_["run_analysis"].setEnabled(True)
         QMessageBox.critical(self, "Analysis Error", error)
         self.statusBar.showMessage("Analysis failed")
 
@@ -926,6 +1089,10 @@ class MainWindow(QMainWindow):
 
         # Reset sidebar UI
         self.sidebar.reset_ui()
+        self.actions_["run_analysis"].setEnabled(False)
+        self.actions_["save_merged"].setEnabled(False)
+        self.well_indicator.set_empty()
+        self._refresh_window_title()
 
         # Reset all tabs UI to fresh state
         self.qc_tab.reset_ui()
