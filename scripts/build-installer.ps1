@@ -29,12 +29,12 @@
 
 .NOTES
     Prerequisites:
-    - Conda environment 'qceda' with PyInstaller installed
+    - Conda environment 'mldl' with PyInstaller installed
     - Inno Setup 6 installed: https://jrsoftware.org/isinfo.php
     
     Environment Variables:
     - ISCC_PATH: Custom path to ISCC.exe (optional)
-    - CONDA_ENV: Conda environment name (default: qceda)
+    - CONDA_ENV: Conda environment name (default: mldl)
 #>
 
 [CmdletBinding()]
@@ -56,7 +56,7 @@ $SpecFile = "petrophyter_pyqt_2.spec"
 $IssFile = "installer\Petrophyter.iss"
 $DistFolder = "dist\Petrophyter"
 $OutputFolder = "installer\Output"
-$CondaEnv = if ($env:CONDA_ENV) { $env:CONDA_ENV } else { "qceda" }
+$CondaEnv = if ($env:CONDA_ENV) { $env:CONDA_ENV } else { "mldl" }
 
 function Write-Banner {
     param([string]$Text, [string]$Color = "Cyan")

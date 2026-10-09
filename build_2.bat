@@ -17,7 +17,7 @@ REM Change to script directory
 cd /d "%~dp0"
 
 REM Initialize conda for batch file usage
-echo Activating conda environment: qceda
+echo Activating conda environment: mldl
 if defined CONDA_EXE (
     REM Use CONDA_EXE if available
     for %%i in ("%CONDA_EXE%") do set "CONDA_ROOT=%%~dpi.."
@@ -49,9 +49,9 @@ if errorlevel 1 (
 )
 
 REM Activate the specific environment
-call conda activate qceda
+call conda activate mldl
 if errorlevel 1 (
-    echo ERROR: Failed to activate conda environment 'qceda'
+    echo ERROR: Failed to activate conda environment 'mldl'
     echo Please ensure the environment exists: conda env list
     pause
     exit /b 1
