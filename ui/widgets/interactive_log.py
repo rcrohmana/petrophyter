@@ -52,6 +52,13 @@ CURVE_COLORS = {
 }
 
 
+def _selection_brush():
+    """Translucent depth-region brush derived from the theme selection token."""
+    color = QColor(get_plot_chrome()["selection"])
+    color.setAlpha(50)
+    return pg.mkBrush(color)
+
+
 def _current_curve_color(curve_name: str) -> str:
     """Resolve a curve color against the current theme at draw time."""
     return get_plot_color(curve_name)
@@ -178,6 +185,16 @@ class InteractiveLogPlot(QWidget):
                 axis = plot.getAxis(axis_name)
                 axis.setPen(pg.mkPen(self._chrome["spine"]))
                 axis.setTextPen(pg.mkPen(self._chrome["text"]))
+        for plot in self.plot_widgets:
+            plot.titleLabel.setText(plot.titleLabel.text, color=self._chrome["text"])
+        for line in self.formation_lines:
+            line.setPen(
+                pg.mkPen(
+                    get_plot_color("FORMATION_TOP"),
+                    width=2,
+                    style=Qt.PenStyle.DashLine,
+                )
+            )
         for v_line, h_line in self.crosshairs:
             v_line.setPen(pg.mkPen(self._chrome["crosshair"], width=1))
             h_line.setPen(
@@ -186,7 +203,7 @@ class InteractiveLogPlot(QWidget):
                 )
             )
         if self.depth_region is not None:
-            self.depth_region.setBrush(pg.mkBrush(100, 150, 200, 50))
+            self.depth_region.setBrush(_selection_brush())
         for curve_name, curve_item in self.curve_items.items():
             if curve_name in CURVE_COLORS or curve_name == "RT":
                 curve_item.setPen(pg.mkPen(_current_curve_color(curve_name), width=1.5))
@@ -207,7 +224,8 @@ class InteractiveLogPlot(QWidget):
 
             # Configure plot
             plot.setTitle(
-                track_titles[i] if i < len(track_titles) else f"Track {i + 1}"
+                track_titles[i] if i < len(track_titles) else f"Track {i + 1}",
+                color=self._chrome["text"],
             )
             plot.showGrid(x=True, y=True, alpha=0.3)
             plot.setLabel("left", "")
@@ -245,7 +263,7 @@ class InteractiveLogPlot(QWidget):
             if i == 0:
                 self.depth_region = pg.LinearRegionItem(
                     orientation="horizontal",
-                    brush=pg.mkBrush(100, 150, 200, 50),
+                    brush=_selection_brush(),
                     movable=True,
                 )
                 self.depth_region.setZValue(-10)  # Behind curves
