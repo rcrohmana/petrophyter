@@ -2,7 +2,41 @@
 
 # Version History
 
-## v1.5.0 (Build 20260814) — Current Release
+## v1.6.0 (Build 20261009) — Current Release
+
+### New interface
+
+- Replaced the left sidebar with a menu bar (File, Session, Analysis, Parameters, Corrections, View, Help) and a main toolbar.
+- Added a read-only **Data Browser** tree that lists loaded LAS files, curves, formation tops, and core data.
+- Moved every analysis setting into a modeless **Parameters** window with ten pages, so parameters stay open while you review results.
+- Added a **Merge LAS Files** dialog in place of the sidebar merge block.
+- Added a status bar with analysis progress, a QC status chip, and a stale-results indicator that appears after parameters change.
+- Replaced informational pop-ups with non-blocking notification banners.
+- The window layout, Data Browser visibility, and Parameters window position are remembered between launches.
+
+### Design system
+
+- Introduced a token-based design system (`themes/tokens.py`) that renders the Light and Dark stylesheets from one template.
+- Replaced emoji and ad-hoc icons with a bundled, theme-aware Lucide icon set (ISC license); icons recolor immediately when the theme changes.
+- Unified result tables (shared table model, consistent decimals and alignment) and themed all plot text, axes, and toolbars.
+- Added automated design-system compliance tests (no hard-coded colors, inline styles, emoji, or informational modals).
+
+### Fixes
+
+- The Interactive log now opens fitted to the data's depth range instead of starting at depth 0, which had squeezed the curves into the bottom of the tracks.
+- Per-file row counts in the Data Browser are correct after a LAS merge.
+- The stale-results indicator is cleared when new data is loaded.
+- Chart text is readable in the Dark theme.
+- Cancelling or failing a merge preparation no longer leaves the merge state inconsistent.
+
+### Build and packaging
+
+- `pyqtgraph` and `PyOpenGL` are now listed in `requirements.txt` (required for the Interactive log engine).
+- Build scripts default to the `mldl` Conda environment used for release builds.
+- The installer now ships `LICENSE`, `LICENSE-APACHE-2.0`, `LICENSE-GPL-3.0`, and `NOTICE`.
+- Added `run_petrophyter.bat` to launch the application from source with a double-click.
+
+## v1.5.0 (Build 20260814)
 
 ### New features
 
