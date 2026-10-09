@@ -500,4 +500,115 @@ def test_table_model_aligns_numeric_strings_right():
     align = lambda c: model.data(model.index(0, c), Qt.ItemDataRole.TextAlignmentRole)
     assert align(0) == Qt.AlignmentFlag.AlignCenter
     assert align(1) == right and align(2) == right
-    assert align(3) == Qt.AlignmentFlag.AlignCenter
+    assert align(3) == Qt.AlignmentFlag.AlignCenter
+
+def _fake_parser_class(valid=True, depth=(100.0, 200.0)):
+    import pandas as pd
+
+    class FakeParser:
+        data = pd.DataFrame({"DEPTH": [100.0, 200.0], "GR": [50.0, 60.0]})
+        well_info = {"well_name": "TEST"}
+
+        def read_las_from_buffer(self, f):
+            return valid
+
+        def get_depth_range(self):
+            return depth
+
+        def get_available_curves(self):
+            return ["DEPTH", "GR"]
+
+        def find_curve_by_type(self, ctype):
+            return "GR" if ctype == "GR" else None
+
+    return FakeParser
+
+
+def _patch_open(monkeypatch):
+    import io
+    import ui.main_window as mw
+    monkeypatch.setattr(mw, "open", lambda *a, **k: io.StringIO(""), raising=False)
+
+
+def test_single_load_clears_pending_merge(window, monkeypatch):
+    from PyQt6.QtWidgets import QDialog
+    import ui.main_window as mw
+
+    _patch_open(monkeypatch)
+    monkeypatch.setattr(mw, "LASParser", _fake_parser_class())
+    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(window, "_on_data_loaded", lambda: None)
+    monkeypatch.setattr(mw, "QCModule", lambda *a, **k: type("Q", (), {"run_qc": lambda self: None})())
+    window._prepare_merge(["a.las", "b.las"])
+    assert window.actions_["merge_las"].isEnabled()
+    assert len(window._loaded_parsers) == 2
+
+    window._load_single_las("c.las")
+    assert not window.actions_["merge_las"].isEnabled()
+    assert window._loaded_parsers == []
+    assert window._loaded_file_names == []
+    assert window._loaded_row_counts == []
+
+
+def test_failed_prepare_keeps_previous_pending_merge(window, monkeypatch):
+    from PyQt6.QtWidgets import QDialog, QMessageBox
+    import ui.main_window as mw
+
+    _patch_open(monkeypatch)
+    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(mw, "LASParser", _fake_parser_class())
+    window._prepare_merge(["a.las", "b.las"])
+    names = list(window._loaded_file_names)
+    assert len(names) == 2
+
+    warned = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
+    monkeypatch.setattr(mw, "LASParser", _fake_parser_class(valid=False))
+    window._prepare_merge(["x.las", "y.las"])
+    assert warned
+    assert window._loaded_file_names == names
+    assert len(window._loaded_parsers) == 2
+    assert window.actions_["merge_las"].isEnabled()
+
+
+def test_theme_change_recolors_cached_icons(window):
+    from themes.colors import get_current_theme, set_current_theme
+    from themes.icon_loader import clear_icon_cache
+
+    start = get_current_theme()
+    try:
+        perm = window.params_window.perm_params_widget
+        merge_ok = window.merge_dialog._ok_button
+        before = (perm.calc_btn.icon().cacheKey(), merge_ok.icon().cacheKey())
+        set_current_theme("dark" if start == "light" else "light")
+        clear_icon_cache()
+        window._handle_theme_change(get_current_theme())
+        after = (perm.calc_btn.icon().cacheKey(), merge_ok.icon().cacheKey())
+        assert before[0] != after[0]
+        assert before[1] != after[1]
+    finally:
+        set_current_theme(start)
+        clear_icon_cache()
+        window._handle_theme_change(start)
+
+
+def test_banner_refresh_theme_rerenders_kind_icon(window):
+    from themes.colors import get_current_theme, set_current_theme
+    from themes.icon_loader import clear_icon_cache
+
+    start = get_current_theme()
+    try:
+        window.show_banner("success", "ok")
+        before = window.banner.icon_label.pixmap().cacheKey()
+        set_current_theme("dark" if start == "light" else "light")
+        clear_icon_cache()
+        window.banner.refresh_theme()
+        assert window.banner.icon_label.pixmap().cacheKey() != before
+    finally:
+        set_current_theme(start)
+        clear_icon_cache()
+
+
+def test_run_disabled_while_analysis_running(window):
+    window._on_analysis_started()
+    assert not window.actions_["run_analysis"].isEnabled()

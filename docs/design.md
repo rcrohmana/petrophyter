@@ -78,7 +78,7 @@ underline, selection, focus, ghost links, and the info banner.
 | `radius` | 3 px (the only radius) |
 | `control_height` | 26 px |
 | `toolbar_height` | 34 px |
-| `panel_min_width` / `default` / `max` | 220 / 260 / 320 px (Data Browser) |
+| `panel_min_width` / `default` / `max` | 220 / 300 / 320 px (Data Browser) |
 | `params_window_width` x `height` | 640 x 560 (min 560 x 420) |
 | `params_page_list_width` | 180 px |
 | `splitter_handle` | 4 px |
@@ -110,6 +110,10 @@ No shadows, no gradients, one 1px border weight.
   template via attribute selectors. Object names used by the template:
   `SectionLabel`, `SubsectionLabel`, `PlaceholderLabel`, `AboutTitle`, `QcChip`,
   `InfoStrip*`, `NotificationBanner`, `WellIndicator`.
+- Icons are cached per theme, and a stored `QIcon` never recolors itself. Any widget that
+  calls `setIcon(get_icon(...))` once must re-set it in a `refresh_theme()` that
+  `MainWindow._handle_theme_change` calls (done for the Parameters window, Merge dialog,
+  banner, Data Browser, tabs and interactive log).
 - **No `setStyleSheet` anywhere in `ui/`.**
 
 ## 4. Components
@@ -128,7 +132,10 @@ template for text-only actions.
 ### 4.2 Inputs
 
 `bg_surface`, 1px `border`, 26px, 3px radius. Focus: 1px `accent` border. Disabled:
-`bg_sunken` + `text_disabled`. Combo and spin arrows are Lucide chevrons injected through
+`bg_sunken` + `text_disabled`. Checkbox and radio indicators are 14px with a 1px
+`border_strong` outline on `bg_surface`. A checked checkbox fills with `accent` and shows the
+Lucide `check` tick (2px corner radius). A radio is a circle (the one round shape, exempt from
+the 3px radius) whose checked state is a thick `accent` ring with a `bg_surface` center. Combo and spin arrows are Lucide chevrons injected through
 the QSS `image:` URLs (`$qss_icons`, written by `ensure_qss_icons`). Combo popup:
 `bg_surface`, selection `accent_subtle`.
 
@@ -206,7 +213,7 @@ separated by plain hairline rules. License-table HTML takes its border color fro
   Curve role tags (`GR`, `RHOB`, `NPHI`, `DT`, `RT`) are 8pt 600 `text_secondary`.
 - Icons 16px (`file-text` LAS, `activity` curves, `layers` tops, `database` core, `sigma`
   results). Status is an 8px dot from `dot_pixmap`, never colored row text.
-- Width 220 to 320px (default 260). Empty state: `No data loaded` with an
+- Width 220 to 320px (default 300). Empty state: `No data loaded` with an
   `Open LAS File(s)...` link.
 - Selection `accent_subtle`; hover `bg_hover`; unloaded and merged-away sources are muted.
 - Context menus reuse the main window's `QAction` objects (passed in via `set_actions`),

@@ -20,7 +20,9 @@ class NotificationBanner(QFrame):
         self.icon_label = QLabel()
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
+        self._kind = None
         close_btn = QPushButton()
+        self.close_btn = close_btn
         close_btn.setProperty("variant", "ghost")
         close_btn.setIcon(get_icon("x"))
         close_btn.setFixedSize(22, 22)
@@ -33,6 +35,7 @@ class NotificationBanner(QFrame):
     def show_message(self, kind: str, message: str):
         if kind not in _KIND_ICONS:
             raise ValueError(f"banner kind {kind!r} not allowed (errors are modal)")
+        self._kind = kind
         self.setProperty("kind", kind)
         self.style().unpolish(self)
         self.style().polish(self)
@@ -41,6 +44,13 @@ class NotificationBanner(QFrame):
         )
         self.message_label.setText(message)
         self.show()
+
+    def refresh_theme(self):
+        self.close_btn.setIcon(get_icon("x"))
+        if self._kind is not None:
+            self.icon_label.setPixmap(
+                get_icon(_KIND_ICONS[self._kind], _KIND_TOKENS[self._kind]).pixmap(16, 16)
+            )
 
     def clear(self):
         self.hide()

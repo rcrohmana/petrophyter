@@ -633,6 +633,11 @@ class ShaleParamsGroup(QWidget):
         if iqr_filter is not None:
             self.iqr_filter_check.setChecked(iqr_filter)
 
+    def refresh_theme(self):
+        """Re-fetch button icons so they recolor on theme change."""
+        self.calc_btn.setIcon(get_icon("calculator"))
+        self.apply_btn.setIcon(get_icon("check"))
+
 
 class ArchieParamsGroup(QWidget):
     """Archie parameters widget."""
@@ -812,6 +817,11 @@ class ResistivityParamsGroup(QWidget):
         self.rw_spin.setValue(rw)
         self.rsh_spin.setValue(rsh)
 
+    def refresh_theme(self):
+        """Re-fetch button icons so they recolor on theme change."""
+        self.calc_btn.setIcon(get_icon("calculator"))
+        self.apply_btn.setIcon(get_icon("check"))
+
 
 class PermParamsGroup(QWidget):
     """Permeability coefficient parameters widget."""
@@ -918,6 +928,11 @@ class PermParamsGroup(QWidget):
         """Internal apply handler."""
         self.apply_calculated()
         self.apply_clicked.emit()
+
+    def refresh_theme(self):
+        """Re-fetch button icons so they recolor on theme change."""
+        self.calc_btn.setIcon(get_icon("calculator"))
+        self.apply_btn.setIcon(get_icon("check"))
 
 
 class SwirEstimationGroup(QWidget):

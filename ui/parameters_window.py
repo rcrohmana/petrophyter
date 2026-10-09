@@ -184,6 +184,12 @@ class ParametersWindow(QDialog):
         item = self.page_list.currentItem()
         return item.data(_KEY_ROLE) if item else "scope"
 
+    def refresh_theme(self):
+        """Re-fetch cached icons (groups with calculate/apply buttons)."""
+        for group in (self.shale_params_widget, self.res_params_widget,
+                      self.perm_params_widget):
+            group.refresh_theme()
+
     def set_core_available(self, available: bool):
         self.core_unit_combo.setEnabled(available)
         self.core_dist_spin.setEnabled(available)
