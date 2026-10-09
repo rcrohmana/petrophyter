@@ -6,116 +6,18 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QGridLayout,
     QLabel,
-    QFrame,
     QTableView,
     QGroupBox,
     QScrollArea,
 )
-from PyQt6.QtCore import Qt, QAbstractTableModel
-from PyQt6.QtGui import QStandardItemModel, QStandardItem, QPalette, QColor
+from PyQt6.QtCore import Qt
 import pandas as pd
 
+from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import TripleComboPlot
-from themes.colors import get_color
-
-
-class MetricCard(QFrame):
-    """A metric display card with theme-aware styling."""
-
-    def __init__(self, label: str, value: str = "", parent=None):
-        super().__init__(parent)
-        self.setFrameStyle(QFrame.Shape.Box | QFrame.Shadow.Raised)
-        self._apply_theme()
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(2)
-
-        self.label = QLabel(label)
-        self.label.setStyleSheet(
-            f"color: {get_color('text_secondary')}; font-size: 11px; background-color: transparent;"
-        )
-
-        self.value_label = QLabel(value)
-        self.value_label.setStyleSheet(
-            f"color: {get_color('text_primary')}; font-size: 16px; font-weight: bold; background-color: transparent;"
-        )
-
-        layout.addWidget(self.label)
-        layout.addWidget(self.value_label)
-
-    def _apply_theme(self):
-        self.setStyleSheet(
-            f"""
-            QFrame {{
-                background-color: {get_color("bg_surface")};
-                border: 1px solid {get_color("border")};
-                border-radius: 8px;
-                padding: 5px;
-            }}
-            """
-        )
-
-    def refresh_theme(self):
-        self._apply_theme()
-        self.label.setStyleSheet(
-            f"color: {get_color('text_secondary')}; font-size: 11px; background-color: transparent;"
-        )
-        self.value_label.setStyleSheet(
-            f"color: {get_color('text_primary')}; font-size: 16px; font-weight: bold; background-color: transparent;"
-        )
-
-    def set_value(self, value: str):
-        self.value_label.setText(value)
-
-
-class PandasTableModel(QAbstractTableModel):
-    """Table model for displaying pandas DataFrames."""
-
-    def __init__(self, df: pd.DataFrame = None, parent=None):
-        super().__init__(parent)
-        self._df = df if df is not None else pd.DataFrame()
-
-    def rowCount(self, parent=None):
-        count = len(self._df)
-        # print(f"[DEBUG Model] rowCount called, returning {count}")
-        return count
-
-    def columnCount(self, parent=None):
-        return len(self._df.columns)
-
-    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return None
-
-        if role == Qt.ItemDataRole.DisplayRole:
-            value = self._df.iloc[index.row(), index.column()]
-            if pd.isna(value):
-                return ""
-            if isinstance(value, float):
-                return f"{value:.4f}"
-            return str(value)
-
-        # Center align all cells
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            return Qt.AlignmentFlag.AlignCenter
-
-        return None
-
-    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole:
-            return None
-
-        if orientation == Qt.Orientation.Horizontal:
-            return str(self._df.columns[section])
-        else:
-            return str(section + 1)
-
-    def set_dataframe(self, df: pd.DataFrame):
-        self.beginResetModel()
-        self._df = df
-        self.endResetModel()
+from ..widgets.table_model import PandasTableModel
+from themes.helpers import set_status
 
 
 class QCTab(QWidget):
@@ -129,11 +31,6 @@ class QCTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title
-        title = QLabel("📊 Data Quality Control")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
         # Scroll area for content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -143,26 +40,12 @@ class QCTab(QWidget):
         # =====================================================================
         # WELL INFO METRICS
         # =====================================================================
-        metrics_layout = QHBoxLayout()
-
-        self.well_name_card = MetricCard("Well Name", "-")
-        self.depth_range_card = MetricCard("Depth Range", "-")
-        self.total_points_card = MetricCard("Total Points", "-")
-        self.quality_score_card = MetricCard("Quality Score", "-")
-
-        self.metric_cards = [
-            self.well_name_card,
-            self.depth_range_card,
-            self.total_points_card,
-            self.quality_score_card,
-        ]
-
-        metrics_layout.addWidget(self.well_name_card)
-        metrics_layout.addWidget(self.depth_range_card)
-        metrics_layout.addWidget(self.total_points_card)
-        metrics_layout.addWidget(self.quality_score_card)
-
-        content_layout.addLayout(metrics_layout)
+        self.info_strip = InfoStrip()
+        self.info_strip.add_block("well", "Well Name")
+        self.info_strip.add_block("depth", "Depth Range")
+        self.info_strip.add_block("points", "Total Points")
+        self.info_strip.add_block("qc", "Quality Score")
+        content_layout.addWidget(self.info_strip)
 
         # =====================================================================
         # CURVE AVAILABILITY
@@ -222,13 +105,13 @@ class QCTab(QWidget):
         # =====================================================================
         null_layout = QHBoxLayout()
 
-        self.null_value_label = QLabel("📌 Declared NULL value: -")
+        self.null_value_label = QLabel("Declared NULL value: -")
         null_layout.addWidget(self.null_value_label)
 
         null_info = QLabel(
-            "✅ Common null values (-999.25, -9999, etc.) auto-replaced with NaN"
+            "Common null values (-999.25, -9999, etc.) auto-replaced with NaN"
         )
-        null_info.setStyleSheet("color: green;")
+        set_status(null_info, "success")
         null_layout.addWidget(null_info)
         null_layout.addStretch()
 
@@ -237,20 +120,15 @@ class QCTab(QWidget):
         # =====================================================================
         # MERGE REPORT (conditional)
         # =====================================================================
-        self.merge_group = QGroupBox("🔗 LAS Merge Report")
+        self.merge_group = QGroupBox("LAS Merge Report")
         merge_layout = QVBoxLayout(self.merge_group)
 
-        merge_metrics = QHBoxLayout()
-        self.files_merged_card = MetricCard("Files Merged", "-")
-        self.depth_min_card = MetricCard("Depth Min", "-")
-        self.depth_max_card = MetricCard("Depth Max", "-")
-        self.depth_points_card = MetricCard("Depth Points", "-")
-
-        merge_metrics.addWidget(self.files_merged_card)
-        merge_metrics.addWidget(self.depth_min_card)
-        merge_metrics.addWidget(self.depth_max_card)
-        merge_metrics.addWidget(self.depth_points_card)
-        merge_layout.addLayout(merge_metrics)
+        self.merge_strip = InfoStrip()
+        self.merge_strip.add_block("files", "Files Merged")
+        self.merge_strip.add_block("min", "Depth Min")
+        self.merge_strip.add_block("max", "Depth Max")
+        self.merge_strip.add_block("points", "Depth Points")
+        merge_layout.addWidget(self.merge_strip)
 
         self.merge_table = QTableView()
         self.merge_table_model = PandasTableModel()
@@ -264,7 +142,7 @@ class QCTab(QWidget):
         # =====================================================================
         # TRIPLE COMBO LOG
         # =====================================================================
-        log_group = QGroupBox("📊 Triple Combo Log (QC Preview)")
+        log_group = QGroupBox("Triple Combo Log (QC Preview)")
         log_layout = QVBoxLayout(log_group)
 
         self.triple_combo_plot = TripleComboPlot()
@@ -274,12 +152,8 @@ class QCTab(QWidget):
         content_layout.addWidget(log_group)
 
         # Placeholder message
-        self.placeholder = QLabel(
-            "👈 Please load a LAS file using the sidebar to begin."
-        )
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Load a LAS file to begin.")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
 
@@ -289,13 +163,8 @@ class QCTab(QWidget):
         layout.addWidget(scroll)
 
     def refresh_theme(self):
-        for card in getattr(self, "metric_cards", []):
-            card.refresh_theme()
         if hasattr(self, "triple_combo_plot"):
             self.triple_combo_plot.refresh_theme()
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
 
     def update_display(self):
         """Update display with current model data."""
@@ -309,22 +178,26 @@ class QCTab(QWidget):
         self.placeholder.setVisible(False)
 
         # Update metrics
-        self.well_name_card.set_value(qc.well_name)
-        self.depth_range_card.set_value(
-            f"{qc.depth_range[0]:.1f} - {qc.depth_range[1]:.1f}"
+        self.info_strip.set_value("well", qc.well_name)
+        self.info_strip.set_value(
+            "depth", f"{qc.depth_range[0]:.1f} - {qc.depth_range[1]:.1f}"
         )
-        self.total_points_card.set_value(str(qc.total_points))
-        self.quality_score_card.set_value(f"{qc.overall_quality_score:.0f}/100")
+        self.info_strip.set_value("points", str(qc.total_points))
+        score = qc.overall_quality_score
+        self.info_strip.set_value("qc", f"{score:.0f}/100")
+        self.info_strip.set_status(
+            "qc", "success" if score >= 90 else "warning" if score >= 70 else "error"
+        )
 
         # Update curve availability
         self.available_label.setText(", ".join(qc.curves_available))
 
         if qc.curves_missing:
             self.missing_label.setText(", ".join(qc.curves_missing))
-            self.missing_label.setStyleSheet("color: orange;")
+            set_status(self.missing_label, "warning")
         else:
-            self.missing_label.setText("All required curves available ✓")
-            self.missing_label.setStyleSheet("color: green;")
+            self.missing_label.setText("All required curves available")
+            set_status(self.missing_label, "success")
 
         # Update QC table
         if qc.curve_results:
@@ -346,16 +219,16 @@ class QCTab(QWidget):
         # Update null value info
         if self.model.las_parser:
             null_val = self.model.las_parser.null_value
-            self.null_value_label.setText(f"📌 Declared NULL value: {null_val}")
+            self.null_value_label.setText(f"Declared NULL value: {null_val}")
 
         # Update merge report
         merge_report = self.model.merge_report
         if merge_report:
             self.merge_group.setVisible(True)
-            self.files_merged_card.set_value(str(len(merge_report.files_processed)))
-            self.depth_min_card.set_value(f"{merge_report.master_depth['min']:.1f} ft")
-            self.depth_max_card.set_value(f"{merge_report.master_depth['max']:.1f} ft")
-            self.depth_points_card.set_value(str(merge_report.master_depth["points"]))
+            self.merge_strip.set_value("files", str(len(merge_report.files_processed)))
+            self.merge_strip.set_value("min", f"{merge_report.master_depth['min']:.1f} ft")
+            self.merge_strip.set_value("max", f"{merge_report.master_depth['max']:.1f} ft")
+            self.merge_strip.set_value("points", str(merge_report.master_depth["points"]))
 
             # Curve sources table
             curve_data = []
@@ -391,27 +264,24 @@ class QCTab(QWidget):
     def reset_ui(self):
         """Reset UI to fresh state for New Project."""
         # Reset metric cards
-        self.well_name_card.set_value("-")
-        self.depth_range_card.set_value("-")
-        self.total_points_card.set_value("-")
-        self.quality_score_card.set_value("-")
+        for key in ("well", "depth", "points", "qc"):
+            self.info_strip.set_value(key, "-")
+        self.info_strip.set_status("qc", None)
 
         # Reset curve availability labels
         self.available_label.setText("-")
         self.missing_label.setText("-")
-        self.missing_label.setStyleSheet("")
+        set_status(self.missing_label, None)
 
         # Clear QC table
         self.qc_table_model.set_dataframe(pd.DataFrame())
 
         # Reset null value info
-        self.null_value_label.setText("📌 Declared NULL value: -")
+        self.null_value_label.setText("Declared NULL value: -")
 
         # Reset merge report section
-        self.files_merged_card.set_value("-")
-        self.depth_min_card.set_value("-")
-        self.depth_max_card.set_value("-")
-        self.depth_points_card.set_value("-")
+        for key in ("files", "min", "max", "points"):
+            self.merge_strip.set_value(key, "-")
         self.merge_table_model.set_dataframe(pd.DataFrame())
         self.merge_group.setVisible(False)
 

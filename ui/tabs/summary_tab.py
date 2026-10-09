@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 import numpy as np
 
-from .qc_tab import MetricCard
+from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import PlotWidget
-from themes.colors import get_color, get_plot_color
+from themes.colors import get_plot_color
 
 
 class SummaryTab(QWidget):
@@ -30,11 +30,6 @@ class SummaryTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title
-        title = QLabel("📋 Analysis Summary")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -44,11 +39,10 @@ class SummaryTab(QWidget):
         # =====================================================================
         # ANALYSIS SCOPE
         # =====================================================================
-        scope_group = QGroupBox("🎯 Analysis Scope")
+        scope_group = QGroupBox("Analysis Scope")
         scope_layout = QVBoxLayout(scope_group)
 
-        self.scope_label = QLabel("📍 Mode: - | Data Points: -")
-        self.scope_label.setStyleSheet("font-size: 14px;")
+        self.scope_label = QLabel("Mode: - | Data Points: -")
         scope_layout.addWidget(self.scope_label)
 
         content_layout.addWidget(scope_group)
@@ -59,30 +53,19 @@ class SummaryTab(QWidget):
         pay_group = QGroupBox("Net Pay Analysis")
         pay_layout = QGridLayout(pay_group)
 
-        # Row 1
-        self.gross_sand_card = MetricCard("Gross Sand", "- ft")
-        self.net_reservoir_card = MetricCard("Net Reservoir", "- ft")
-        self.net_pay_card = MetricCard("Net Pay", "- ft")
-
-        # Row 2
-        self.ng_reservoir_card = MetricCard("N/G Reservoir", "- %")
-        self.ng_pay_card = MetricCard("N/G Pay", "- %")
-        self.avg_phie_card = MetricCard("Avg PHIE (Pay)", "- %")
-
-        # Row 3
-        self.avg_sw_card = MetricCard("Avg Sw (Pay)", "- %")
-        self.avg_vsh_card = MetricCard("Avg Vsh (Pay)", "- %")
-
-        pay_layout.addWidget(self.gross_sand_card, 0, 0)
-        pay_layout.addWidget(self.net_reservoir_card, 0, 1)
-        pay_layout.addWidget(self.net_pay_card, 0, 2)
-
-        pay_layout.addWidget(self.ng_reservoir_card, 1, 0)
-        pay_layout.addWidget(self.ng_pay_card, 1, 1)
-        pay_layout.addWidget(self.avg_phie_card, 1, 2)
-
-        pay_layout.addWidget(self.avg_sw_card, 2, 0)
-        pay_layout.addWidget(self.avg_vsh_card, 2, 1)
+        self._strips = {}
+        for row, blocks in enumerate(
+            (
+                (("gross_sand", "Gross Sand"), ("net_reservoir", "Net Reservoir"), ("net_pay", "Net Pay")),
+                (("ng_reservoir", "N/G Reservoir"), ("ng_pay", "N/G Pay"), ("avg_phie", "Avg PHIE (Pay)")),
+                (("avg_sw", "Avg Sw (Pay)"), ("avg_vsh", "Avg Vsh (Pay)")),
+            )
+        ):
+            strip = InfoStrip()
+            for key, label in blocks:
+                strip.add_block(key, label)
+                self._strips[key] = strip
+            pay_layout.addWidget(strip, row, 0)
 
         content_layout.addWidget(pay_group)
 
@@ -92,29 +75,17 @@ class SummaryTab(QWidget):
         hcpv_group = QGroupBox("HCPV Summary")
         hcpv_layout = QGridLayout(hcpv_group)
 
-        self.hcpv_gross_card = MetricCard("HCPV Gross", "- ft")
-        self.hcpv_net_res_card = MetricCard("HCPV Net Reservoir", "- ft")
-        self.hcpv_net_pay_card = MetricCard("HCPV Net Pay", "- ft")
-
-        hcpv_layout.addWidget(self.hcpv_gross_card, 0, 0)
-        hcpv_layout.addWidget(self.hcpv_net_res_card, 0, 1)
-        hcpv_layout.addWidget(self.hcpv_net_pay_card, 0, 2)
+        hcpv_strip = InfoStrip()
+        for key, label in (
+            ("hcpv_gross", "HCPV Gross"),
+            ("hcpv_net_res", "HCPV Net Reservoir"),
+            ("hcpv_net_pay", "HCPV Net Pay"),
+        ):
+            hcpv_strip.add_block(key, label)
+            self._strips[key] = hcpv_strip
+        hcpv_layout.addWidget(hcpv_strip, 0, 0)
 
         content_layout.addWidget(hcpv_group)
-
-        self.metric_cards = [
-            self.gross_sand_card,
-            self.net_reservoir_card,
-            self.net_pay_card,
-            self.ng_reservoir_card,
-            self.ng_pay_card,
-            self.avg_phie_card,
-            self.avg_sw_card,
-            self.avg_vsh_card,
-            self.hcpv_gross_card,
-            self.hcpv_net_res_card,
-            self.hcpv_net_pay_card,
-        ]
 
         # =====================================================================
         # BAR CHART
@@ -146,10 +117,8 @@ class SummaryTab(QWidget):
         content_layout.addWidget(cutoff_group)
 
         # Placeholder
-        self.placeholder = QLabel("👈 Run analysis first to view summary")
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Run analysis to view summary")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
 
@@ -159,12 +128,10 @@ class SummaryTab(QWidget):
         layout.addWidget(scroll)
 
     def refresh_theme(self):
-        for card in getattr(self, "metric_cards", []):
-            card.refresh_theme()
         self.bar_chart.refresh_theme()
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+
+    def _set(self, key: str, value: str):
+        self._strips[key].set_value(key, value)
 
     def update_display(self):
         """Update display with analysis results."""
@@ -192,45 +159,43 @@ class SummaryTab(QWidget):
 
         if analysis_mode == "Per-Formation" and selected_fms:
             self.scope_label.setText(
-                f"📍 <b>Mode:</b> Per-Formation | "
+                f"<b>Mode:</b> Per-Formation | "
                 f"<b>Formation(s):</b> {', '.join(selected_fms)} | "
                 f"<b>Data Points:</b> {data_points:,}"
             )
         else:
             self.scope_label.setText(
-                f"📍 <b>Mode:</b> Whole Well | <b>Data Points:</b> {data_points:,}"
+                f"<b>Mode:</b> Whole Well | <b>Data Points:</b> {data_points:,}"
             )
 
         # Update net pay metrics
-        self.gross_sand_card.set_value(f"{numeric('gross_sand'):.1f} ft")
-        self.net_reservoir_card.set_value(f"{numeric('net_reservoir'):.1f} ft")
-        self.net_pay_card.set_value(f"{numeric('net_pay'):.1f} ft")
+        self._set("gross_sand", f"{numeric('gross_sand'):.1f} ft")
+        self._set("net_reservoir", f"{numeric('net_reservoir'):.1f} ft")
+        self._set("net_pay", f"{numeric('net_pay'):.1f} ft")
 
-        self.ng_reservoir_card.set_value(f"{numeric('ng_reservoir') * 100:.1f}%")
-        self.ng_pay_card.set_value(f"{numeric('ng_pay') * 100:.1f}%")
+        self._set("ng_reservoir", f"{numeric('ng_reservoir') * 100:.1f}%")
+        self._set("ng_pay", f"{numeric('ng_pay') * 100:.1f}%")
 
-        for key, card in (
-            ("avg_phie_pay", self.avg_phie_card),
-            ("avg_sw_pay", self.avg_sw_card),
-            ("avg_vsh_pay", self.avg_vsh_card),
+        for key, card_key in (
+            ("avg_phie_pay", "avg_phie"),
+            ("avg_sw_pay", "avg_sw"),
+            ("avg_vsh_pay", "avg_vsh"),
         ):
             value = summary.get(key)
             try:
                 value = float(value)
             except (TypeError, ValueError):
                 value = np.nan
-            card.set_value(
-                f"{value * 100:.1f}%" if np.isfinite(value) else "N/A"
-            )
+            self._set(card_key, f"{value * 100:.1f}%" if np.isfinite(value) else "N/A")
 
         # Update HCPV metrics
         hcpv_gross = numeric("hcpv_gross")
         hcpv_net_res = numeric("hcpv_net_res")
         hcpv_net_pay = numeric("hcpv_net_pay")
 
-        self.hcpv_gross_card.set_value(f"{hcpv_gross:.4f} ft")
-        self.hcpv_net_res_card.set_value(f"{hcpv_net_res:.4f} ft")
-        self.hcpv_net_pay_card.set_value(f"{hcpv_net_pay:.4f} ft")
+        self._set("hcpv_gross", f"{hcpv_gross:.4f} ft")
+        self._set("hcpv_net_res", f"{hcpv_net_res:.4f} ft")
+        self._set("hcpv_net_pay", f"{hcpv_net_pay:.4f} ft")
 
         # Update bar chart
         self._update_bar_chart(summary)
@@ -292,22 +257,22 @@ class SummaryTab(QWidget):
     def reset_ui(self):
         """Reset UI to fresh state for New Project."""
         # Reset scope label
-        self.scope_label.setText("📍 Mode: - | Data Points: -")
+        self.scope_label.setText("Mode: - | Data Points: -")
 
         # Reset net pay cards
-        self.gross_sand_card.set_value("- ft")
-        self.net_reservoir_card.set_value("- ft")
-        self.net_pay_card.set_value("- ft")
-        self.ng_reservoir_card.set_value("- %")
-        self.ng_pay_card.set_value("- %")
-        self.avg_phie_card.set_value("- %")
-        self.avg_sw_card.set_value("- %")
-        self.avg_vsh_card.set_value("- %")
+        self._set("gross_sand", "- ft")
+        self._set("net_reservoir", "- ft")
+        self._set("net_pay", "- ft")
+        self._set("ng_reservoir", "- %")
+        self._set("ng_pay", "- %")
+        self._set("avg_phie", "- %")
+        self._set("avg_sw", "- %")
+        self._set("avg_vsh", "- %")
 
         # Reset HCPV cards
-        self.hcpv_gross_card.set_value("- ft")
-        self.hcpv_net_res_card.set_value("- ft")
-        self.hcpv_net_pay_card.set_value("- ft")
+        self._set("hcpv_gross", "- ft")
+        self._set("hcpv_net_res", "- ft")
+        self._set("hcpv_net_pay", "- ft")
 
         # Clear bar chart
         self.bar_chart.clear()

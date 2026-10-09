@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QMessageBox
 from models.app_model import AppModel
 from ui.main_window import MainWindow
 from ui.tabs.diagnostics_tab import DiagnosticsTab
-from ui.tabs.qc_tab import PandasTableModel
+from ui.widgets.table_model import PandasTableModel
 from ui.tabs.summary_tab import SummaryTab
 from ui.widgets.interactive_log import HAS_PYQTGRAPH, InteractiveLogPlot
 from ui.widgets.plot_widget import CompositeLogPlot
@@ -331,9 +331,9 @@ def test_summary_accepts_missing_keys_and_none_metrics(qtbot):
 
     tab.update_display()
 
-    assert tab.gross_sand_card.value_label.text() == "0.0 ft"
-    assert tab.avg_phie_card.value_label.text() == "N/A"
-    assert tab.hcpv_net_pay_card.value_label.text() == "0.0000 ft"
+    assert tab._strips["gross_sand"].value_label("gross_sand").text() == "0.0 ft"
+    assert tab._strips["avg_phie"].value_label("avg_phie").text() == "N/A"
+    assert tab._strips["hcpv_net_pay"].value_label("hcpv_net_pay").text() == "0.0000 ft"
 
 
 @pytest.mark.skipif(not HAS_PYQTGRAPH, reason="pyqtgraph unavailable")

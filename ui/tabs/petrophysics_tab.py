@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 import pandas as pd
 
-from .qc_tab import MetricCard, PandasTableModel
+from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot
-from themes.colors import get_color
+from ..widgets.table_model import PandasTableModel
 
 
 class PetrophysicsTab(QWidget):
@@ -34,11 +34,6 @@ class PetrophysicsTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-
-        # Title
-        title = QLabel("🧮 Petrophysics Calculations")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
 
         # Scroll area (outer) - untuk scroll vertikal seluruh konten tab (seperti QC tab)
         scroll = QScrollArea()
@@ -54,22 +49,19 @@ class PetrophysicsTab(QWidget):
         params_group = QGroupBox("Data-Driven Parameters")
         params_layout = QHBoxLayout(params_group)
 
-        self.gr_min_card = MetricCard("GR min", "- API")
-        self.gr_max_card = MetricCard("GR max", "- API")
-        self.rw_card = MetricCard("Rw", "- Ω.m")
-        self.rsh_card = MetricCard("Rsh", "- Ω.m")
-
-        self.metric_cards = [
-            self.gr_min_card,
-            self.gr_max_card,
-            self.rw_card,
-            self.rsh_card,
-        ]
-
-        params_layout.addWidget(self.gr_min_card)
-        params_layout.addWidget(self.gr_max_card)
-        params_layout.addWidget(self.rw_card)
-        params_layout.addWidget(self.rsh_card)
+        self.info_strip = InfoStrip()
+        self.info_strip.add_block("gr_min", "GR min")
+        self.info_strip.add_block("gr_max", "GR max")
+        self.info_strip.add_block("rw", "Rw")
+        self.info_strip.add_block("rsh", "Rsh")
+        for key, text in (
+            ("gr_min", "- API"),
+            ("gr_max", "- API"),
+            ("rw", "- Ω.m"),
+            ("rsh", "- Ω.m"),
+        ):
+            self.info_strip.set_value(key, text)
+        params_layout.addWidget(self.info_strip)
 
         content_layout.addWidget(params_group)
 
@@ -148,12 +140,8 @@ class PetrophysicsTab(QWidget):
         content_layout.addWidget(dist_group)
 
         # Placeholder
-        self.placeholder = QLabel(
-            "👈 Configure parameters in sidebar and click 'Run Analysis'"
-        )
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Run analysis to view petrophysics results")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
 
@@ -163,8 +151,6 @@ class PetrophysicsTab(QWidget):
         layout.addWidget(scroll)
 
     def refresh_theme(self):
-        for card in getattr(self, "metric_cards", []):
-            card.refresh_theme()
         for plot in (
             self.vsh_hist,
             self.phie_hist,
@@ -172,9 +158,6 @@ class PetrophysicsTab(QWidget):
             self.perm_hist,
         ):
             plot.refresh_theme()
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
 
     def update_display(self):
         """Update display with analysis results."""
@@ -198,10 +181,10 @@ class PetrophysicsTab(QWidget):
 
         # Update parameter cards
         if summary:
-            self.gr_min_card.set_value(f"{summary.get('gr_min', 0):.1f} API")
-            self.gr_max_card.set_value(f"{summary.get('gr_max', 0):.1f} API")
-            self.rw_card.set_value(f"{summary.get('rw', 0):.3f} Ω.m")
-            self.rsh_card.set_value(f"{summary.get('rsh', 0):.2f} Ω.m")
+            self.info_strip.set_value("gr_min", f"{summary.get('gr_min', 0):.1f} API")
+            self.info_strip.set_value("gr_max", f"{summary.get('gr_max', 0):.1f} API")
+            self.info_strip.set_value("rw", f"{summary.get('rw', 0):.3f} Ω.m")
+            self.info_strip.set_value("rsh", f"{summary.get('rsh', 0):.2f} Ω.m")
 
             # Init filter range if needed (only if 0)
             if self.top_md_spin.value() == 0 and self.bottom_md_spin.value() == 0:
@@ -337,10 +320,10 @@ class PetrophysicsTab(QWidget):
         self.bottom_md_spin.setValue(0)
 
         # Reset metric cards
-        self.gr_min_card.set_value("- API")
-        self.gr_max_card.set_value("- API")
-        self.rw_card.set_value("- Ω.m")
-        self.rsh_card.set_value("- Ω.m")
+        self.info_strip.set_value("gr_min", "- API")
+        self.info_strip.set_value("gr_max", "- API")
+        self.info_strip.set_value("rw", "- Ω.m")
+        self.info_strip.set_value("rsh", "- Ω.m")
 
         # Clear table
         self.results_model.set_dataframe(pd.DataFrame())
@@ -354,6 +337,4 @@ class PetrophysicsTab(QWidget):
 
         # Show placeholder
         self.placeholder.setVisible(True)
-        self.placeholder.setText(
-            "👈 Configure parameters in sidebar and click 'Run Analysis'"
-        )
+        self.placeholder.setText("Run analysis to view petrophysics results")

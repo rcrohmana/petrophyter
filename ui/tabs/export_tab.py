@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 import pandas as pd
-from .qc_tab import PandasTableModel
+from ..widgets.table_model import PandasTableModel
 from themes.colors import get_color
 
 
