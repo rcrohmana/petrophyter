@@ -17,8 +17,9 @@
 # Local agent artifacts
 /.superpowers/
 /docs/claude/
-/docs/plan/
-/docs/superpowers/
+/docs/plans/
+/docs/specs/
+/docs/archive/
 /docs/internal/
 
 # Python bytecode and caches
