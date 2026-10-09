@@ -19,6 +19,7 @@ from themes.colors import (
     set_current_theme,
 )
 from themes.renderer import render_qss
+from PyQt6.QtCore import QSettings
 from themes.theme_manager import ThemeManager
 from themes.tokens import COLORS
 
@@ -108,6 +109,19 @@ class TestThemeManager:
         assert manager.get_plot_color("PHIE") == PLOT_COLORS["PHIE"]
         assert manager.get_plot_color("RT") == DARK_COLORS["text_primary"]
 
+    def test_link_palette_uses_accent_token(self, qapp, tmp_path):
+        from PyQt6.QtGui import QPalette
+
+        manager = ThemeManager(qapp, str(tmp_path))
+        try:
+            for theme, colors in (("dark", DARK_COLORS), ("light", LIGHT_COLORS)):
+                manager.set_theme(theme)
+                palette = qapp.palette()
+                assert palette.color(QPalette.ColorRole.Link).name().lower() == colors["accent"].lower()
+                assert palette.color(QPalette.ColorRole.LinkVisited).name().lower() == colors["accent"].lower()
+        finally:
+            manager.set_theme("light")
+
     def test_invalid_theme_warns_and_falls_back_to_light(self, qapp, caplog, tmp_path):
         manager = ThemeManager(qapp, str(tmp_path))
 
@@ -136,9 +150,11 @@ class TestThemeManager:
     def test_legacy_qsettings_theme_is_read_during_migration(self, monkeypatch, qapp, tmp_path):
         class FakeSettings:
             instances = []
+            Scope = QSettings.Scope
+            defaultFormat = staticmethod(lambda: None)
 
-            def __init__(self, organization, application):
-                self.identity = (organization, application)
+            def __init__(self, *args):
+                self.identity = tuple(args[-2:])
                 self.values = {}
                 self.instances.append(self)
 
