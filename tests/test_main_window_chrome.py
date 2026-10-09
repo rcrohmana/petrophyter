@@ -146,3 +146,39 @@ def test_params_page_headers_not_selectable(window):
     headers = [lst.item(i) for i in range(lst.count()) if not lst.item(i).data(Qt.ItemDataRole.UserRole + 1)]
     assert [h.text() for h in headers] == ["ANALYSIS", "PARAMETERS", "CORRECTIONS"]
     assert all(not (h.flags() & Qt.ItemFlag.ItemIsSelectable) for h in headers)
+
+
+def test_merge_action_disabled_without_pending_files(window):
+    assert not window.actions_["merge_las"].isEnabled()
+    assert window._action_icons["merge_las"] == "merge"
+
+
+def test_merge_dialog_values_reach_model(window):
+    window.merge_dialog.step_spin.setValue(1.0)
+    window.merge_dialog.gap_spin.setValue(8.0)
+    window._sync_model_from_ui()
+    assert window.model.merge_step == 1.0
+    assert window.model.merge_gap_limit == 8.0
+
+
+def test_prepare_merge_populates_dialog_and_enables_action(window, monkeypatch):
+    import pandas as pd
+    from PyQt6.QtWidgets import QDialog
+    import ui.main_window as mw
+
+    class FakeParser:
+        data = pd.DataFrame({"DEPTH": [100.0, 200.0]})
+
+        def read_las_from_buffer(self, f):
+            return True
+
+        def get_depth_range(self):
+            return (100.0, 200.0)
+
+    monkeypatch.setattr(mw, "LASParser", FakeParser)
+    monkeypatch.setattr(mw, "open", lambda *a, **k: __import__("io").StringIO(""), raising=False)
+    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
+    window._prepare_merge(["a.las", "b.las"])
+    assert window.actions_["merge_las"].isEnabled()
+    assert window.merge_dialog.file_model.rowCount() == 2
+    assert "2 LAS files" in window.merge_dialog.summary_label.text()

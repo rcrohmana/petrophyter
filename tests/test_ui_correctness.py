@@ -59,7 +59,6 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
     model.gas_nphi_factor, model.gas_rhob_factor = 0.4, 0.2
 
     window._update_ui_from_model()
-    sidebar = window.sidebar
     pw = window.params_window
 
     assert pw.analysis_mode_widget.get_mode() == "Per-Formation"
@@ -97,8 +96,8 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
         "ws_qv": 0.44, "ws_b": 1.7, "dw_swb": 0.18, "dw_rwb": 0.33,
     }
     assert pw.porosity_method_widget.get_params()["primary_phie_method"] == "PHIE_S"
-    assert sidebar.merge_step_spin.value() == 1.0
-    assert sidebar.merge_gap_spin.value() == 8.0
+    assert window.merge_dialog.step_spin.value() == 1.0
+    assert window.merge_dialog.gap_spin.value() == 8.0
     assert pw.core_unit_combo.currentText() == "FT"
     assert pw.core_dist_spin.value() == 4.5
     assert pw.gas_correction_widget.get_params() == {
@@ -193,13 +192,13 @@ def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypat
 def test_merge_button_is_disabled_before_merge_service_starts(window, monkeypatch):
     window._loaded_parsers = [object(), object()]
     window._loaded_file_names = ["a.las", "b.las"]
-    window.sidebar.merge_btn.setEnabled(True)
+    window.actions_["merge_las"].setEnabled(True)
     states = []
     monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
     monkeypatch.setattr(
         window.merge_service,
         "merge_files",
-        lambda *args: states.append(window.sidebar.merge_btn.isEnabled()),
+        lambda *args: states.append(window.actions_["merge_las"].isEnabled()),
     )
 
     window._on_merge_requested()

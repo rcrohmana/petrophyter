@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QMessageBox,
     QMenu,
+    QDialog,
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
@@ -51,6 +52,7 @@ from .sidebar_panel import SidebarPanel
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
 from .parameters_window import PAGES, ParametersWindow
+from .widgets.merge_dialog import MergeDialog
 from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
@@ -182,6 +184,7 @@ class MainWindow(QMainWindow):
         self.sidebar = SidebarPanel(self.model)
         splitter.addWidget(self.sidebar)
         self.params_window = ParametersWindow(self.model, self)
+        self.merge_dialog = MergeDialog(self)
 
         # =====================================================================
         # MAIN CONTENT (TABS)
@@ -238,11 +241,9 @@ class MainWindow(QMainWindow):
     def _setup_connections(self):
         """Connect signals and slots."""
         # Sidebar signals
-        self.sidebar.merge_requested.connect(self._on_merge_requested)
         self.sidebar.set_open_callbacks(
             self._open_las_dialog, self._open_tops_dialog, self._open_core_dialog
         )
-        self.sidebar.download_merged_clicked.connect(self._on_download_merged)
         self.params_window.calculate_rw_rsh_clicked.connect(self._on_calculate_rw_rsh)
         self.params_window.calculate_shale_clicked.connect(self._on_calculate_shale)
         self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
@@ -356,6 +357,7 @@ class MainWindow(QMainWindow):
         act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
         act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
+        act("merge_las", "Merge LAS Files…", "merge", None, self._open_merge_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
         act("exit", "Exit", None, None, self.close)
         act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
@@ -379,6 +381,7 @@ class MainWindow(QMainWindow):
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
         self.actions_["run_analysis"].setEnabled(False)
+        self.actions_["merge_las"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -388,7 +391,7 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu("&File")
         self._menus["file"] = file_menu
         for key in ("new_project", None, "open_las", "open_tops", "open_core",
-                    None, "save_merged", None, "exit"):
+                    "merge_las", None, "save_merged", None, "exit"):
             file_menu.addSeparator() if key is None else file_menu.addAction(self.actions_[key])
         session = bar.addMenu("&Session")
         session.addAction(self.actions_["save_session"])
@@ -451,7 +454,7 @@ class MainWindow(QMainWindow):
 
     def _sync_model_from_ui(self):
         self.params_window.update_model_from_ui()
-        self.sidebar.update_model_from_ui()  # merge fields only; replaced in Task 12B
+        self.merge_dialog.update_model(self.model)
 
     def _refresh_core_actions(self):
         self.actions_["page_core"].setEnabled(self.params_window.core_unit_combo.isEnabled())
@@ -590,10 +593,19 @@ class MainWindow(QMainWindow):
                             )
 
             if len(self._loaded_parsers) >= 2:
-                self.sidebar.update_multiple_files_info(len(self._loaded_parsers))
+                self.merge_dialog.set_files(
+                    [
+                        (name, len(parser.data), *parser.get_depth_range())
+                        for name, parser in zip(
+                            self._loaded_file_names, self._loaded_parsers
+                        )
+                    ]
+                )
+                self.actions_["merge_las"].setEnabled(True)
                 self.statusBar.showMessage(
                     f"{len(self._loaded_parsers)} LAS files ready for merge"
                 )
+                self._open_merge_dialog()
             else:
                 message = "Need at least 2 valid LAS files to merge"
                 if parse_details:
@@ -606,6 +618,11 @@ class MainWindow(QMainWindow):
                 self, "Error", _failure_message("Failed to prepare files", e)
             )
 
+    def _open_merge_dialog(self):
+        """Show the Merge LAS Files dialog; merge on accept."""
+        if self.merge_dialog.exec() == QDialog.DialogCode.Accepted:
+            self._on_merge_requested()
+
     def _on_merge_requested(self):
         """Handle merge request."""
         if len(self._loaded_parsers) < 2:
@@ -613,7 +630,7 @@ class MainWindow(QMainWindow):
             return
 
         self._sync_model_from_ui()
-        self.sidebar.merge_btn.setEnabled(False)
+        self.actions_["merge_las"].setEnabled(False)
 
         self.merge_service.merge_files(
             self._loaded_parsers,
@@ -633,7 +650,7 @@ class MainWindow(QMainWindow):
 
     def _on_merge_completed(self, merged_df, merge_report):
         """Handle merge completion."""
-        self.sidebar.merge_btn.setEnabled(True)
+        self.actions_["merge_las"].setEnabled(False)  # nothing pending any more
         self.sidebar.set_progress(100, "Complete")
 
         # Store merged data
@@ -684,7 +701,7 @@ class MainWindow(QMainWindow):
 
     def _on_merge_error(self, error: str):
         """Handle merge error."""
-        self.sidebar.merge_btn.setEnabled(True)
+        self.actions_["merge_las"].setEnabled(True)
         self.sidebar.set_progress(0, "")
         QMessageBox.critical(self, "Merge Error", error)
         self.statusBar.showMessage("Merge failed")
@@ -1128,6 +1145,7 @@ class MainWindow(QMainWindow):
         self.params_window.reset_ui()
         self._refresh_core_actions()
         self.actions_["run_analysis"].setEnabled(False)
+        self.actions_["merge_las"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.well_indicator.set_empty()
         self._refresh_window_title()
@@ -1292,8 +1310,8 @@ class MainWindow(QMainWindow):
             (
                 "merge settings",
                 lambda: (
-                    self.sidebar.merge_step_spin.setValue(self.model.merge_step),
-                    self.sidebar.merge_gap_spin.setValue(
+                    self.merge_dialog.step_spin.setValue(self.model.merge_step),
+                    self.merge_dialog.gap_spin.setValue(
                         self.model.merge_gap_limit
                     ),
                 ),
