@@ -1057,41 +1057,31 @@ class CutoffParamsGroup(QWidget):
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        # One grid: label | slider (stretch) | value (fixed width, right-aligned)
+        # so all three sliders start and end at the same x.
+        layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setColumnStretch(1, 1)
 
-        # Vsh cutoff
-        vsh_layout = QHBoxLayout()
-        vsh_layout.addWidget(QLabel("Vsh:"))
-        self.vsh_slider = QSlider(Qt.Orientation.Horizontal)
-        self.vsh_slider.setRange(0, 100)
-        self.vsh_slider.setValue(40)
-        self.vsh_label = QLabel("0.40")
-        vsh_layout.addWidget(self.vsh_slider)
-        vsh_layout.addWidget(self.vsh_label)
-        layout.addLayout(vsh_layout)
-
-        # PHIE cutoff
-        phi_layout = QHBoxLayout()
-        phi_layout.addWidget(QLabel("PHIE:"))
-        self.phi_slider = QSlider(Qt.Orientation.Horizontal)
-        self.phi_slider.setRange(0, 30)
-        self.phi_slider.setValue(8)
-        self.phi_label = QLabel("0.08")
-        phi_layout.addWidget(self.phi_slider)
-        phi_layout.addWidget(self.phi_label)
-        layout.addLayout(phi_layout)
-
-        # Sw cutoff
-        sw_layout = QHBoxLayout()
-        sw_layout.addWidget(QLabel("Sw:"))
-        self.sw_slider = QSlider(Qt.Orientation.Horizontal)
-        self.sw_slider.setRange(0, 100)
-        self.sw_slider.setValue(60)
-        self.sw_label = QLabel("0.60")
-        sw_layout.addWidget(self.sw_slider)
-        sw_layout.addWidget(self.sw_label)
-        layout.addLayout(sw_layout)
+        rows = (
+            ("Vsh:", "vsh", 100, 40, "0.40"),
+            ("PHIE:", "phi", 30, 8, "0.08"),
+            ("Sw:", "sw", 100, 60, "0.60"),
+        )
+        for row, (text, key, maximum, value, label_text) in enumerate(rows):
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, maximum)
+            slider.setValue(value)
+            value_label = QLabel(label_text)
+            value_label.setObjectName("CutoffValue")
+            value_label.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
+            layout.addWidget(QLabel(text), row, 0)
+            layout.addWidget(slider, row, 1)
+            layout.addWidget(value_label, row, 2)
+            setattr(self, f"{key}_slider", slider)
+            setattr(self, f"{key}_label", value_label)
 
         # Connect signals
         self.vsh_slider.valueChanged.connect(self._on_vsh_changed)

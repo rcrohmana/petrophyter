@@ -45,6 +45,8 @@ rendered QSS. `light` and `dark` must have identical keys (`test_theme_key_parit
 | `accent_hover` | `#356185` | `#6C9CC4` | Primary button hover |
 | `accent_pressed` | `#2E5677` | `#4A7CA6` | Primary button pressed |
 | `accent_subtle` | `#E4EDF4` | `#243240` | Selection background, info banner |
+| `accent_muted` | `#9EB6CA` | `#3D5F7F` | Disabled slider fill |
+| `focus_ring` | `#8FB0CC` | `#7DA5C9` | Slider handle focus border |
 | `success` | `#2E7D46` | `#57A773` | OK status |
 | `success_subtle` | `#E6F2EA` | `#1E2C23` | Success banner |
 | `warning` | `#B26A00` | `#C98A2E` | Warning status |
