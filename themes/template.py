@@ -79,7 +79,8 @@ QCheckBox::indicator { border-radius: 2px; }
 QRadioButton::indicator { border-radius: 7px; }
 QCheckBox::indicator:checked { background-color: $accent; border-color: $accent;
     image: url($qss_icons/check.svg); }
-QRadioButton::indicator:checked { border: 4px solid $accent; background-color: $bg_surface; }
+QRadioButton::indicator:checked { border: 4px solid $accent; background-color: $bg_surface;
+    width: 8px; height: 8px; border-radius: 8px; }
 QCheckBox:disabled, QRadioButton:disabled { color: $text_disabled; }
 
 /* ============ Tabs ============ */

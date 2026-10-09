@@ -482,3 +482,22 @@ def test_plot_text_chrome_follows_theme(qtbot):
             assert to_hex(frame.get_facecolor()).lower() == chrome["axes"].lower()
     finally:
         theme_colors.set_current_theme("light")
+
+
+def test_table_model_aligns_numeric_strings_right():
+    import pandas as pd
+    from PyQt6.QtCore import Qt
+    from ui.widgets.table_model import PandasTableModel
+
+    df = pd.DataFrame({
+        "Name": ["GR", "RHOB"],
+        "Pct": ["100.0%", "-"],
+        "Val": ["0.1234", ""],
+        "Mixed": ["1.0", "abc"],
+    })
+    model = PandasTableModel(df)
+    right = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    align = lambda c: model.data(model.index(0, c), Qt.ItemDataRole.TextAlignmentRole)
+    assert align(0) == Qt.AlignmentFlag.AlignCenter
+    assert align(1) == right and align(2) == right
+    assert align(3) == Qt.AlignmentFlag.AlignCenter

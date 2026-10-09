@@ -1,7 +1,12 @@
 """Shared pandas-backed table model (numeric cells: Consolas 9pt, right-aligned)."""
+import re
+
 import pandas as pd
 from PyQt6.QtCore import QAbstractTableModel, Qt
 from PyQt6.QtGui import QFont
+
+
+_NUMERIC_TEXT = re.compile(r"^[-+]?\d[\d,]*\.?\d*(e[-+]?\d+)?%?$", re.IGNORECASE)
 
 
 class PandasTableModel(QAbstractTableModel):
@@ -12,6 +17,7 @@ class PandasTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._df = df if df is not None else pd.DataFrame()
         self._float_decimals = float_decimals
+        self._numeric_cols = self._detect_numeric_columns()
 
     def _decimals_for(self, col: int) -> int:
         spec = self._float_decimals
@@ -43,11 +49,24 @@ class PandasTableModel(QAbstractTableModel):
             return QFont("Consolas", 9)
         return None
 
-    def _is_numeric_column(self, col: int) -> bool:
-        if self._df.empty:
-            return False
+    def _detect_numeric_columns(self) -> set:
+        """Columns of numbers, including pre-formatted numeric strings like "0.1234" or "98%"."""
         import pandas.api.types as ptypes
-        return ptypes.is_numeric_dtype(self._df.dtypes.iloc[col])
+
+        numeric = set()
+        for col in range(len(self._df.columns)):
+            series = self._df.iloc[:, col]
+            if ptypes.is_numeric_dtype(series.dtype):
+                numeric.add(col)
+                continue
+            texts = [str(v).strip() for v in series if pd.notna(v)]
+            texts = [t for t in texts if t not in ("", "-")]
+            if texts and all(_NUMERIC_TEXT.match(t) for t in texts):
+                numeric.add(col)
+        return numeric
+
+    def _is_numeric_column(self, col: int) -> bool:
+        return col in self._numeric_cols
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role != Qt.ItemDataRole.DisplayRole:
@@ -61,4 +80,5 @@ class PandasTableModel(QAbstractTableModel):
     def set_dataframe(self, df: pd.DataFrame):
         self.beginResetModel()
         self._df = df
+        self._numeric_cols = self._detect_numeric_columns()
         self.endResetModel()

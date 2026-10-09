@@ -82,6 +82,9 @@ class QCTab(QWidget):
         self.qc_table_model = PandasTableModel()
         self.qc_table.setModel(self.qc_table_model)
         self.qc_table.setMinimumHeight(250)
+        self.qc_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
         table_layout.addWidget(self.qc_table)
 
         tables_layout.addWidget(table_group, stretch=2)

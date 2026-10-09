@@ -74,7 +74,7 @@ METRICS = {
     "control_height": 26,
     "toolbar_height": 34,
     "panel_min_width": 220,      # Data Browser (spec §3.4)
-    "panel_default_width": 260,
+    "panel_default_width": 300,
     "panel_max_width": 320,
     "params_window_width": 640,  # Parameters window (spec §2.5)
     "params_window_height": 560,
