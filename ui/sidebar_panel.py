@@ -31,9 +31,6 @@ class SidebarPanel(QWidget):
     """
 
     # Signals
-    merge_requested = pyqtSignal()
-    download_merged_clicked = pyqtSignal()
-
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
@@ -95,44 +92,6 @@ class SidebarPanel(QWidget):
         )
         layout.addWidget(self.las_info_label)
 
-        # Merge controls (hidden by default)
-        self.merge_frame = QFrame()
-        merge_layout = QVBoxLayout(self.merge_frame)
-
-        merge_layout.addWidget(QLabel("🔗 Multi-LAS Merge"))
-
-        # Merge settings
-        settings_layout = QHBoxLayout()
-        settings_layout.addWidget(QLabel("Step (ft):"))
-        self.merge_step_spin = QDoubleSpinBox()
-        self.merge_step_spin.setRange(0.1, 1.0)
-        self.merge_step_spin.setValue(0.5)
-        self.merge_step_spin.setSingleStep(0.1)
-        settings_layout.addWidget(self.merge_step_spin)
-
-        settings_layout.addWidget(QLabel("Gap Limit:"))
-        self.merge_gap_spin = QDoubleSpinBox()
-        self.merge_gap_spin.setRange(1.0, 50.0)
-        self.merge_gap_spin.setValue(5.0)
-        self.merge_gap_spin.setSingleStep(1.0)
-        settings_layout.addWidget(self.merge_gap_spin)
-        merge_layout.addLayout(settings_layout)
-
-        self.merge_btn = QPushButton("🔄 Merge LAS Files")
-        self.merge_btn.setStyleSheet(
-            f"background-color: {get_color('success')}; color: white;"
-        )
-        self.merge_btn.clicked.connect(self.merge_requested.emit)
-        merge_layout.addWidget(self.merge_btn)
-
-        self.download_merged_btn = QPushButton("📥 Download Merged LAS")
-        self.download_merged_btn.clicked.connect(self.download_merged_clicked.emit)
-        self.download_merged_btn.setVisible(False)
-        merge_layout.addWidget(self.download_merged_btn)
-
-        self.merge_frame.setVisible(False)
-        layout.addWidget(self.merge_frame)
-
         self.content_layout.addWidget(group)
 
     def _create_formation_tops_section(self):
@@ -180,18 +139,11 @@ class SidebarPanel(QWidget):
         if is_merged:
             self.las_info_label.setText(f"✅ Merged: {rows:,} rows, {curves} curves")
             self.las_info_label.setStyleSheet(f"color: {get_color('success')};")
-            self.download_merged_btn.setVisible(True)
         else:
             self.las_info_label.setText(
                 f"✅ Loaded: {os.path.basename(filename)}\n📊 {rows:,} rows, {curves} curves"
             )
             self.las_info_label.setStyleSheet(f"color: {get_color('success')};")
-
-    def update_multiple_files_info(self, count: int):
-        """Show multiple files selected info."""
-        self.las_info_label.setText(f"📁 {count} files selected")
-        self.las_info_label.setStyleSheet(f"color: {get_color('primary')};")
-        self.merge_frame.setVisible(True)
 
     def update_tops_info(self, count: int):
         """Update formation tops info."""
@@ -209,11 +161,6 @@ class SidebarPanel(QWidget):
         if self._progress_cb is not None:
             self._progress_cb(value, message)
 
-    def update_model_from_ui(self):
-        """Update model from sidebar-held values (merge settings)."""
-        self.model.merge_step = self.merge_step_spin.value()
-        self.model.merge_gap_limit = self.merge_gap_spin.value()
-
     def reset_ui(self):
         """Reset sidebar UI to fresh/initial state."""
         # Reset LAS info
@@ -221,10 +168,6 @@ class SidebarPanel(QWidget):
         self.las_info_label.setStyleSheet(
             f"color: {get_color('text_secondary')}; background-color: transparent;"
         )
-
-        # Hide merge controls
-        self.merge_frame.setVisible(False)
-        self.download_merged_btn.setVisible(False)
 
         # Reset formation tops info
         self.tops_info_label.setText("")
