@@ -25,8 +25,11 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, pyqtSignal
 from typing import List, Dict, Optional
+
+from themes.helpers import set_status
+from themes.icon_loader import get_icon
 
 
 class AnalysisModeGroup(QWidget):
@@ -195,12 +198,8 @@ class VShaleParamsGroup(QWidget):
         layout.addWidget(self.manual_frame)
 
         # Info label for auto mode
-        self.auto_info = QLabel("📈 GRmin/GRmax from P5/P95")
-        from themes.colors import get_color
-
-        self.auto_info.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent;"
-        )
+        self.auto_info = QLabel("GRmin/GRmax from P5/P95")
+        self.auto_info.setObjectName("PlaceholderLabel")
         layout.addWidget(self.auto_info)
 
         # VShale methods
@@ -493,7 +492,8 @@ class ShaleParamsGroup(QWidget):
         )
         stat_layout.addWidget(self.iqr_filter_check)
 
-        self.calc_btn = QPushButton("🔄 Calculate Shale Parameters")
+        self.calc_btn = QPushButton("Calculate Shale Parameters")
+        self.calc_btn.setIcon(get_icon("calculator"))
         self.calc_btn.clicked.connect(self.calculate_clicked.emit)
         stat_layout.addWidget(self.calc_btn)
 
@@ -501,7 +501,8 @@ class ShaleParamsGroup(QWidget):
         self.result_label.setWordWrap(True)
         stat_layout.addWidget(self.result_label)
 
-        self.apply_btn = QPushButton("✅ Apply Calculated")
+        self.apply_btn = QPushButton("Apply Calculated")
+        self.apply_btn.setIcon(get_icon("check"))
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
         self.apply_btn.setVisible(False)
         stat_layout.addWidget(self.apply_btn)
@@ -542,7 +543,7 @@ class ShaleParamsGroup(QWidget):
     def show_calculated_result(self, result: Dict):
         """Show calculated shale parameters with diagnostics."""
         text_lines = [
-            f"📊 Calculated:",
+            f"Calculated:",
             f"  ρ shale: {result.get('rho_shale', 2.45):.2f} g/cc",
             f"  NPHI shale: {result.get('nphi_shale', 0.35):.2f}",
             f"  DT shale: {result.get('dt_shale', 100.0):.1f} µs/ft",
@@ -550,21 +551,21 @@ class ShaleParamsGroup(QWidget):
 
         # Add diagnostics
         if "shale_selection_mode" in result:
-            text_lines.append(f"  🔧 Mode: {result['shale_selection_mode']}")
+            text_lines.append(f"  Mode: {result['shale_selection_mode']}")
         if "shale_threshold_used" in result:
-            text_lines.append(f"  🎯 Threshold: {result['shale_threshold_used']:.3f}")
+            text_lines.append(f"  Threshold: {result['shale_threshold_used']:.3f}")
         elif "threshold" in result:
-            text_lines.append(f"  🎯 Threshold: {result['threshold']:.3f}")
+            text_lines.append(f"  Threshold: {result['threshold']:.3f}")
         if "shale_points_after" in result:
             before = result.get("shale_points_before", "?")
             after = result["shale_points_after"]
-            text_lines.append(f"  📍 Shale points: {before} → {after}")
+            text_lines.append(f"  Shale points: {before} → {after}")
         elif "shale_points" in result:
-            text_lines.append(f"  📍 Shale points: {result['shale_points']}")
+            text_lines.append(f"  Shale points: {result['shale_points']}")
         if "vsh_method_used" in result:
-            text_lines.append(f"  📐 VSH: {result['vsh_method_used']}")
+            text_lines.append(f"  VSH: {result['vsh_method_used']}")
         if result.get("method") == "fallback":
-            text_lines.append("  ⚠️ Using fallback defaults")
+            text_lines.append("  Using fallback defaults")
 
         self.result_label.setText("\n".join(text_lines))
         self.apply_btn.setVisible(True)
@@ -655,11 +656,7 @@ class ArchieParamsGroup(QWidget):
 
         # Preset info
         self.preset_info = QLabel("a=0.62, m=2.15, n=2.0")
-        from themes.colors import get_color
-
-        self.preset_info.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent;"
-        )
+        self.preset_info.setObjectName("PlaceholderLabel")
         layout.addWidget(self.preset_info)
 
         # Custom input frame
@@ -771,7 +768,8 @@ class ResistivityParamsGroup(QWidget):
         layout.addLayout(form)
 
         # Calculate button
-        self.calc_btn = QPushButton("🔄 Calculate Rw & Rsh from Data")
+        self.calc_btn = QPushButton("Calculate Rw/Rsh from Data")
+        self.calc_btn.setIcon(get_icon("calculator"))
         self.calc_btn.clicked.connect(self.calculate_clicked.emit)
         layout.addWidget(self.calc_btn)
 
@@ -781,7 +779,8 @@ class ResistivityParamsGroup(QWidget):
         layout.addWidget(self.result_label)
 
         # Apply button
-        self.apply_btn = QPushButton("✅ Apply Calculated Values")
+        self.apply_btn = QPushButton("Apply Calculated Values")
+        self.apply_btn.setIcon(get_icon("check"))
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
         self.apply_btn.setVisible(False)
         layout.addWidget(self.apply_btn)
@@ -792,7 +791,7 @@ class ResistivityParamsGroup(QWidget):
 
     def show_calculated_result(self, rw: float, rsh: float):
         """Show calculated values."""
-        self.result_label.setText(f"📊 Calculated: Rw={rw:.4f}, Rsh={rsh:.2f}")
+        self.result_label.setText(f"Calculated: Rw={rw:.4f}, Rsh={rsh:.2f}")
         self.apply_btn.setVisible(True)
         self._calculated_rw = rw
         self._calculated_rsh = rsh
@@ -831,11 +830,7 @@ class PermParamsGroup(QWidget):
 
         # Formula label
         formula = QLabel("Wyllie-Rose: K = C × φ^P / Swi^Q")
-        from themes.colors import get_color
-
-        formula.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-style: italic;"
-        )
+        formula.setObjectName("PlaceholderLabel")
         layout.addWidget(formula)
 
         form = QFormLayout()
@@ -864,16 +859,13 @@ class PermParamsGroup(QWidget):
         layout.addLayout(form)
 
         # Info label
-        info = QLabel("💡 Timur defaults: C=8581, P=4.4, Q=2.0")
-        from themes.colors import get_color
-
-        info.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent;"
-        )
+        info = QLabel("Timur defaults: C=8581, P=4.4, Q=2.0")
+        info.setObjectName("PlaceholderLabel")
         layout.addWidget(info)
 
         # Calculate button
-        self.calc_btn = QPushButton("🔄 Calculate C, P, Q")
+        self.calc_btn = QPushButton("Calculate C, P, Q")
+        self.calc_btn.setIcon(get_icon("calculator"))
         self.calc_btn.clicked.connect(self.calculate_clicked.emit)
         layout.addWidget(self.calc_btn)
 
@@ -881,7 +873,8 @@ class PermParamsGroup(QWidget):
         self.result_label = QLabel("")
         layout.addWidget(self.result_label)
 
-        self.apply_btn = QPushButton("✅ Apply Calculated Values")
+        self.apply_btn = QPushButton("Apply Calculated Values")
+        self.apply_btn.setIcon(get_icon("check"))
         self.apply_btn.clicked.connect(self._do_apply)
         self.apply_btn.setVisible(False)
         layout.addWidget(self.apply_btn)
@@ -906,7 +899,7 @@ class PermParamsGroup(QWidget):
 
     def show_calculated_result(self, C: float, P: float, Q: float):
         """Show calculated values."""
-        self.result_label.setText(f"📊 Calculated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}")
+        self.result_label.setText(f"Calculated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}")
         self.apply_btn.setVisible(True)
         self._calculated_C = C
         self._calculated_P = P
@@ -918,7 +911,7 @@ class PermParamsGroup(QWidget):
             self.c_spin.setValue(self._calculated_C)
             self.p_spin.setValue(self._calculated_P)
             self.q_spin.setValue(self._calculated_Q)
-            self.result_label.setText("✅ Values applied")
+            self.result_label.setText("Values applied")
             self.apply_btn.setVisible(False)
 
     def _do_apply(self):
@@ -975,20 +968,14 @@ class SwirEstimationGroup(QWidget):
         buckles_layout.addRow("K_buckles:", self.k_buckles_spin)
 
         self.buckles_info = QLabel("K_buckles = 0.02")
-        from themes.colors import get_color
-
-        self.buckles_info.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent;"
-        )
+        self.buckles_info.setObjectName("PlaceholderLabel")
         buckles_layout.addRow("", self.buckles_info)
 
         layout.addWidget(self.buckles_frame)
 
         # Method info
-        self.method_info = QLabel("✓ Best for no-core calibration")
-        from themes.colors import get_color
-
-        self.method_info.setStyleSheet(f"color: {get_color('success_text')};")
+        self.method_info = QLabel("Best for no-core calibration")
+        set_status(self.method_info, "success")
         layout.addWidget(self.method_info)
 
         # Connect signals
@@ -1005,7 +992,7 @@ class SwirEstimationGroup(QWidget):
         self.buckles_frame.setVisible(show_buckles)
 
         if text == "Hierarchical (Recommended)":
-            self.method_info.setText("✓ Best for no-core calibration")
+            self.method_info.setText("Best for no-core calibration")
             self.method_info.setVisible(True)
         else:
             self.method_info.setVisible(False)
@@ -1148,12 +1135,8 @@ class GasCorrectionGroup(QWidget):
         params_layout = QFormLayout(self.params_frame)
 
         # Info label
-        info_label = QLabel("⛽ Corrects N-D crossover in gas zones")
-        from themes.colors import get_color
-
-        info_label.setStyleSheet(
-            f"color: {get_color('text_secondary')}; font-style: italic; background-color: transparent;"
-        )
+        info_label = QLabel("Corrects N-D crossover in gas zones")
+        info_label.setObjectName("PlaceholderLabel")
         params_layout.addRow(info_label)
 
         # Neutron factor
@@ -1413,18 +1396,12 @@ class PorosityMethodGroup(QWidget):
 
         # Info label
         self.info_label = QLabel("Used for Sw, Perm, HCPV calculations")
-        from themes.colors import get_color
-
-        self.info_label.setStyleSheet(
-            f"color: {get_color('text_tertiary')}; font-size: 11px;"
-        )
+        self.info_label.setObjectName("PlaceholderLabel")
         layout.addWidget(self.info_label)
 
         # Fallback info (shown when selected method not available)
         self.fallback_label = QLabel("")
-        self.fallback_label.setStyleSheet(
-            f"color: {get_color('warning')}; font-size: 11px;"
-        )
+        set_status(self.fallback_label, "warning")
         self.fallback_label.setWordWrap(True)
         self.fallback_label.setVisible(False)
         layout.addWidget(self.fallback_label)
