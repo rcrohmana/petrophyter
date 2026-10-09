@@ -180,4 +180,13 @@ QStackedWidget#ParamsStack { background-color: $bg_surface; border: none;
     border-left: 1px solid $border; }
 QWidget#ParamsPage { background-color: $bg_surface; }
 QWidget#ParamsFooter { background-color: $bg_base; border-top: 1px solid $border; }
+QWidget#DataBrowser { background-color: $bg_base; }
+QTreeView#DataTree { background-color: $bg_base; border: none; outline: none;
+    show-decoration-selected: 1; }
+QTreeView#DataTree::item { height: 22px; color: $text_primary; border: none; }
+QTreeView#DataTree::item:hover { background-color: $bg_hover; }
+QTreeView#DataTree::item:selected { background-color: $accent_subtle; color: $text_primary; }
+QTreeView#DataTree::branch { background: transparent; }
+QTreeView#DataTree::branch:has-children:closed { image: url($qss_icons/chevron-right.svg); }
+QTreeView#DataTree::branch:has-children:open { image: url($qss_icons/chevron-down.svg); }
 """
