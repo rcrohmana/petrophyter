@@ -333,3 +333,30 @@ def test_diagnostics_tab_shows_solver_counts_only_when_nonzero(qtbot):
     }
     tab.update_display()
     assert tab.sw_warnings.text() == ""
+
+
+def test_diagnostics_selected_phie_row_is_marked_not_suffixed(qtbot):
+    from PyQt6.QtCore import Qt
+    from ui.tabs.diagnostics_tab import DiagnosticsTab
+
+    model = AppModel()
+    model._calculated = True
+    model._results = pd.DataFrame(
+        {"DEPTH": [1.0, 2.0], "PHIE_D": [0.1, 0.2], "PHIE_DN": [0.15, 0.25]}
+    )
+    model._summary = {}
+    tab = DiagnosticsTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    tab.phie_method_combo.setCurrentText("PHIE_DN")
+    tab._update_phie_plot()
+
+    m = tab.phie_stats_model
+    names = [m.index(r, 0).data() for r in range(m.rowCount())]
+    assert names == ["PHIE_D", "PHIE_DN"]
+    sel = m.index(1, 0)
+    other = m.index(0, 0)
+    assert sel.data(Qt.ItemDataRole.FontRole).bold()
+    assert not sel.data(Qt.ItemDataRole.DecorationRole).isNull()
+    assert sel.data(Qt.ItemDataRole.ToolTipRole) == "Selected porosity method"
+    assert other.data(Qt.ItemDataRole.DecorationRole) is None

@@ -12,6 +12,17 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _english_us_locale():
+    """Same default locale as main.py, so tests don't depend on the host locale."""
+    from PyQt6.QtCore import QLocale
+
+    locale = QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+    locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator)
+    QLocale.setDefault(locale)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolated_qsettings(tmp_path, monkeypatch):
     """Point QSettings at a throwaway ini dir so tests never touch the user's settings."""

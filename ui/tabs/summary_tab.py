@@ -16,7 +16,7 @@ import numpy as np
 
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import PlotWidget
-from themes.colors import get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 
 
 class SummaryTab(QWidget):
@@ -247,12 +247,11 @@ class SummaryTab(QWidget):
                 ha="center",
                 va="bottom",
                 fontsize=9,
-                fontweight="bold",
                 color=chrome["text"],
             )
 
-        ax.set_ylabel("Thickness / Volume (ft)", fontsize=11)
-        ax.set_title("Thickness & HCPV Summary", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Thickness / Volume (ft)", fontsize=LABEL_SIZE)
+        ax.set_title("Thickness & HCPV Summary", fontsize=TITLE_SIZE)
         ax.grid(axis="y", alpha=0.3)
         ax.tick_params(axis="x", rotation=15)
 

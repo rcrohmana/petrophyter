@@ -26,7 +26,7 @@ def resource_path(relative_path):
 
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QLocale
 from PyQt6.QtGui import QIcon
 
 from ui.main_window import MainWindow
@@ -41,6 +41,12 @@ def main():
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
+
+    # English (US) numbers app-wide, independent of the Windows locale.
+    # Must run before any widget exists.
+    locale = QLocale(QLocale.Language.English, QLocale.Country.UnitedStates)
+    locale.setNumberOptions(QLocale.NumberOption.OmitGroupSeparator)
+    QLocale.setDefault(locale)
 
     # Create application
     app = QApplication(sys.argv)
