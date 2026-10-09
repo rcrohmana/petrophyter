@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 import pandas as pd
 from ..widgets.table_model import PandasTableModel
-from themes.colors import get_color
+from themes.icon_loader import get_icon
 
 
 class ExportTab(QWidget):
@@ -37,11 +37,6 @@ class ExportTab(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
 
-        # Title
-        title = QLabel("💾 Export Results")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -55,41 +50,13 @@ class ExportTab(QWidget):
         download_group = QGroupBox("Download Results")
         download_layout = QHBoxLayout(download_group)
 
-        self.csv_btn = QPushButton("📥 Download CSV")
-        self.csv_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_color("success")};
-                color: white;
-                font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: #3d8b40;
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color("text_disabled")};
-            }}
-        """)
+        self.csv_btn = QPushButton("Download CSV")
+        self.csv_btn.setIcon(get_icon("download"))
         self.csv_btn.clicked.connect(self._on_export_csv)
         download_layout.addWidget(self.csv_btn)
 
-        self.excel_btn = QPushButton("📥 Download Excel")
-        self.excel_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {get_color("primary")};
-                color: white;
-                font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_color("primary_dark")};
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color("primary_light")};
-            }}
-        """)
+        self.excel_btn = QPushButton("Download Excel")
+        self.excel_btn.setIcon(get_icon("download"))
         self.excel_btn.clicked.connect(self._on_export_excel)
         download_layout.addWidget(self.excel_btn)
 
@@ -151,10 +118,8 @@ class ExportTab(QWidget):
         content_layout.addWidget(preview_group)
 
         # Placeholder
-        self.placeholder = QLabel("👈 Run analysis first to export results")
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        self.placeholder = QLabel("Run analysis to export results")
+        self.placeholder.setObjectName("PlaceholderLabel")
         self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.placeholder)
 
@@ -168,44 +133,9 @@ class ExportTab(QWidget):
         self.excel_btn.setEnabled(False)
 
     def refresh_theme(self):
-        # Reapply button styles and placeholder color
-        self.csv_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {get_color("success")};
-                color: white;
-                font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: #3d8b40;
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color("text_disabled")};
-            }}
-            """
-        )
-        self.excel_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {get_color("primary")};
-                color: white;
-                font-weight: bold;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {get_color("primary_dark")};
-            }}
-            QPushButton:disabled {{
-                background-color: {get_color("primary_light")};
-            }}
-            """
-        )
-        self.placeholder.setStyleSheet(
-            f"color: {get_color('text_secondary')}; background-color: transparent; font-size: 14px;"
-        )
+        # Icons are cached per theme; re-fetch so they recolor.
+        self.csv_btn.setIcon(get_icon("download"))
+        self.excel_btn.setIcon(get_icon("download"))
 
     def _on_export_csv(self):
         """Handle CSV export."""
