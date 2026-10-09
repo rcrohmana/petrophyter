@@ -182,7 +182,7 @@ Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated
 
 A six-track composite log with a shared depth axis. Controls above the log:
 
-- **Plot Engine:** **Interactive (pyqtgraph)** or **Classic (matplotlib)**.
+- **Plot Engine:** **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
 - **Top Depth** and **Bottom Depth:** the visible depth range.
 - **Show Formation Tops:** toggles the formation overlay.
 - **HCPV Show** and the HCPV mode: **Net Pay**, **Net Reservoir**, **Gross**, or **Fraction Only**.
@@ -243,10 +243,11 @@ Sessions store parameters and settings, not the LAS file itself. Load the LAS fi
 
 ## Troubleshooting
 
-- **The Interactive log engine does not work, or the Log Display tab says that pyqtgraph is not installed.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Plot Engine**.
+- **Plot Engine shows Interactive (requires pyqtgraph) and it cannot be selected.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Plot Engine**.
 - **Run Analysis is greyed out.** Load a LAS file first. The action is also disabled while a run is in progress.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Merge LAS Files… is greyed out.** It is enabled only while two or more LAS files from **Open LAS File(s)…** are waiting to be merged.
+- **Numbers use a decimal point even though Windows uses a decimal comma.** This is intended. Petrophyter always shows and accepts numbers in English (US) format, with a period as the decimal separator and no thousands separator (for example, `4500.0 ft`), whatever the Windows regional setting.
 - **Results look wrong.** Check the curve units, the curve mapping, and the shale parameters, and confirm that the depth unit is correct.
 
 For these and other issues, see [Troubleshooting](troubleshooting.md).
