@@ -3,6 +3,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt6.QtCore import QSettings
 
 from ui.main_window import MainWindow
 
@@ -252,3 +253,125 @@ def test_browser_action_requested_from_empty_link(browser, qtbot):
 
 def test_no_sidebar_left(window):
     assert not hasattr(window, "sidebar")
+
+
+def test_no_information_messagebox_in_codebase():
+    from pathlib import Path
+    offenders = [
+        str(p) for p in Path("ui").rglob("*.py")
+        if "QMessageBox.information" in p.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
+def test_analysis_complete_shows_banner_not_modal(window, qtbot, monkeypatch):
+    import pandas as pd
+    called = {"modal": False}
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *a, **k: called.__setitem__("modal", True))
+    results = pd.DataFrame({"DEPT": [1000.0], "PHIE": [0.2]})
+    summary = {"net_pay": 1625.4, "gross_sand": 2768.8, "ng_pay": 0.587}
+    window._on_analysis_completed(results, summary)
+    assert called["modal"] is False
+    assert window.banner.isVisibleTo(window)
+    assert "1625.4" in window.banner.message_label.text()
+
+
+def test_qc_chip(window):
+    window.update_qc_chip(80)
+    assert window.qc_chip.text() == "QC 80/100"
+    assert window.qc_chip.property("status") == "warning"
+    window.update_qc_chip(95)
+    assert window.qc_chip.property("status") == "success"
+    window.update_qc_chip(None)
+    assert not window.qc_chip.isVisibleTo(window)
+
+
+def test_parameter_change_marks_results_stale(window):
+    window.model.calculated = True     # as after a successful analysis
+    window.params_window.parameters_updated.emit()
+    assert window.stale_label.isVisibleTo(window)
+    assert window.stale_label.property("status") == "warning"
+    window._on_analysis_started()
+    assert not window.stale_label.isVisibleTo(window)
+
+
+def test_no_stale_before_first_analysis(window):
+    window.params_window.parameters_updated.emit()
+    assert not window.stale_label.isVisibleTo(window)
+
+
+def test_restore_does_not_mark_stale(window):
+    window.model.calculated = True
+    window._restoring = True
+    window.params_window.parameters_updated.emit()
+    window._restoring = False
+    assert not window.stale_label.isVisibleTo(window)
+
+
+def test_export_success_goes_to_banner(window):
+    window.export_tab.show_export_success("done.csv")
+    assert "Exported to done.csv" in window.banner.message_label.text()
+
+
+def test_session_restore_guard_resets_flag(window):
+    window._update_ui_from_model()
+    assert window._restoring is False
+
+
+def test_ui_state_persists(qtbot):
+    w1 = MainWindow()
+    qtbot.addWidget(w1)
+    w1.tab_widget.setCurrentIndex(3)
+    w1.close()
+    settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
+    assert settings.value("ui/activeTab", type=int) == 3
+    w2 = MainWindow()
+    qtbot.addWidget(w2)
+    assert w2.tab_widget.currentIndex() == 3
+    w2.close()
+
+
+def test_params_window_page_persists_but_starts_closed(qtbot):
+    w1 = MainWindow()
+    qtbot.addWidget(w1)
+    w1.params_window.open_page("sat")
+    w1.close()
+    w2 = MainWindow()
+    qtbot.addWidget(w2)
+    assert w2.params_window.current_page() == "sat"
+    assert not w2.params_window.isVisible()
+    w2.close()
+
+
+def test_data_browser_visibility_persists(qtbot):
+    w1 = MainWindow()
+    qtbot.addWidget(w1)
+    w1.actions_["toggle_browser"].setChecked(False)
+    w1.close()
+    w2 = MainWindow()
+    qtbot.addWidget(w2)
+    assert not w2.data_browser.isVisibleTo(w2)
+    assert not w2.actions_["toggle_browser"].isChecked()
+    w2.close()
+
+
+def test_tests_use_isolated_settings(tmp_path):
+    settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
+    assert tmp_path.as_posix() in settings.fileName()
+
+
+def test_restoring_guard_is_reentrant(window):
+    from ui.main_window import _restoring_guard
+
+    @_restoring_guard
+    def outer(win):
+        win._update_ui_from_model()          # guarded; its finally must not clear the flag
+        assert win._restoring is True
+        win.params_window.parameters_updated.emit()
+
+    window.model.calculated = True
+    outer(window)
+    assert window._restoring is False
+    assert not window.stale_label.isVisibleTo(window)

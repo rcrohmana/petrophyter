@@ -31,8 +31,9 @@ class ThemeManager:
     def __init__(self, app: QApplication, icons_dir: str):
         self.app = app
         self.icons_dir = icons_dir
-        self.settings = QSettings("Petrophyter Team", "Petrophyter")
-        self._legacy_settings = QSettings("Petrophyter", "Theme")
+        fmt, scope = QSettings.defaultFormat(), QSettings.Scope.UserScope
+        self.settings = QSettings(fmt, scope, "Petrophyter Team", "Petrophyter")
+        self._legacy_settings = QSettings(fmt, scope, "Petrophyter", "Theme")
         saved_theme = self.settings.value("theme/name", None, type=str)
         if not saved_theme:
             saved_theme = self._legacy_settings.value("theme", self.LIGHT, type=str)
@@ -73,6 +74,9 @@ class ThemeManager:
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["text_muted"]))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(colors["accent"]))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(colors["text_on_accent"]))
+        # Rich-text links (QLabel, QTextBrowser) default to a bright palette link colour.
+        palette.setColor(QPalette.ColorRole.Link, QColor(colors["accent"]))
+        palette.setColor(QPalette.ColorRole.LinkVisited, QColor(colors["accent"]))
         palette.setColor(
             QPalette.ColorGroup.Disabled,
             QPalette.ColorRole.Text,

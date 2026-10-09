@@ -27,6 +27,7 @@ class ExportTab(QWidget):
 
     export_csv = pyqtSignal(str)  # file path
     export_excel = pyqtSignal(str)  # file path
+    export_succeeded = pyqtSignal(str)  # message for the banner
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -290,8 +291,8 @@ class ExportTab(QWidget):
             self.preview_table.setColumnWidth(i, 120)
 
     def show_export_success(self, message: str):
-        """Show export success message."""
-        QMessageBox.information(self, "Export Complete", message)
+        """Report export success through the main window banner."""
+        self.export_succeeded.emit(message)
 
     def show_export_error(self, message: str):
         """Show export error message."""

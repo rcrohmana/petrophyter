@@ -12,6 +12,20 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_qsettings(tmp_path, monkeypatch):
+    """Point QSettings at a throwaway ini dir so tests never touch the user's settings."""
+    from PyQt6.QtCore import QSettings
+
+    previous = QSettings.defaultFormat()
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(
+        QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "qsettings")
+    )
+    yield
+    QSettings.setDefaultFormat(previous)
+
+
 @pytest.fixture
 def sample_log_data():
     """Generate sample log data for testing."""

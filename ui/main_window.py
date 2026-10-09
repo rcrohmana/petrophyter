@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QSplitter,
     QMessageBox,
     QMenu,
+    QProgressBar,
     QDialog,
 )
 from PyQt6.QtCore import Qt
@@ -30,8 +31,9 @@ from .tabs import (
     ExportTab,
 )
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QIcon
+import functools
 import traceback
 import threading
 import logging
@@ -67,6 +69,21 @@ from modules.core_handler import CoreDataHandler
 
 
 logger = logging.getLogger(__name__)
+
+
+def _restoring_guard(method):
+    """Programmatic widget updates emit parameters_updated; don't mark results stale."""
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        previous = getattr(self, "_restoring", False)
+        self._restoring = True
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            self._restoring = previous
+
+    return wrapper
 
 
 def _sanitize_error_detail(detail, max_length: int = 240) -> str:
@@ -153,7 +170,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Petrophyter")
 
         self.setMinimumSize(1400, 900)
-        self.showMaximized()
+        self._restore_ui_state()
 
         # Set initial theme action state
         if self.theme_manager:
@@ -241,6 +258,20 @@ class MainWindow(QMainWindow):
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Ready. Load a LAS file to begin.")
+        self.status_progress = QProgressBar()
+        self.status_progress.setFixedWidth(120)
+        self.status_progress.setTextVisible(False)
+        self.status_progress.setVisible(False)
+        self.qc_chip = QLabel()
+        self.qc_chip.setObjectName("QcChip")
+        self.qc_chip.setVisible(False)
+        self.stale_label = QLabel("Parameters changed — press F5 to update results")
+        self.stale_label.setObjectName("StaleLabel")
+        self.stale_label.setVisible(False)
+        self.statusBar.addPermanentWidget(self.stale_label)
+        self.statusBar.addPermanentWidget(self.status_progress)
+        self.statusBar.addPermanentWidget(self.qc_chip)
+        self._restoring = False
 
     def _setup_connections(self):
         """Connect signals and slots."""
@@ -255,6 +286,11 @@ class MainWindow(QMainWindow):
         self.params_window.calculate_shale_clicked.connect(self._on_calculate_shale)
         self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
         self.params_window.calculate_perm_clicked.connect(self._on_calculate_perm)
+
+        self.params_window.parameters_updated.connect(self._mark_results_stale)
+        self.export_tab.export_succeeded.connect(
+            lambda path: self.show_banner("success", f"Exported to {path}")
+        )
 
         # Analysis service signals
         self.analysis_service.started.connect(self._on_analysis_started)
@@ -319,6 +355,46 @@ class MainWindow(QMainWindow):
         )
         if file:
             self._on_core_file_selected(file)
+
+    def closeEvent(self, event):
+        settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
+        settings.setValue("ui/geometry", self.saveGeometry())
+        settings.setValue("ui/windowState", self.saveState())
+        settings.setValue("ui/splitterSizes", self.main_splitter.saveState())
+        settings.setValue(
+            "ui/dataBrowserVisible", self.actions_["toggle_browser"].isChecked()
+        )
+        settings.setValue("ui/activeTab", self.tab_widget.currentIndex())
+        settings.setValue("ui/paramsWindowGeometry", self.params_window.saveGeometry())
+        settings.setValue("ui/paramsWindowPage", self.params_window.current_page())
+        self.params_window.close()
+        super().closeEvent(event)
+
+    def _restore_ui_state(self):
+        settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
+        geometry = settings.value("ui/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        else:
+            self.showMaximized()
+        state = settings.value("ui/windowState")
+        if state is not None:
+            self.restoreState(state)
+        splitter = settings.value("ui/splitterSizes")
+        if splitter is not None:
+            self.main_splitter.restoreState(splitter)
+        visible = settings.value("ui/dataBrowserVisible", True, type=bool)
+        self.data_browser.setVisible(visible)
+        self.actions_["toggle_browser"].setChecked(visible)
+        pw_geometry = settings.value("ui/paramsWindowGeometry")
+        if pw_geometry is not None:
+            self.params_window.restoreGeometry(pw_geometry)
+        page = settings.value("ui/paramsWindowPage", "scope", type=str)
+        if page in {key for key, _title, _menu in PAGES}:
+            self.params_window.open_page(page, show=False)
+        tab = settings.value("ui/activeTab", 0, type=int)
+        if 0 <= tab < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(tab)
 
     def _toggle_browser(self, checked: bool):
         """Show or hide the left panel (retargeted to the Data Browser in Task 12C)."""
@@ -459,10 +535,45 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         self.main_toolbar = toolbar
 
+    def show_banner(self, kind: str, message: str):
+        self.banner.show_message(kind, message)
+
+    def update_qc_chip(self, score):
+        from themes.helpers import set_status
+
+        if score is None:
+            self.qc_chip.setVisible(False)
+            return
+        self.qc_chip.setText(f"QC {score}/100")
+        set_status(
+            self.qc_chip,
+            "success" if score >= 90 else "warning" if score >= 70 else "error",
+        )
+        self.qc_chip.setVisible(True)
+
+    def _refresh_qc_chip(self):
+        score = getattr(self.model.qc_report, "overall_quality_score", None)
+        self.update_qc_chip(None if score is None else round(score))
+
     def _set_progress(self, value: int, message: str = None):
-        """Interim progress sink (replaced by the status-bar progress in Task 13)."""
+        self.status_progress.setVisible(0 < value < 100)
+        self.status_progress.setValue(value)
         if message:
             self.statusBar.showMessage(message)
+
+    def _mark_results_stale(self):
+        """Parameters changed after a successful analysis (spec §2.5)."""
+        if self._restoring or not self.model.calculated:
+            return
+        from themes.helpers import set_status
+
+        set_status(self.stale_label, "warning")
+        self.stale_label.setVisible(True)
+        self.data_browser.set_results_stale(True)
+
+    def _clear_results_stale(self):
+        self.stale_label.setVisible(False)
+        self.data_browser.set_results_stale(False)
 
     def _sync_model_from_ui(self):
         self.params_window.update_model_from_ui()
@@ -508,6 +619,7 @@ class MainWindow(QMainWindow):
             # Multiple files - prepare for merge
             self._prepare_merge(file_paths)
 
+    @_restoring_guard
     def _load_single_las(self, file_path: str):
         """Load a single LAS file."""
         try:
@@ -528,6 +640,7 @@ class MainWindow(QMainWindow):
                 well_name = parser.well_info.get("well_name", "Unknown")
                 qc = QCModule(parser.data, well_name)
                 self.model.qc_report = qc.run_qc()
+                self._refresh_qc_chip()
 
                 self.data_browser.set_las_sources(
                     [(os.path.basename(file_path), len(parser.data))],
@@ -565,7 +678,7 @@ class MainWindow(QMainWindow):
 
                 # Surface an ambiguous depth-unit instead of silently (mis)converting.
                 if getattr(parser, "depth_unit_warning", None):
-                    QMessageBox.warning(self, "Depth Unit", parser.depth_unit_warning)
+                    self.show_banner("warning", parser.depth_unit_warning)
             else:
                 detail = getattr(parser, "last_error", None)
                 logger.error("Failed to load LAS file %s: %s", file_path, detail)
@@ -672,6 +785,7 @@ class MainWindow(QMainWindow):
         """Handle merge progress."""
         self._set_progress(percent, message)
 
+    @_restoring_guard
     def _on_merge_completed(self, merged_df, merge_report):
         """Handle merge completion."""
         self.actions_["merge_las"].setEnabled(False)  # nothing pending any more
@@ -688,6 +802,7 @@ class MainWindow(QMainWindow):
         # Run QC on merged data
         qc = QCModule(merged_df, merge_report.well_name)
         self.model.qc_report = qc.run_qc()
+        self._refresh_qc_chip()
 
         self.data_browser.set_las_sources(
             [
@@ -769,7 +884,7 @@ class MainWindow(QMainWindow):
                     )
 
                     if getattr(tops, "depth_unit_warning", None):
-                        QMessageBox.warning(self, "Depth Unit", tops.depth_unit_warning)
+                        self.show_banner("warning", tops.depth_unit_warning)
 
                     # Update QC tab
                     self.qc_tab.update_display()
@@ -813,7 +928,7 @@ class MainWindow(QMainWindow):
                     )
 
                     if getattr(handler, "depth_unit_warning", None):
-                        QMessageBox.warning(self, "Depth Unit", handler.depth_unit_warning)
+                        self.show_banner("warning", handler.depth_unit_warning)
                 else:
                     QMessageBox.warning(
                         self, "Warning", "Failed to parse core data file"
@@ -847,6 +962,8 @@ class MainWindow(QMainWindow):
         self.actions_["run_analysis"].setEnabled(False)
         self._set_progress(0, "Analyzing...")
         self.statusBar.showMessage("Running petrophysics analysis...")
+        self._clear_results_stale()
+        self.banner.clear()
 
     def _on_analysis_progress(self, message: str, percent: int):
         """Handle analysis progress."""
@@ -875,16 +992,12 @@ class MainWindow(QMainWindow):
         #     f"[DEBUG MainWindow] After storing: model.results is None = {self.model.results is None}"
         # )
 
-        self.statusBar.showMessage("✅ Analysis complete!")
-
-        # Show success message
-        QMessageBox.information(
-            self,
-            "Analysis Complete",
-            f"Analysis completed successfully!\n\n"
-            f"Net Pay: {summary.get('net_pay', 0):.1f} ft\n"
-            f"Gross Sand: {summary.get('gross_sand', 0):.1f} ft\n"
-            f"N/G Pay: {summary.get('ng_pay', 0) * 100:.1f}%",
+        self.statusBar.showMessage("Analysis complete")
+        self.show_banner(
+            "success",
+            f"Analysis complete — Net Pay {summary.get('net_pay', 0):.1f} ft · "
+            f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
+            f"N/G {summary.get('ng_pay', 0) * 100:.1f}%",
         )
 
     def _on_analysis_error(self, error: str):
@@ -1113,9 +1226,6 @@ class MainWindow(QMainWindow):
         if file_path:
             if self.session_service.save_session(self.model, file_path):
                 self.statusBar.showMessage(f"Session saved to {file_path}")
-                QMessageBox.information(
-                    self, "Session Saved", "Session parameters saved successfully!"
-                )
             else:
                 QMessageBox.critical(self, "Error", "Failed to save session")
 
@@ -1133,9 +1243,6 @@ class MainWindow(QMainWindow):
                 self.session_service.apply_session_to_model(self.model, session_data)
                 self._update_ui_from_model()
                 self.statusBar.showMessage(f"Session loaded from {file_path}")
-                QMessageBox.information(
-                    self, "Session Loaded", "Session parameters restored!"
-                )
             else:
                 QMessageBox.critical(self, "Error", "Failed to load session")
 
@@ -1160,6 +1267,9 @@ class MainWindow(QMainWindow):
         self._loaded_parsers = []
         self._loaded_file_names = []
 
+        self._clear_results_stale()
+        self.banner.clear()
+        self.update_qc_chip(None)
         # Reset data browser
         self.data_browser.set_las_sources([], merged=False, pending=False)
         self.data_browser.rebuild()
@@ -1182,6 +1292,7 @@ class MainWindow(QMainWindow):
         # Reset status bar
         self.statusBar.showMessage("Ready. Load a LAS file to begin.")
 
+    @_restoring_guard
     def _update_ui_from_model(self):
         """Restore persisted controls independently after loading a session."""
 
