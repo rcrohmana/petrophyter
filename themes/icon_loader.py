@@ -26,19 +26,24 @@ def get_icon(name: str, color_token: str = "text_secondary") -> QIcon:
     theme = get_current_theme()
     key = (name, theme, color_token)
     if key not in _cache:
-        svg = _colored_svg(name, get_color(color_token, theme))
-        renderer = QSvgRenderer(QByteArray(svg.encode()))
+        normal = QSvgRenderer(
+            QByteArray(_colored_svg(name, get_color(color_token, theme)).encode()))
+        # Explicit Disabled pixmaps (text_disabled) instead of Qt's washed-out grey-out.
+        disabled = QSvgRenderer(
+            QByteArray(_colored_svg(name, get_color("text_disabled", theme)).encode()))
         icon = QIcon()
         for size in _SIZES:
             for dpr in (1, 2):
-                image = QImage(size * dpr, size * dpr, QImage.Format.Format_ARGB32)
-                image.fill(Qt.GlobalColor.transparent)
-                painter = QPainter(image)
-                renderer.render(painter, QRectF(0, 0, size * dpr, size * dpr))
-                painter.end()
-                pixmap = QPixmap.fromImage(image)
-                pixmap.setDevicePixelRatio(dpr)
-                icon.addPixmap(pixmap)
+                for renderer, mode in ((normal, QIcon.Mode.Normal),
+                                       (disabled, QIcon.Mode.Disabled)):
+                    image = QImage(size * dpr, size * dpr, QImage.Format.Format_ARGB32)
+                    image.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(image)
+                    renderer.render(painter, QRectF(0, 0, size * dpr, size * dpr))
+                    painter.end()
+                    pixmap = QPixmap.fromImage(image)
+                    pixmap.setDevicePixelRatio(dpr)
+                    icon.addPixmap(pixmap, mode)
         _cache[key] = icon
     return _cache[key]
 

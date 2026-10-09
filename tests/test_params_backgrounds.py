@@ -77,7 +77,7 @@ def test_no_strips_on_pages(qtbot, params_window, theme):
     assert _gap_px(page, pw.core_unit_combo, pw.core_dist_spin, pw.core_unit_combo) == expected
 
     # Every page: every slider's rect top row matches the surface; dump grabs if asked.
-    for key, _title, _menu in PAGES:
+    for key, _title, _menu, _icon in PAGES:
         page = _page(pw, key)
         for s in page.findChildren(QSlider):
             assert _px(page, s, s.width() // 2, 0) == expected

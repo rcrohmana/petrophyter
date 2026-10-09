@@ -13,20 +13,21 @@ from .widgets.parameter_groups import (
     PorosityMethodGroup, ResistivityParamsGroup, ShaleParamsGroup,
     SwirEstimationGroup, SwModelsGroup, VShaleParamsGroup,
 )
+from themes.icon_loader import get_icon
 from themes.tokens import METRICS
 
-# (key, title, menu) in page-list order. MainWindow builds its menus from this.
+# (key, title, menu, icon) in page-list order. MainWindow builds its menus from this.
 PAGES = (
-    ("scope", "Analysis Scope", "Analysis"),
-    ("curves", "Curve Mapping", "Analysis"),
-    ("core", "Core Matching", "Analysis"),
-    ("porosity", "Porosity Method", "Parameters"),
-    ("vshale", "VShale", "Parameters"),
-    ("cutoffs", "Cutoffs", "Parameters"),
-    ("rock", "Rock Properties", "Parameters"),
-    ("sat", "Saturation Models", "Parameters"),
-    ("perm", "Permeability", "Parameters"),
-    ("gas", "Gas Correction", "Corrections"),
+    ("scope", "Analysis Scope", "Analysis", "crosshair"),
+    ("curves", "Curve Mapping", "Analysis", "spline"),
+    ("core", "Core Matching", "Analysis", "cylinder"),
+    ("porosity", "Porosity Method", "Parameters", "percent"),
+    ("vshale", "VShale", "Parameters", "mountain"),
+    ("cutoffs", "Cutoffs", "Parameters", "scissors"),
+    ("rock", "Rock Properties", "Parameters", "hexagon"),
+    ("sat", "Saturation Models", "Parameters", "droplets"),
+    ("perm", "Permeability", "Parameters", "waves-horizontal"),
+    ("gas", "Gas Correction", "Corrections", "flame"),
 )
 _KEY_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -134,14 +135,14 @@ class ParametersWindow(QDialog):
         header_font.setPointSize(8)
         header_font.setWeight(QFont.Weight.DemiBold)
         last_menu = None
-        for key, title, menu in PAGES:
+        for key, title, menu, icon in PAGES:
             if menu != last_menu:
                 header = QListWidgetItem(menu.upper())
                 header.setFlags(Qt.ItemFlag.NoItemFlags)   # QSS ::item:disabled → text_muted
                 header.setFont(header_font)
                 self.page_list.addItem(header)
                 last_menu = menu
-            item = QListWidgetItem(title)
+            item = QListWidgetItem(get_icon(icon), title)
             item.setData(_KEY_ROLE, key)
             self.page_list.addItem(item)
             self._rows[key] = (self.page_list.row(item), self.stack.addWidget(bodies[key]))
@@ -189,6 +190,9 @@ class ParametersWindow(QDialog):
         for group in (self.shale_params_widget, self.res_params_widget,
                       self.perm_params_widget):
             group.refresh_theme()
+        icons = {key: icon for key, _t, _m, icon in PAGES}
+        for key, (row, _index) in self._rows.items():
+            self.page_list.item(row).setIcon(get_icon(icons[key]))
 
     def set_core_available(self, available: bool):
         self.core_unit_combo.setEnabled(available)

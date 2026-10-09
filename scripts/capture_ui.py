@@ -51,7 +51,7 @@ def capture_all(window, theme_manager, out_dir: Path, theme: str):
     params = getattr(window, "params_window", None)
     if params is not None:
         from ui.parameters_window import PAGES
-        for key, _title, _menu in PAGES:
+        for key, _title, _menu, _icon in PAGES:
             params.open_page(key)
             settle(300)
             params.grab().save(str(out_dir / f"{theme}_params_{key}.png"))
