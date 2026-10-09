@@ -359,6 +359,21 @@ def test_interactive_depth_readout_tracks_values_when_input_unsorted(qtbot):
     assert plot._get_values_at_depth(100.0)["GR"] == 10.0
 
 
+@pytest.mark.skipif(not HAS_PYQTGRAPH, reason="pyqtgraph unavailable")
+def test_interactive_auto_range_fits_data_not_depth_zero(qtbot):
+    plot = InteractiveLogPlot()
+    qtbot.addWidget(plot)
+    depth = np.linspace(4500.0, 6000.0, 301)
+    data = pd.DataFrame({"DEPTH": depth, "GR": np.linspace(20.0, 120.0, 301)})
+
+    for _ in range(2):  # second pass goes through clear() and the region re-add
+        plot.plot_curves(data)
+        plot.reset_view()
+        y_min, y_max = plot.plot_widgets[0].getViewBox().viewRange()[1]
+        assert y_min > 4000.0
+        assert y_max < 6500.0
+
+
 def test_composite_log_plots_all_available_saturation_curves(qtbot):
     plot = CompositeLogPlot()
     qtbot.addWidget(plot)
