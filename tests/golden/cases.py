@@ -44,6 +44,7 @@ CASES = {
             "sw_methods": ["Archie", "Indonesian"],
             "sw_primary_method": "Archie",
             "rw": 0.01,
+            "rw_mode": "auto",
             "swirr_method": "Buckles Number",
             "nphi_matrix": 0.0,
             "lithology_preset": "Limestone",

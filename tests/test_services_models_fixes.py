@@ -63,7 +63,9 @@ class TestAnalysisServiceFixes:
         assert result.get("method") == "statistical_vsh"
         assert result.get("shale_selection_mode") == "quantile"
 
-    def test_rw_estimation_uses_mapped_nphi_proxy(self, monkeypatch):
+    def test_rw_rsh_calculation_uses_mapped_curves_and_unavailable_fallback(self):
+        # Too few samples for the Rwa estimator: calculate_rw_rsh reports the
+        # entered Rw (with a warning) instead of the old hidden 0.05 default.
         data = pd.DataFrame(
             {
                 "DEPTH": [1000.0, 1001.0],
@@ -74,30 +76,15 @@ class TestAnalysisServiceFixes:
         model = self._analysis_model(
             data, GR="None", RHOB="None", NPHI="NPHI_ACTUAL", DT="None", RT="RT_ACTUAL"
         )
-        seen = []
-
-        class SpyStatistics:
-            def __init__(self, _data):
-                pass
-
-            def estimate_rw_from_rt_water_zone(
-                self, rt_curve, phi_curve, porosity_threshold, a, m
-            ):
-                seen.append((rt_curve, phi_curve))
-                return 0.12
-
-            def estimate_rsh(self, *args):
-                return 5.0
-
-        monkeypatch.setattr("services.analysis_service.StatisticsUtils", SpyStatistics)
-        model.rw = 0.01
+        model.rw = 0.07
 
         result = AnalysisService().calculate_rw_rsh(model)
 
-        assert result == {"rw": 0.12, "rsh": 5.0}
-        assert seen == [("RT_ACTUAL", "NPHI_ACTUAL")]
+        assert result["rw"] == 0.07
+        assert result["rw_source"] == "manual (auto estimate unavailable)"
+        assert any("Rw could not be estimated" in w for w in result["warnings"])
 
-    def test_worker_rw_estimation_uses_nphi_proxy(self, monkeypatch):
+    def test_worker_rw_estimation_uses_effective_porosity(self, monkeypatch):
         n = 20
         data = pd.DataFrame(
             {
@@ -109,7 +96,7 @@ class TestAnalysisServiceFixes:
             }
         )
         model = self._analysis_model(data, DT="None")
-        model.rw = 0.01
+        model.rw_mode = "auto"
         seen = []
 
         class SpyStatistics:
@@ -119,22 +106,27 @@ class TestAnalysisServiceFixes:
             def estimate_gr_baseline(self, curve):
                 return 20.0, 100.0
 
-            def estimate_rw_from_rt_water_zone(self, rt_curve, phi_curve, *args):
+            def estimate_rw_from_rt_water_zone(self, rt_curve, phi_curve, *args, **kwargs):
                 seen.append(phi_curve)
                 return 0.12
 
-            def estimate_rsh(self, *args):
+            def estimate_rsh(self, *args, **kwargs):
                 return 5.0
 
         monkeypatch.setattr("modules.pipeline.StatisticsUtils", SpyStatistics)
         errors = []
+        results_holder = []
         worker = AnalysisWorker(model)
         worker.signals.error.connect(errors.append)
+        worker.signals.completed.connect(lambda r, s: results_holder.append(r))
 
         worker.run()
 
         assert errors == []
-        assert seen == ["NPHI"]
+        # The estimator gets the computed effective porosity, not a raw NPHI curve.
+        assert len(seen) == 1
+        assert isinstance(seen[0], pd.Series)
+        assert seen[0].equals(results_holder[0]["PHIE"].reset_index(drop=True))
 
     def test_worker_emits_clear_error_when_las_data_is_none(self):
         worker = AnalysisWorker(AppModel())

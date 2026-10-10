@@ -14,7 +14,13 @@ import traceback
 logger = logging.getLogger(__name__)
 
 from modules.petrophysics import PetrophysicsCalculator
-from modules.pipeline import PipelineError, resolve_nphi_matrix, run_pipeline, vsh_reference
+from modules.pipeline import (
+    PipelineError,
+    estimate_rw_rsh,
+    resolve_nphi_matrix,
+    run_pipeline,
+    vsh_reference,
+)
 from modules.statistics_utils import StatisticsUtils
 
 
@@ -115,63 +121,25 @@ class AnalysisService(QObject):
         if model.las_data is None:
             return None
 
-        data = model.las_data.copy()
-
-        # Apply formation filter if applicable
-        if (
-            model.analysis_mode == "Per-Formation"
-            and model.selected_formations
-            and model.formation_tops
-        ):
-            data = model.formation_tops.filter_by_formations(
-                data, model.selected_formations, "DEPTH"
-            )
-
-        if len(data) == 0:
-            return None
-
-        gr_curve = model.curve_mapping.get("GR", "GR")
-        nphi_curve = model.curve_mapping.get("NPHI", "NPHI")
-        rt_curve = model.curve_mapping.get("RT", "RT")
-
-        if rt_curve == "None" or rt_curve not in data.columns:
-            return None
-
-        stats_util = StatisticsUtils(data)
-
         try:
-            a = model.a
-            m = model.m
-
-            phi_proxy = (
-                nphi_curve
-                if nphi_curve and nphi_curve != "None" and nphi_curve in data.columns
-                else ("NPHI" if "NPHI" in data.columns else None)
+            estimate = estimate_rw_rsh(
+                model.las_data,
+                model.curve_mapping,
+                model.to_params(),
+                formation_tops=model.formation_tops,
             )
-            rw_est = stats_util.estimate_rw_from_rt_water_zone(
-                rt_curve, phi_proxy, 0.15, a, m
-            )
-            if not rw_est:
-                rw_est = 0.05
-
-            vsh = None
-            if gr_curve and gr_curve != "None" and gr_curve in data.columns:
-                gr = data[gr_curve]
-                gr_min = np.percentile(gr.dropna(), 5)
-                gr_max = np.percentile(gr.dropna(), 95)
-                vsh = (gr - gr_min) / (gr_max - gr_min)
-                vsh = np.clip(vsh, 0, 1)
-
-            rsh_est = stats_util.estimate_rsh(
-                rt_curve, vsh, gr_curve if gr_curve != "None" else None
-            )
-            if not rsh_est:
-                rsh_est = 5.0
-
-            return {"rw": round(rw_est, 4), "rsh": round(rsh_est, 2)}
-
         except Exception:
             return None
+        if estimate is None:
+            return None
+
+        return {
+            "rw": round(estimate["rw"], 4),
+            "rsh": round(estimate["rsh"], 2),
+            "rw_source": estimate["rw_source"],
+            "rsh_source": estimate["rsh_source"],
+            "warnings": estimate["warnings"],
+        }
 
     def calculate_shale_parameters(self, model) -> Optional[Dict]:
         """

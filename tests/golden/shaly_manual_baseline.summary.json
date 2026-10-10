@@ -7,7 +7,7 @@
  "gr_max": 130.0,
  "gr_min": 40.0,
  "gross_sand": 0.0,
- "hcpv_gross": 0.0,
+ "hcpv_gross": 3.060630507822611,
  "hcpv_net_pay": 0.0,
  "hcpv_net_res": 0.0,
  "net_pay": 0.0,
@@ -15,10 +15,14 @@
  "ng_pay": 0.0,
  "ng_reservoir": 0.0,
  "rsh": 4.844974974315079,
- "rw": 0.47837394251130694,
+ "rsh_source": "auto",
+ "rw": 0.01,
+ "rw_source": "manual (auto estimate unavailable)",
  "selected_formations": [],
  "solver_diagnostics": {},
  "swirr_mean": 0.20466379984798894,
  "swirr_method": "Buckles Number",
- "warnings": []
+ "warnings": [
+  "Rw could not be estimated automatically; using the entered Rw of 0.01."
+ ]
 }

@@ -30,13 +30,13 @@ def _make_rt_phi_frame(seed=0, n=60):
 
 
 def _reference_rw(df, a=0.62, m=2.15, threshold=0.15):
-    """Correct, index-aligned reference computation (joint dropna)."""
+    """Index-aligned Rwa reference: median Rwa at or below the Rwa P25."""
     valid = df[["RT", "PHIT"]].dropna()
-    rt, phi = valid["RT"], valid["PHIT"]
-    mask = (phi > threshold) & (rt < np.percentile(rt, 25))
-    if mask.sum() == 0:
+    valid = valid[(valid["RT"] > 0) & (valid["PHIT"] > threshold)]
+    if len(valid) < 10:
         return None
-    rw = rt[mask].median() * (phi[mask].median() ** m) / a
+    rwa = valid["RT"] * valid["PHIT"] ** m / a
+    rw = rwa[rwa <= np.percentile(rwa, 25)].median()
     return max(0.01, min(float(rw), 5.0))
 
 

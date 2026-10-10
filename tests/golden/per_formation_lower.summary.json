@@ -15,7 +15,9 @@
  "ng_pay": 1.0,
  "ng_reservoir": 1.0,
  "rsh": 50.0,
+ "rsh_source": "auto",
  "rw": 0.05,
+ "rw_source": "manual",
  "selected_formations": [
   "Lower"
  ],
