@@ -354,52 +354,75 @@ class LASHandler:
                                        x: np.ndarray, y: np.ndarray,
                                        gap_limit: float) -> np.ndarray:
         """Linear interpolation with gap limit."""
+        x_new = np.asarray(x_new, dtype=float)
         result = np.full(len(x_new), np.nan)
-        
+        if len(x) == 0 or len(x_new) == 0:
+            return result
+
         # Sort input
         sort_idx = np.argsort(x)
-        x_sorted = x[sort_idx]
-        y_sorted = y[sort_idx]
-        
-        for i, xi in enumerate(x_new):
-            # Find surrounding points
-            idx_right = np.searchsorted(x_sorted, xi)
-            
-            if idx_right == 0:
-                # Before first point
-                if abs(xi - x_sorted[0]) <= gap_limit:
-                    result[i] = y_sorted[0]
-            elif idx_right >= len(x_sorted):
-                # After last point
-                if abs(xi - x_sorted[-1]) <= gap_limit:
-                    result[i] = y_sorted[-1]
-            else:
-                # Between points
-                x_left = x_sorted[idx_right - 1]
-                x_right = x_sorted[idx_right]
-                
-                if (x_right - x_left) <= gap_limit:
-                    # Interpolate
-                    t = (xi - x_left) / (x_right - x_left)
-                    result[i] = y_sorted[idx_right - 1] * (1 - t) + y_sorted[idx_right] * t
-        
+        x_sorted = np.asarray(x)[sort_idx]
+        y_sorted = np.asarray(y)[sort_idx]
+        n = len(x_sorted)
+
+        idx_right = np.searchsorted(x_sorted, x_new)
+
+        # Before first / after last point: end sample if within gap_limit.
+        before = idx_right == 0
+        after = idx_right >= n
+        if before.any():
+            ok = before & (np.abs(x_new - x_sorted[0]) <= gap_limit)
+            result[ok] = y_sorted[0]
+        if after.any():
+            ok = after & (np.abs(x_new - x_sorted[-1]) <= gap_limit)
+            result[ok] = y_sorted[-1]
+
+        # Between points: interpolate only across intervals <= gap_limit.
+        mid = np.flatnonzero(~(before | after))
+        if mid.size:
+            ir = idx_right[mid]
+            x_left = x_sorted[ir - 1]
+            x_right = x_sorted[ir]
+            ok = (x_right - x_left) <= gap_limit
+            mid, ir, x_left, x_right = mid[ok], ir[ok], x_left[ok], x_right[ok]
+            t = (x_new[mid] - x_left) / (x_right - x_left)
+            result[mid] = y_sorted[ir - 1] * (1 - t) + y_sorted[ir] * t
+
         return result
     
     def _nearest_neighbor_interp(self, x_new: np.ndarray,
                                   x: np.ndarray, y: np.ndarray,
                                   max_dist: float) -> np.ndarray:
-        """Nearest neighbor interpolation with distance limit."""
+        """Nearest neighbor interpolation with distance limit.
+
+        Uses a sorted search (O(N log N)). A tie between the left and right
+        neighbour goes to the sample that comes first in the ORIGINAL order,
+        which matches ``np.argmin`` (first minimum) exactly for sorted, unique
+        depths. For unsorted input with duplicate depths, the sample chosen
+        among equal depths may differ from ``np.argmin``'s first occurrence.
+        """
         # Discrete LAS curves may contain strings (e.g. ``LITH`` labels), so
         # avoid forcing every output into a floating-point array.
         result_dtype = float if np.issubdtype(y.dtype, np.number) else object
+        x_new = np.asarray(x_new, dtype=float)
         result = np.full(len(x_new), np.nan, dtype=result_dtype)
-        
-        for i, xi in enumerate(x_new):
-            distances = np.abs(x - xi)
-            min_idx = np.argmin(distances)
-            
-            if distances[min_idx] <= max_dist:
-                result[i] = y[min_idx]
+        if len(x) == 0 or len(x_new) == 0:
+            return result
+
+        order = np.argsort(x, kind='stable')
+        xs = np.asarray(x)[order]
+        n = len(xs)
+        pos = np.searchsorted(xs, x_new)
+        left = np.clip(pos - 1, 0, n - 1)
+        right = np.clip(pos, 0, n - 1)
+        d_left = np.abs(xs[left] - x_new)
+        d_right = np.abs(xs[right] - x_new)
+        pick_right = (d_right < d_left) | (
+            (d_right == d_left) & (order[right] < order[left]))
+        best = np.where(pick_right, right, left)
+        dist = np.where(pick_right, d_right, d_left)
+        ok = dist <= max_dist
+        result[ok] = np.asarray(y)[order[best[ok]]]
         
         return result
     
@@ -781,6 +804,26 @@ def _resolve_las_unit(source_column: str, safe_mnemonic: str, well_info: Dict) -
     return unit or "UNITLESS"
 
 
+def _format_las_column(col: pd.Series) -> list:
+    """Format one curve column of LAS data rows (numeric: %.4f, NaN: -999.25)."""
+    if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_complex_dtype(col):
+        arr = col.to_numpy(dtype=float, na_value=np.nan)
+        out = np.char.mod('%.4f', arr).astype(object)
+        out[np.isnan(arr)] = "-999.2500"
+        return out.tolist()
+    values = []
+    for val in col.tolist():
+        if pd.isna(val):
+            values.append("-999.2500")
+        elif isinstance(val, (int, float, np.integer, np.floating)):
+            values.append(f"{val:.4f}")
+        else:
+            # Preserve discrete/string curve labels instead of applying a
+            # numeric format specifier to them.
+            values.append(_safe_las_text(val, ""))
+    return values
+
+
 def export_merged_las(merged_df: pd.DataFrame, 
                       well_info: Dict,
                       output_path: str = None) -> str:
@@ -849,20 +892,11 @@ def export_merged_las(merged_df: pd.DataFrame,
     # Data section
     lines.append("~A DEPTH " + " ".join(safe for _, safe in curve_pairs))
     
-    for idx, row in merged_df.iterrows():
-        values = [f"{row['DEPTH']:.2f}"]
-        for source_col, _safe_col in curve_pairs:
-            val = row[source_col]
-            if pd.isna(val):
-                values.append("-999.2500")
-            elif isinstance(val, (int, float, np.integer, np.floating)):
-                values.append(f"{val:.4f}")
-            else:
-                # Preserve discrete/string curve labels instead of applying a
-                # numeric format specifier to them.
-                values.append(_safe_las_text(val, ""))
-        lines.append(" ".join(values))
-    
+    columns = [np.char.mod('%.2f', merged_df['DEPTH'].to_numpy(dtype=float))]
+    for source_col, _safe_col in curve_pairs:
+        columns.append(_format_las_column(merged_df[source_col]))
+    lines.extend(" ".join(vals) for vals in zip(*columns))
+
     content = "\n".join(lines)
     
     if output_path:
