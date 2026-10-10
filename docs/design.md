@@ -261,9 +261,18 @@ separated by plain hairline rules. License-table HTML takes its border color fro
 - Zones page (`ui/widgets/zone_grid.py`): a `QTableWidget`, one row per zone, columns
   Zone, a, m, n, Rw, Rsh, ρ matrix, the three cutoffs, and a read-only GR clean–shale.
   Muted cells inherit; typing sets, clearing inherits, `auto` sets Rw / Rsh to Auto.
-- Temperature section (`TemperatureGroup`) on the Saturation Models page: Correct Rw for
-  formation temperature, Surface temp, Gradient with an Auto checkbox, Rw ref. temp.
-  Well-scoped only (no zone).
+- Temperature section (`TemperatureGroup`) on the Saturation Models page: Correct
+  resistivities for formation temperature, Surface temp, Gradient with an Auto checkbox,
+  Datum depth, Rw ref. temp, Rsh ref. temp (`not set` at its minimum), Waxman-Smits B from
+  temperature, a `muted` note `Rw is corrected, Rsh is not` (shown only with the correction
+  on, a manual Rsh and no Rsh ref. temp) and a `muted` live readout of the temperature at
+  the log ends and the header gradient. Well-scoped (the Rsh reference temperature is also
+  zone-capable, like Rsh).
+- Zone diagnostics reuse two states, never a dialog. In the Summary Zones table a zone row
+  is colored `warning` (no net reservoir) or `text_muted` (info: no data, no gross, no net
+  pay), with the reason as a tooltip on the zone, top and bottom cells. In the Zones grid the
+  limiting cutoff cell of the active well, at Well scope and only while its run is fresh,
+  takes the same two colors and tooltip. A zone with `ok` status shows nothing.
 - Apply-to-shale buttons act only at the flat project scope.
 - Live apply: no OK/Cancel/Apply. Edits emit `parameters_updated`. Calculate buttons
   use the `calculator` icon, "Apply Calculated" buttons the `check` icon. Calculate
@@ -281,6 +290,55 @@ Step (ft) and Gap limit spin boxes (enabled only when a group holds more than on
 their error. The OK button is disabled, with a tooltip naming the files, when a group mixes
 wells whose identities differ. A single file loads directly without the dialog.
 
+### 4.15 Multi-well import dialog (`ui/widgets/well_import_dialog.py`)
+
+Modal task dialog (1180x680) that assigns a tops or core file with a well column to the loaded
+wells. Opened by File > Open Formation Tops (Multi-Well)... / Open Core Data (Multi-Well)...
+(`layers` / `database` icons), the same two entries in the Data Browser well menu, and by the
+single-well tops and core loaders when the file has a well column. The file is parsed before
+the dialog opens; a file without a well column or one that cannot be parsed never reaches it
+(banner or `QMessageBox.warning`). The dialog only edits an `ImportPlan` (`modules/well_import.py`)
+and never touches the model; the main window applies `dialog.plan` after OK. Title
+`Assign formation tops` or `Assign core data`.
+
+Layout, top to bottom, 16px margins and 12px spacing:
+
+- A file line (name, delimiter or sheet, encoding, `decimal comma`) and a `PlaceholderLabel`
+  note ("Each well in the file is assigned to a loaded well. Nothing changes until you confirm;
+  existing data is kept unless you choose Replace.").
+- A row of column combos, one per role (tops: Well, Formation, Top, Bottom; core: Well,
+  Depth, Porosity, Permeability, Grain density), each listing the file's headers and `none`.
+  A change re-parses the file and keeps the user's manual matches and actions.
+- An options row: Depth unit combo (Auto, M, FT) with a `PlaceholderLabel` result
+  (`detected: metres`, `detected: feet`, `not detected; choose M or FT`); checkbox
+  `Blank well cells continue the well above`; for tops a combo `Last formation: extend to log
+  bottom` / `stop at its top`; a Sheet combo (only for a workbook with several sheets); for core
+  a checkbox `Core depths are TVD; use them as measured depth` (only when the depth column is
+  TVD).
+- A message label: the plan notes in `warning` when there are any, otherwise `muted`; a
+  parse error after a change of option replaces it with `error` text.
+- A preview table (at most 5 rows, 170px) of the selected file well, each column headed by its
+  mapped role.
+- The well table, one row per file well (spellings grouped): File well, Rows, Depth range (ft),
+  Match combo (loaded wells and `Skip`, or `Choose` while an ambiguous match is open), How
+  (`UWI`, `API`, `name`, `manual`), Existing, Action combo, Porosity combo (core only:
+  Percent, Fraction) and Notes (first note, 60 characters, `(+N)` for more, all in the tooltip).
+  The tables have no cell editing; only the combos change.
+- A `PlaceholderLabel` `Loaded wells not in this file: ...` when some wells receive nothing.
+- A standard button box: `Assign to N wells` (`check` icon) and `Cancel`.
+
+States and rules:
+
+- Action: `Assign` (disabled) when the well has no data of this kind; `Keep existing` or
+  `Replace` otherwise. Default: Replace when the existing data came from this same file, else
+  Keep existing. Without a match the action is `Skip` and disabled.
+- The OK button is disabled, with the reasons joined by line in its tooltip, while the depth
+  unit is undecided, an ambiguous file well has no match, two file wells target one loaded
+  well, TVD core depths are not confirmed, or no well would receive data.
+- Cancel and closing the dialog change nothing.
+- No modal popups inside the dialog: every warning is a note, a tooltip or the message label.
+  After OK the result is one NotificationBanner (`success`, or `warning` when it lists any note).
+
 The toolbar `WellSelector` combo (`ui/widgets/well_selector.py`) mirrors the project's
 wells and is shown when there are two or more; it emits `well_selected(str)` only on a
 user choice.
@@ -291,7 +349,7 @@ user choice.
 |---|---|
 | Success, completion (analysis, save/load session, export, merge) | NotificationBanner (success) and/or status-bar message. Never modal. |
 | Non-blocking warnings (depth-unit ambiguity) | NotificationBanner (warning) |
-| Load notes (files, session restore, tops/core well matching, depth coverage) | One NotificationBanner per load listing every note |
+| Load notes (files, session restore, tops/core well matching, depth coverage, excluded rows) | One NotificationBanner per load listing every note |
 | Some wells failed in a multi-well run | One NotificationBanner (warning) naming each failed well; a single failed well with no other result still uses the error dialog |
 | Precondition warnings | Prevented by action enablement; otherwise status-bar message |
 | Failures (parse, merge, analysis, save/load) | `QMessageBox.critical` / `.warning` |
@@ -331,7 +389,7 @@ change. `app_icon.svg` / `.ico` are the application logo and are outside this se
 | `circle-x` | Error variant |
 | `x` | Banner close |
 | `chevron-down`, `chevron-up`, `chevron-right` | Combo, spin and tree arrows (QSS) |
-| `check` | "Apply Calculated" buttons; checkbox tick (QSS) |
+| `check` | "Apply Calculated" buttons; OK in the multi-well import dialog; checkbox tick (QSS) |
 | `calculator` | "Calculate" buttons |
 | `refresh-cw` | Reset View (interactive log) |
 | `copy` | Copy Citation |

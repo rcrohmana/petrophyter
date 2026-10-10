@@ -77,7 +77,7 @@ Merging selects the best curve for each type using quality scoring and interpola
 A project can hold any number of wells. Exactly one is the **active well**, and everything else in the window (the Parameters window curve mapping, analysis scope, the result tabs, the QC chip, the well indicator, and the window title) shows that well. The window title reads `Well name · 3 wells — Petrophyter` when more than one well is loaded.
 
 - **Switch wells** by clicking a well (or anything under it) in the Data Browser, or by choosing it in the well selector in the toolbar.
-- **Formation tops and core data belong to a well.** A file without a well column is attached to the active well; a file with a well column is shared out to every loaded well it names (see [Opening formation tops](#opening-formation-tops)). A newly loaded well never inherits another well's tops, core data, or formation selection. Switching back to a well restores its own.
+- **Formation tops and core data belong to a well.** A file without a well column is attached to the active well; a file with a well column is shared out to the loaded wells it names through the [multi-well import dialog](#assigning-tops-and-core-data-to-several-wells). A newly loaded well never inherits another well's tops, core data, or formation selection. Switching back to a well restores its own.
 - **Reloading a well** replaces it. A file whose well key matches a loaded well (for example `WELL:BKS-01`) replaces that well's data and results, keeps its tops, core data, and scope, and the banner reads **Reloaded BKS-01**.
 - **Results and the out-of-date flag are per well.** If you switch wells while an analysis is running, the results are stored in the well that started the run. Changing a parameter marks out of date exactly the wells whose effective parameters changed: a project value affects every well that inherits it, a well value only that well. See [Stale results](#stale-results).
 - **Summary and Export cover all wells.** With two or more wells the **Summary** tab adds a **Wells** table with a field total, and the **Export** tab can export **All wells**. See [Summary](#summary) and [Export](#export).
@@ -85,13 +85,42 @@ A project can hold any number of wells. Exactly one is the **active well**, and 
 
 ### Opening formation tops
 
-Use **File → Open Formation Tops…** and select a `.txt` or `.csv` file. Load a LAS file first. Without a well column the tops are attached to the active well. With a well column (`Well`, `Well Name`, `UWI`, or `API`) each well's rows go to the loaded well they name, matched on UWI or API when the column holds them and on the well name otherwise (case, spaces, hyphens, and underscores are ignored). One banner lists the wells that received tops, the names in the file that match no loaded well, and any well whose tops lie outside its log depth range. Depths are converted to feet when the file is in meters. If the tops do not overlap the log depth range at all, a warning banner suggests checking the depth unit; the same check applies to core data. Each formation is also a **zone** that can carry its own parameters (see [Parameter scopes and zones](#parameter-scopes-and-zones)). The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
+Use **File → Open Formation Tops…** and select a `.txt`, `.csv`, `.tsv`, or `.xlsx` file. Load a LAS file first. Without a well column the tops are attached to the active well. A file with a well column opens the [multi-well import dialog](#assigning-tops-and-core-data-to-several-wells) instead, so you decide which loaded well gets which rows.
+
+- Depths are converted to feet when the file is in meters. If the file does not say which unit it uses, the depths are left as written and a warning banner suggests checking the unit; the same check applies to core data.
+- If a formation has no bottom depth in the file, it runs to the next top. The last formation then runs to the bottom of the log.
+- Rows that cannot be used (a missing or non-numeric depth, a blank formation name) are left out and counted in the load banner, with the first file line numbers and the reason.
+- If the tops do not overlap the log depth range at all, a warning banner suggests checking the depth unit.
+
+Each formation is also a **zone** that can carry its own parameters (see [Parameter scopes and zones](#parameter-scopes-and-zones)). The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
 
 ### Opening core data
 
-Use **File → Open Core Data…** and select a `.txt` or `.csv` file containing depth and at least porosity or permeability. Load a LAS file first. As with tops, core data go to the active well, or, when the file has a well column, each well's samples go to the matching loaded well. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab.
+Use **File → Open Core Data…** and select a `.txt`, `.csv`, `.tsv`, or `.xlsx` file containing depth and at least porosity or permeability. Load a LAS file first. Core data go to the active well; a file with a well column opens the multi-well import dialog. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab. Excluded rows and warnings (for example, a TVD depth column) appear in the load banner.
 
 See [Supported Data Formats](data-formats.md) for the complete column names, aliases, and unit rules for LAS, tops, and core files.
+
+### Assigning tops and core data to several wells
+
+One tops or core file can hold the data of many wells. Load the LAS files of those wells first, then open the file from any of these places:
+
+- **File → Open Formation Tops (Multi-Well)…** or **File → Open Core Data (Multi-Well)…**;
+- the same two entries in the right-click menu of a well in the Data Browser; or
+- **File → Open Formation Tops…** or **Open Core Data…**, which route a file with a well column to the same dialog.
+
+The entries are disabled until a well is loaded. The dialog is titled **Assign formation tops** or **Assign core data**. Nothing changes until you press OK, and Cancel changes nothing.
+
+1. **Check how the file was read.** The line under the title shows the file name, the delimiter or sheet, the encoding, and **decimal comma** when one was found. The column combos (Well, Formation, Top, Bottom for tops; Well, Depth, Porosity, Permeability, Grain density for core) show the columns that were detected. Choose another column, or **none**, and the file is read again.
+2. **Set the depth unit** (**Auto**, **M**, or **FT**). With **Auto**, the label beside it reads **detected: metres** or **detected: feet**, or **not detected; choose M or FT** when the file does not say.
+3. **Set the file options.** **Blank well cells continue the well above** is for tables exported from merged cells; it is switched on by itself when the blank cells look like merged cells. For tops, **Last formation: extend to log bottom** (the default) or **stop at its top** applies to a last formation without a bottom depth. For a workbook with several sheets, a **Sheet** combo appears. For core data whose depth column is TVD, check **Core depths are TVD; use them as measured depth** to accept them.
+4. **Look at the preview.** The first five rows of the selected file well are shown, with the role of each mapped column above its header. Click a row of the well table to change the preview.
+5. **Assign each file well.** The table has one row per well in the file (spellings such as `BKS-01`, `bks 01`, and `BKS_01` are one well). Its columns are the file well, row count, depth range in feet, the loaded well it **Match**es and **How** (UWI, API, name, or manual), what that well **Existing**ly holds, the **Action**, the **Porosity** scale (core only), and **Notes**. Change **Match** to pick another loaded well or **Skip**. A file well that fits several loaded wells starts as **Choose** and must be resolved.
+6. **Choose the action.** A well with no data of this kind is simply assigned. A well that already has data offers **Keep existing** or **Replace**. The default is **Replace** when the existing data came from this same file (a reload), and **Keep existing** otherwise, so data is never overwritten unless you choose it. For core data, **Porosity** shows how the values of each well are read (**Percent** or **Fraction**); it is decided from the median of the well, and you can override it.
+7. **Press the OK button**, which reads **Assign to N wells**. It stays disabled, and its tooltip lists the reasons, while the depth unit is undecided, a file well still needs a match, two file wells are assigned to one loaded well, TVD core depths are not accepted, or no well would receive data.
+
+Warnings stay in the dialog instead of popping up: the notes under the options (rows without a well, reversed top and bottom, porosity warnings), the **Notes** cell of each row (hover for all of them: excluded rows with line numbers, a depth range that misses the log, a depth unit that fits the logs better, zone parameters that will no longer apply), and **Loaded wells not in this file**.
+
+After OK, the chosen wells receive their data in one step; if any part cannot be built, nothing changes. Analysis-scope formations that the new tops lack are removed from the well's scope, and zone parameters whose zone no longer exists are kept and listed in the banner. Wells whose results depend on the new data are marked out of date. One banner reports how many wells received data, how many kept their existing data or were skipped, and every note.
 
 ### What the Data Browser shows
 
@@ -121,7 +150,7 @@ A page list on the left groups the pages under four headings:
 | Menu | Page | What it controls |
 |---|---|---|
 | **Analysis** | **Analysis Scope** | Whole Well or Per-Formation analysis, and which formations to include |
-| **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT |
+| **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT, and optionally TVD (used for formation temperature) |
 | **Analysis** | **Core Matching** | Core depth unit (Auto, M, FT) and the maximum distance for matching core samples to log depths; enabled after core data is loaded |
 | **Parameters** | **Porosity Method** | Primary PHIE method used downstream for Sw, permeability, and HCPV |
 | **Parameters** | **VShale** | GR baseline (statistical or custom GRmin and GRmax) and the Vshale methods: Linear, Larionov Tertiary, Larionov Older |
@@ -153,7 +182,7 @@ So a zone value entered at project scope applies to that formation in every well
 
 | Can be set per well and per zone | Per well only | Project only |
 |---|---|---|
-| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction; GR clean/shale baseline; Rw and Rsh; Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings; curve mapping and analysis scope (whole well or selected formations) | methods (VShale, porosity, Sw methods, primary Sw), merge settings |
+| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction; GR clean/shale baseline; Rw and Rsh (and the Rsh reference temperature); Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings (including the datum depth and Waxman-Smits B from temperature); curve mapping and analysis scope (whole well or selected formations) | methods (VShale, porosity, Sw methods, primary Sw), merge settings |
 
 At any scope other than flat **Project**, each field has a small mode button beside it:
 
@@ -162,13 +191,25 @@ At any scope other than flat **Project**, each field has a small mode button bes
 - **Inherit** removes the entry so the value comes from the next level down; inherited values are shown muted with a tooltip naming where they come from.
 - **Copy to…** copies the entry to other wells or zones, and **Set as project default** moves it to the project.
 
-**Calculate** for Rw and Rsh and for the shale point uses the edited scope: at **Well** scope with a zone selected, only that zone's samples are used. **Apply** writes the calculated values to the edited scope. The lithology preset at a well or zone scope writes explicit a, m, and n entries for that scope.
+**Calculate** for Rw and Rsh and for the shale point uses the edited scope: at **Well** scope with a zone selected, only that zone's samples are used. **Apply** writes the calculated values to the edited scope. The permeability **Calculate** also follows the edited scope: at **Well** scope with a zone selected it fits Wyllie-Rose C, P, and Q to that zone's core samples only (see [Permeability](calculation-methods.md#permeability)). A zone with fewer than five core pairs gives no result; the status text under the button reads, for example, `3 core pairs in UPPER (need 5). Switch the scope to Well: BKS-01 to calibrate on the whole well.` Petrophyter does not widen the fit by itself. Without core data, the coefficients are estimated from the mean PHIE of that zone.
+
+A named **lithology preset** at a well or zone scope supplies a, m, and n at that scope. The values are not copied: a, m, and n show the source **<scope> (lithology preset)**, and changing the preset later changes them. An explicit a, m, or n at the same or a more specific scope still wins. Typing a value into a, m, or n while a preset is active switches the preset to **Custom** and keeps the three values as explicit entries. At flat **Project** scope the preset fills the a, m, and n fields as before.
 
 The **Zones** page shows every zone of the active well (Well scope) or of all wells (Project scope) in one grid. Type a value to override, clear a cell to inherit again, or type `auto` in an Rw or Rsh cell. Values outside the valid range are flagged in the cell. After a run, the **Summary** tab lists the parameters each zone actually used and their source.
 
 ### Formation temperature
 
-Rw is usually measured at a reference temperature, while formation temperature rises with depth. In the **Temperature** section of the **Saturation Models** page, check **Correct Rw for formation temperature** to scale Rw to formation temperature with Arps' equation at every sample. Enter the **Surface temp**, the **Gradient**, and the **Rw ref. temp** (the temperature at which the entered Rw was measured). With **Auto** checked (at **Well** scope), the gradient is computed from the LAS header (bottom-hole temperature and total depth) when available, and otherwise falls back to the entered value. These settings are per well. Temperature is computed from measured depth, and Rsh is not temperature-corrected.
+Resistivities are usually measured at a reference temperature, while formation temperature rises with depth. In the **Temperature** section of the **Saturation Models** page, check **Correct resistivities for formation temperature** to scale Rw to formation temperature with Arps' equation at every sample. The same correction applies to an auto Rsh, a manual Rsh that has a reference temperature, and the Dual-Water Rwb. The settings are per well:
+
+- **Surface temp** and **Gradient.** With **Auto** checked (at **Well** scope), the gradient is computed from the LAS header (bottom-hole temperature and total depth) when available, and otherwise falls back to the entered value.
+- **Datum depth.** The depth, on the log's depth axis, at which the surface temperature applies. Leave it at 0 for logs measured from ground level; use the KB height, or the water depth plus air gap offshore. The header gradient uses the same datum.
+- **Rw ref. temp.** The temperature at which the entered Rw was measured.
+- **Rsh ref. temp.** The temperature at which a manual Rsh was read. When it is **not set**, a manual Rsh is used as entered at every depth, and the note **Rw is corrected, Rsh is not** appears under the fields. An auto Rsh needs no entry: it is estimated from the shale resistivity brought to the Rw reference temperature. **Apply** on a calculated Rsh stores the Rw reference temperature with it when the correction is on, so the applied value stays corrected. Rsh ref. temp can also be set per zone, like Rsh.
+- **Waxman-Smits B from temperature.** Calculates B from formation temperature and Rw at that temperature (Juhasz, 1981) instead of using the entered B. If the resistivity correction is off, Rw is used as entered and a warning says so.
+
+**Which depth is used.** Temperature follows true vertical depth (TVD). Petrophyter uses, in this order: a TVD curve mapped on the **Curve Mapping** page (the **TVD** row; mnemonics `TVD`, `TVDKB`, `TVDRKB`, `TVDRT`, and `TVDBRT` are mapped automatically, and a curve in metres is converted to feet); the depth index itself when the LAS header says the log is on TVD; and otherwise measured depth, assuming a vertical well. If a TVD-like curve exists but is not mapped, or the header has an inclination entry, a warning says that a vertical well was assumed. A mapped curve that is not non-decreasing with depth, or that exceeds measured depth by more than 1 ft, is rejected with a note and measured depth is used.
+
+Below the fields, a live readout shows the temperature at the top and bottom of the log with the depth source used, and the gradient implied by the header, for example `T at log top / bottom: 85 / 176 °F (MD (assumed vertical))`. The correction is off by default.
 
 ### Stale results
 
@@ -187,7 +228,7 @@ Choose **Analysis → Run Analysis** (`F5`) or click **Run Analysis** on the too
 
 While the analysis runs:
 
-- a progress bar appears in the status bar, and the status message shows the current step;
+- a progress bar appears in the status bar, and the status message shows the current step. For one well this is the stage, such as `Calculating water saturation...`. For several wells the bar shows the combined progress, and the message names the well and its stage, for example `Analysing 2 of 4 wells · BKS-01: Calculating Swirr...`;
 - result tabs refresh when the run completes; and
 - a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`.
 
@@ -277,6 +318,17 @@ Results at a glance: the analysis scope (whole well or the selected formations),
 
 When the active well has formation tops, a **Zones** table gives one row per zone: top and bottom, gross, net, N/G, average PHIE and Sw, HCPV, and the a, m, n, Rw, and cutoffs used; hover a parameter to see its source (for example **well·zone** or **auto (fallback: well)**).
 
+A zone that ends up with no gross, no net reservoir, or no net pay is marked so you can check whether that is expected. Hover the zone, top, or bottom cell for the reason:
+
+| Zone result | Row | Meaning |
+|---|---|---|
+| No valid samples | Muted | VSH, PHIE, or Sw is missing over the whole zone. |
+| No gross | Muted | No sample passes the Vsh cutoff: shale by this cutoff, as expected for a seal. |
+| No net reservoir | Warning colour | Gross exists but no sample passes the PHIE cutoff. Tight rock, or check the cutoff and the porosity inputs. |
+| No net pay | Muted | Net reservoir exists but no sample passes the Sw cutoff. May be water-bearing; check the Rw inputs if pay is expected. |
+
+These marks are diagnostic, not errors, and no dialog opens. On the Parameters window **Zones** page, the cutoff cell that caused the result (Vsh, PHIE, or Sw) is marked the same way and carries the same tooltip, at **Well** scope for the active well while its results are up to date.
+
 With two or more wells, a **Wells** table lists every well with its status and pay summary, plus a **Field total** row (thickness and HCPV summed, averages weighted by net pay). Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
 
 ### Export
@@ -288,7 +340,7 @@ Choose the **Scope**: **Active well** or, with two or more wells, **All wells**.
 A session is a JSON file that stores the project, so you can reopen it later.
 
 - **Session → Save Session…** (`Ctrl+S`) writes the project to a `.json` file: the project parameters and project zone parameters, and for every well its LAS file paths, curve mapping, analysis scope, well and well-zone parameters, and the paths of its tops and core files. The same command is on the toolbar.
-- **Session → Load Session…** (`Ctrl+Shift+O`) replaces the loaded wells with the saved ones: it reads the LAS, tops, and core files again from their saved paths, restores every parameter scope, and re-activates the saved active well. A well whose files are missing is skipped; one banner lists everything that could not be restored.
+- **Session → Load Session…** (`Ctrl+Shift+O`) replaces the loaded wells with the saved ones: it reads the LAS, tops, and core files again from their saved paths, restores every parameter scope, and re-activates the saved active well. A well whose files are missing is skipped; one banner lists everything that could not be restored. The wells are rebuilt in the background with the progress in the status bar (`Restoring 3 of 10: BKS-03`); **New Project** or another **Load Session…** cancels it.
 
 Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. See [Session Management](session-management.md) for the complete list of saved parameters.
 
@@ -319,7 +371,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 - **Run Analysis is greyed out.** Load a LAS file first. The action is also disabled while a run is in progress.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Run All Wells skips a well.** Its results are up to date. Use **Run Analysis** (`F5`) to rerun the active well anyway.
-- **A tops or core file reports unmatched wells.** The names in its well column do not match the header of any loaded well. Check the spelling or the UWI, or load the well's LAS file first.
+- **In the import dialog, a file well has no match.** The name in the well column does not match the header of any loaded well. Pick the loaded well by hand in the **Match** column, check the spelling or the UWI, or load the well's LAS file first. The **Assign to N wells** button stays disabled while a file well that fits several loaded wells is unresolved; hover it to see why.
 - **A file I opened was not merged.** Only files placed in the same group in the Load Summary are merged. Files with different well identities are loaded as separate wells; change the group only if the header names differ but the files belong to the same well.
 - **Numbers use a decimal point even though Windows uses a decimal comma.** This is intended. Petrophyter always shows and accepts numbers in English (US) format, with a period as the decimal separator and no thousands separator (for example, `4500.0 ft`), whatever the Windows regional setting.
 - **Results look wrong.** Check the curve units, the curve mapping, and the shale parameters, and confirm that the depth unit is correct.
