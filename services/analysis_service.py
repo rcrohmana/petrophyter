@@ -7,8 +7,7 @@ from dataclasses import dataclass, field
 
 from PyQt6.QtCore import QObject, pyqtSignal, QRunnable, QThread, QThreadPool
 import pandas as pd
-import numpy as np
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional
 import logging
 import traceback
 
