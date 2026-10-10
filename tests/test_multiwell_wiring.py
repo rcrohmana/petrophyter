@@ -165,6 +165,18 @@ def test_hidden_plot_tabs_redraw_when_shown(two_wells, monkeypatch):
     assert calls == ["log"]                       # nothing changed since
 
 
+def wait_for_restore(window, timeout_ms=15000):
+    """Wait for the session-restore worker to finish and its wells to be installed."""
+    from PyQt6.QtCore import QElapsedTimer
+    from PyQt6.QtTest import QTest
+
+    clock = QElapsedTimer()
+    clock.start()
+    while window._restore_worker is not None and clock.elapsed() < timeout_ms:
+        QTest.qWait(10)
+    assert window._restore_worker is None, "session restore did not finish"
+
+
 def test_v2_session_round_trip_restores_wells(two_wells, tmp_path, monkeypatch):
     window = two_wells
     window._on_tops_file_selected(_shared_tops(tmp_path))
@@ -180,6 +192,7 @@ def test_v2_session_round_trip_restores_wells(two_wells, tmp_path, monkeypatch):
         QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(session), ""))
     )
     window._on_load_session()
+    wait_for_restore(window)
     project = window.model.project
     assert [ds.display_name for ds in project.wells] == ["BKS-01", "BKS-02"]
     assert project.active.display_name == "BKS-02"
