@@ -176,3 +176,65 @@ def test_v2_session_round_trip_restores_wells(two_wells, tmp_path, monkeypatch):
     assert window.model.get_entry("m", scope="well", zone="", well=first)["value"] == pytest.approx(1.8)
     assert window.model.edit_scope == "project"
     assert not any(ds.stale for ds in project.wells)    # nothing has run yet
+
+
+def _perm_setup(window, tmp_path, core_rows):
+    """BKS-02 with Upper/Lower tops, the given core rows and fake run results."""
+    import pandas as pd
+
+    tops = tmp_path / "tops2.csv"
+    tops.write_text("Well\tFormation\tTop (ft)\tBottom (ft)\n"
+                    "BKS-02\tUpper\t1000\t1030\nBKS-02\tLower\t1030\t1060\n")
+    window._on_tops_file_selected(str(tops))
+    if core_rows:
+        core = tmp_path / "core2.csv"
+        core.write_text("Well\tDepth (ft)\tPorosity\tPermeability\n" + "".join(
+            f"BKS-02\t{d}\t{phi}\t{k}\n" for d, phi, k in core_rows))
+        window._on_core_file_selected(str(core))
+    window.model.results = pd.DataFrame({
+        "DEPTH": [1001.0 + i for i in range(24)],
+        "PHIE": [0.25] * 12 + [0.08] * 12,
+        "ZONE": ["UPPER"] * 12 + ["LOWER"] * 12,
+    })
+    window.model.calculated = True
+    return window.params_window.perm_params_widget
+
+
+_CORE = [(1002 + 4 * i, 0.12 + 0.02 * i, 5 * 3 ** i) for i in range(6)] + [(1040, 0.1, 2), (1050, 0.11, 3)]
+
+
+def test_perm_zone_with_few_core_pairs_asks_to_widen_the_scope(two_wells, tmp_path):
+    window = two_wells
+    widget = _perm_setup(window, tmp_path, _CORE)
+    window.model.set_edit_scope("well", "Lower")
+    window._on_calculate_perm()
+    text = widget.result_label.text()
+    assert "2 core pairs in LOWER (need 5)" in text and "Well: BKS-02" in text
+    assert widget.apply_btn.isHidden()
+
+
+def test_perm_zone_core_fit_uses_the_zone_and_its_k_buckles(two_wells, tmp_path, monkeypatch):
+    import modules.perm_calibration as pc
+
+    window = two_wells
+    widget = _perm_setup(window, tmp_path, _CORE)
+    window.model.set_edit_scope("well", "Upper")
+    window.model.set_entry("k_buckles", "manual", 0.04)
+    seen = []
+    real = pc.calibrate_from_core
+    monkeypatch.setattr(pc, "calibrate_from_core",
+                        lambda por, k, kb, **kw: seen.append((len(por), kb)) or real(por, k, kb, **kw))
+    window._on_calculate_perm()
+    assert seen == [(6, 0.04)]
+    assert not widget.apply_btn.isHidden()
+    assert "in UPPER (6 pairs)" in window.statusBar.currentMessage()
+
+
+def test_perm_estimate_without_core_uses_the_zone_samples(two_wells, tmp_path):
+    window = two_wells
+    widget = _perm_setup(window, tmp_path, [])
+    window._on_calculate_perm()
+    assert widget._calculated_C == 8581.0          # whole well: mean PHIE 0.165
+    window.model.set_edit_scope("well", "Upper")
+    window._on_calculate_perm()
+    assert widget._calculated_C == 10000.0         # Upper only: PHIE 0.25

@@ -932,6 +932,7 @@ class PermParamsGroup(QWidget):
 
         # Result and apply
         self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
 
         self.apply_btn = QPushButton("Apply Calculated Values")
@@ -969,6 +970,13 @@ class PermParamsGroup(QWidget):
         self._calculated_C = C
         self._calculated_P = P
         self._calculated_Q = Q
+
+    def show_message(self, text: str):
+        """Show why there is no result, dropping any earlier unapplied one."""
+        self.result_label.setText(text)
+        self.apply_btn.setVisible(False)
+        for name in ("_calculated_C", "_calculated_P", "_calculated_Q"):
+            self.__dict__.pop(name, None)
 
     def apply_calculated(self):
         """Apply calculated values to spinboxes."""
