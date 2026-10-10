@@ -340,8 +340,11 @@ class AnalysisService(QObject):
         """Handle analysis completion."""
         self.completed.emit(results, summary)
 
-    def calculate_rw_rsh(self, model) -> Optional[Dict]:
-        """Calculate Rw and Rsh from log data (synchronous)."""
+    def calculate_rw_rsh(self, model, zone: Optional[str] = None) -> Optional[Dict]:
+        """Calculate Rw and Rsh from log data (synchronous).
+
+        With ``zone`` only that zone's samples of the active well are used.
+        """
         if model.las_data is None:
             return None
 
@@ -351,6 +354,7 @@ class AnalysisService(QObject):
                 model.curve_mapping,
                 model.to_params(),
                 formation_tops=model.formation_tops,
+                zone=zone,
             )
         except Exception:
             return None
