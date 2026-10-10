@@ -10,22 +10,112 @@ from PyQt6.QtWidgets import (
     QLabel,
     QGroupBox,
     QScrollArea,
+    QTableView,
+    QCheckBox,
+    QHeaderView,
+    QAbstractItemView,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 import numpy as np
+import pandas as pd
 
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import PlotWidget
+from ..widgets.table_model import PandasTableModel
+from services.export_service import (
+    FIELD_TOTAL_LABEL, WELL_COLUMNS, wells_summary_frame, well_label,
+)
 from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
+
+ZONE_TABLE_COLUMNS = [
+    "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw",
+    "HCPV", "a", "m", "n", "Rw", "Cutoffs (Vsh/Phi/Sw)",
+]
+_MAX_TABLE_ROWS = 10
+
+
+def _fmt(value, digits=1, percent=False) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(number):
+        return ""
+    if percent:
+        return f"{number * 100:.{digits}f}%"
+    return f"{number:.{digits}f}"
+
+
+def _entry_value(params: dict, name: str):
+    return (params.get(name) or {}).get("value")
+
+
+class _AnnotatedTableModel(PandasTableModel):
+    """PandasTableModel plus per-cell tooltips and bold rows/cells."""
+
+    def __init__(self, df=None, parent=None):
+        super().__init__(df, parent)
+        self.tooltips = {}
+        self.bold_rows = set()
+        self.bold_cells = set()
+
+    def set_table(self, df, tooltips=None, bold_rows=(), bold_cells=()):
+        self.tooltips = dict(tooltips or {})
+        self.bold_rows = set(bold_rows)
+        self.bold_cells = set(bold_cells)
+        self.set_dataframe(df)
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if index.isValid():
+            cell = (index.row(), index.column())
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return self.tooltips.get(cell)
+            if role == Qt.ItemDataRole.FontRole and (
+                index.row() in self.bold_rows or cell in self.bold_cells
+            ):
+                font = super().data(index, role) or QFont()
+                font.setBold(True)
+                return font
+        return super().data(index, role)
+
+
+def _fit_table(table: QTableView, rows: int):
+    """Size a table to its rows (up to a cap) so the page scrolls, not the table."""
+    shown = min(max(rows, 1), _MAX_TABLE_ROWS)
+    header = table.horizontalHeader().height() or 28
+    table.setFixedHeight(header + shown * table.verticalHeader().defaultSectionSize() + 6)
+
+
+def _make_table() -> tuple:
+    table = QTableView()
+    model = _AnnotatedTableModel()
+    table.setModel(model)
+    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+    table.verticalHeader().setVisible(False)
+    table.horizontalHeader().setHighlightSections(False)
+    table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    table.horizontalHeader().setStretchLastSection(True)
+    return table, model
 
 
 class SummaryTab(QWidget):
     """Summary Tab - analysis summary and net pay."""
 
+    well_activated = pyqtSignal(str)  # key of the well whose row was clicked
+
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
+        self._row_keys = []
         self._setup_ui()
+        project = self.model.project
+        project.wells_changed.connect(self._refresh_multi)
+        project.active_well_changed.connect(lambda _key: self._refresh_multi())
+        project.well_updated.connect(lambda _key: self._refresh_multi())
+        self._refresh_multi()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -116,6 +206,30 @@ class SummaryTab(QWidget):
 
         content_layout.addWidget(cutoff_group)
 
+        # =====================================================================
+        # ZONES (active well)
+        # =====================================================================
+        self.zones_group = QGroupBox("Zones")
+        zones_layout = QVBoxLayout(self.zones_group)
+        self.zones_table, self.zones_model = _make_table()
+        zones_layout.addWidget(self.zones_table)
+        self.zones_group.setVisible(False)
+        content_layout.addWidget(self.zones_group)
+
+        # =====================================================================
+        # WELLS (project, 2+ wells)
+        # =====================================================================
+        self.wells_group = QGroupBox("Wells")
+        wells_layout = QVBoxLayout(self.wells_group)
+        self.wells_zone_check = QCheckBox("Show zones per well")
+        self.wells_zone_check.toggled.connect(lambda _on: self._refresh_multi())
+        wells_layout.addWidget(self.wells_zone_check)
+        self.wells_table, self.wells_model = _make_table()
+        self.wells_table.clicked.connect(self._on_well_row_clicked)
+        wells_layout.addWidget(self.wells_table)
+        self.wells_group.setVisible(False)
+        content_layout.addWidget(self.wells_group)
+
         # Placeholder
         self.placeholder = QLabel("Run analysis to view summary")
         self.placeholder.setObjectName("PlaceholderLabel")
@@ -129,6 +243,113 @@ class SummaryTab(QWidget):
 
     def refresh_theme(self):
         self.bar_chart.refresh_theme()
+
+    # ---- zones and multi-well tables ----
+    def _refresh_multi(self):
+        self._update_zones()
+        self._update_wells()
+
+    def _update_zones(self):
+        summary = self.model.summary if self.model.calculated else None
+        zones = (summary or {}).get("zones") or []
+        self.zones_group.setVisible(bool(zones))
+        if not zones:
+            self.zones_model.set_table(pd.DataFrame(columns=ZONE_TABLE_COLUMNS))
+            return
+        rows, tooltips, bold_cells = [], {}, set()
+        for r, zone in enumerate(zones):
+            params = zone.get("params") or {}
+            cutoffs = " / ".join(
+                _fmt(_entry_value(params, key), 2)
+                for key in ("vsh_cutoff", "phi_cutoff", "sw_cutoff")
+            )
+            rows.append([
+                str(zone.get("zone", "")), _fmt(zone.get("top")), _fmt(zone.get("bottom")),
+                _fmt(zone.get("gross_sand")), _fmt(zone.get("net_pay")),
+                _fmt(zone.get("ng_pay"), 1, True), _fmt(zone.get("avg_phie_pay"), 1, True),
+                _fmt(zone.get("avg_sw_pay"), 1, True), _fmt(zone.get("hcpv_net_pay"), 4),
+                _fmt(_entry_value(params, "a"), 2), _fmt(_entry_value(params, "m"), 2),
+                _fmt(_entry_value(params, "n"), 2), _fmt(_entry_value(params, "rw"), 4),
+                cutoffs,
+            ])
+            columns = {"a": 9, "m": 10, "n": 11, "rw": 12}
+            for name, c in columns.items():
+                self._annotate(params, name, r, c, tooltips, bold_cells)
+            parts = []
+            for name in ("vsh_cutoff", "phi_cutoff", "sw_cutoff"):
+                entry = params.get(name) or {}
+                parts.append(f"{name}: {entry.get('source', '-')}")
+                if entry.get("source") not in (None, "", "project"):
+                    bold_cells.add((r, 13))
+            tooltips[(r, 13)] = "Source - " + "; ".join(parts)
+        self.zones_model.set_table(
+            pd.DataFrame(rows, columns=ZONE_TABLE_COLUMNS), tooltips, bold_cells=bold_cells)
+        _fit_table(self.zones_table, len(rows))
+
+    @staticmethod
+    def _annotate(params, name, row, col, tooltips, bold_cells):
+        """Tooltip with the value's source; bold when it differs from the project value."""
+        source = (params.get(name) or {}).get("source")
+        if source:
+            tooltips[(row, col)] = f"Source: {source}"
+            if source != "project":
+                bold_cells.add((row, col))
+
+    def _update_wells(self):
+        wells = self.model.project.wells
+        self.wells_group.setVisible(len(wells) >= 2)
+        self._row_keys = []
+        if len(wells) < 2:
+            self.wells_model.set_table(pd.DataFrame(columns=WELL_COLUMNS))
+            return
+        frame = wells_summary_frame(wells)
+        show_zones = self.wells_zone_check.isChecked()
+        rows, keys, bold_rows, tooltips = [], [], set(), {}
+        for i, line in frame.iterrows():
+            is_total = line["Well"] == FIELD_TOTAL_LABEL and i >= len(wells)
+            ds = None if is_total else wells[i]
+            rows.append([
+                line["Well"], line["Status"], _fmt(line["Gross"]), _fmt(line["Net"]),
+                _fmt(line["N/G"], 1, True), _fmt(line["Avg PHIE"], 1, True),
+                _fmt(line["Avg Sw"], 1, True), _fmt(line["HCPV"], 4),
+                _fmt(line["Rw"], 4), line["Rw source"], _fmt(line["Rsh"], 2),
+                line["Rsh source"], _fmt(line["QC score"], 0),
+            ])
+            keys.append(ds.key if ds is not None else None)
+            if is_total:
+                bold_rows.add(len(rows) - 1)
+                tooltips[(len(rows) - 1, 0)] = (
+                    "Gross, Net and HCPV are summed over wells with results; "
+                    "N/G = total Net / total Gross; Avg PHIE and Avg Sw are "
+                    "weighted by each well's net pay thickness.")
+            elif ds is not None and ds.stale:
+                tooltips[(len(rows) - 1, 1)] = "Results are out of date; re-run the analysis."
+            elif ds is not None and ds.error:
+                tooltips[(len(rows) - 1, 1)] = str(ds.error)
+            if show_zones and ds is not None and ds.summary and ds.calculated:
+                for zone in ds.summary.get("zones") or []:
+                    params = zone.get("params") or {}
+                    rows.append([
+                        f"    {zone.get('zone', '')}", "", _fmt(zone.get("gross_sand")),
+                        _fmt(zone.get("net_pay")), _fmt(zone.get("ng_pay"), 1, True),
+                        _fmt(zone.get("avg_phie_pay"), 1, True),
+                        _fmt(zone.get("avg_sw_pay"), 1, True),
+                        _fmt(zone.get("hcpv_net_pay"), 4),
+                        _fmt(_entry_value(params, "rw"), 4),
+                        str((params.get("rw") or {}).get("source", "")),
+                        _fmt(_entry_value(params, "rsh"), 2),
+                        str((params.get("rsh") or {}).get("source", "")), "",
+                    ])
+                    keys.append(ds.key)
+        self._row_keys = keys
+        self.wells_model.set_table(
+            pd.DataFrame(rows, columns=WELL_COLUMNS), tooltips, bold_rows)
+        _fit_table(self.wells_table, len(rows))
+
+    def _on_well_row_clicked(self, index):
+        row = index.row()
+        if 0 <= row < len(self._row_keys) and self._row_keys[row]:
+            self.well_activated.emit(self._row_keys[row])
 
     def _set(self, key: str, value: str):
         self._strips[key].set_value(key, value)
@@ -204,6 +425,8 @@ class SummaryTab(QWidget):
         self.vsh_cutoff_label.setText(f"Vsh cutoff: {self.model.vsh_cutoff:.2f}")
         self.phi_cutoff_label.setText(f"PHIE cutoff: {self.model.phi_cutoff:.2f}")
         self.sw_cutoff_label.setText(f"Sw cutoff: {self.model.sw_cutoff:.2f}")
+
+        self._refresh_multi()
 
     def _update_bar_chart(self, summary: dict):
         """Create thickness summary bar chart including HCPV."""
@@ -284,6 +507,8 @@ class SummaryTab(QWidget):
         self.vsh_cutoff_label.setText("Vsh cutoff: -")
         self.phi_cutoff_label.setText("PHIE cutoff: -")
         self.sw_cutoff_label.setText("Sw cutoff: -")
+
+        self._refresh_multi()
 
         # Show placeholder
         self.placeholder.setVisible(True)
