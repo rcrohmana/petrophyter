@@ -969,7 +969,12 @@ class MainWindow(QMainWindow):
         )
 
         self._on_data_loaded()
-        self._show_load_notes(self._loaded_parsers[0], notes)
+        # Merge warnings (unit mismatches, name variants) and the unit notes of
+        # every source file, not only the first.
+        extra = list(notes) + list(getattr(merge_report, "warnings", None) or [])
+        for source in self._loaded_parsers[1:]:
+            extra.extend(getattr(source, "unit_warnings", None) or [])
+        self._show_load_notes(self._loaded_parsers[0], extra)
 
     def _on_merge_error(self, error: str):
         """Handle merge error."""
