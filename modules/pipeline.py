@@ -14,10 +14,17 @@ Contract:
 
 from typing import Callable, Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
+from modules.param_scopes import (
+    GR_MANUAL, PROJECT, PROJECT_ZONE, SPECS, UNZONED, ZONE_AUTO_MIN_FT,
+    ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature, normalize_zone,
+)
 from modules.petrophysics import PetrophysicsCalculator
-from modules.statistics_utils import StatisticsUtils, get_default_matrix_parameters
+from modules.statistics_utils import (
+    MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
+)
 
 ProgressFn = Callable[[str, int], None]
 
@@ -64,7 +71,15 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "gas_correction_enabled": False,
     "gas_nphi_factor": 0.30,
     "gas_rhob_factor": 0.15,
+    # Formation temperature (degF, degF/100 ft) and the Arps correction of Rw.
+    "temp_correction": False,
+    "surface_temp": 80.0,
+    "temp_gradient": 1.5,
+    "rw_ref_temp": 75.0,
 }
+
+# ``summary["param_sources"]`` key for the well-level parameters.
+WELL_SOURCES_KEY = "(well)"
 
 VSH_METHOD_MAP = {
     "Linear": "linear",
@@ -218,13 +233,33 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
     )
 
 
-def _auto_rw(stats_util, calc, vsh, rt_curve, p):
-    """Rwa-method Rw on PHIE (PHIT if PHIE is absent) and the reference VSH, or None."""
+def temperature_factor(data: pd.DataFrame, p: Dict) -> Optional[pd.Series]:
+    """Arps multiplier ``Rw(T(depth)) / Rw(T_ref)`` per sample, or None when off.
+
+    T(depth) uses the well's surface temperature and gradient (degF,
+    degF/100 ft) on the measured ``DEPTH`` in feet.
+    """
+    if not p.get("temp_correction"):
+        return None
+    temp = formation_temperature(data["DEPTH"], float(p["surface_temp"]), float(p["temp_gradient"]))
+    return arps_factor(temp, float(p["rw_ref_temp"]))
+
+
+def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None):
+    """Rwa-method Rw on PHIE (PHIT if PHIE is absent) and the reference VSH, or None.
+
+    With temperature correction the RT values are first brought to the Rw
+    reference temperature, so the estimate is Rw at that temperature.
+    """
     phi = calc.results.get("PHIE")
     if phi is None or not phi.notna().any():
         phi = calc.results.get("PHIT")
     if phi is None:
         return None
+    if temp_factor is not None:
+        frame = stats_util.data.copy()
+        frame[rt_curve] = frame[rt_curve] / temp_factor.loc[frame.index]
+        stats_util = StatisticsUtils(frame)
     rw = stats_util.estimate_rw_from_rt_water_zone(
         rt_curve, phi, 0.15, p["a"], p["m"], vsh_series=vsh
     )
@@ -243,16 +278,17 @@ def _unavailable_warning(name, entered):
     )
 
 
-def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings):
+def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, temp_factor=None):
     """Effective Rw/Rsh per ``rw_mode`` / ``rsh_mode``.
 
     Returns ``(rw, rsh, rw_source, rsh_source)``; a source is ``"manual"``,
-    ``"auto"`` or :data:`AUTO_UNAVAILABLE`.
+    ``"auto"`` or :data:`AUTO_UNAVAILABLE`. With temperature correction Rw is
+    at the reference temperature.
     """
     rw, rsh = p["rw"], p["rsh"]
     rw_source = rsh_source = "manual"
     if p["rw_mode"] == "auto":
-        estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p)
+        estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor)
         if estimate is not None:
             rw, rw_source = estimate, "auto"
         else:
@@ -268,27 +304,36 @@ def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings):
     return rw, rsh, rw_source, rsh_source
 
 
+def _filter_formations(data, p, formation_tops):
+    if p["analysis_mode"] == "Per-Formation" and p["selected_formations"] and formation_tops:
+        return formation_tops.filter_by_formations(data, p["selected_formations"], "DEPTH")
+    return data
+
+
 def estimate_rw_rsh(
     data: pd.DataFrame,
     curve_mapping: Dict[str, str],
     params: Dict,
     formation_tops=None,
+    zone: Optional[str] = None,
 ) -> Optional[Dict]:
     """Rw and Rsh exactly as a pipeline run in auto mode would estimate them.
 
     Uses the same formation filter, GR baseline, VSH and porosity steps as
     :func:`run_pipeline`, then the same estimators, regardless of ``rw_mode`` /
-    ``rsh_mode``. Returns ``None`` when there is no data or no RT curve,
-    otherwise a dict with ``rw`` and ``rsh`` (the estimate, or the entered value
-    when it is unavailable), ``rw_source``, ``rsh_source``, ``gr_min``,
-    ``gr_max`` and ``warnings``.
+    ``rsh_mode``. With ``zone`` only that zone's samples are used (the
+    well · zone "Calculate" of spec §4.7). Returns ``None`` when there is no
+    data or no RT curve, otherwise a dict with ``rw`` and ``rsh`` (the estimate,
+    or the entered value when it is unavailable), ``rw_source``,
+    ``rsh_source``, ``gr_min``, ``gr_max`` and ``warnings``.
     """
     if data is None:
         return None
     p = {**PARAM_DEFAULTS, **params, "rw_mode": "auto", "rsh_mode": "auto"}
-    data = data.copy()
-    if p["analysis_mode"] == "Per-Formation" and p["selected_formations"] and formation_tops:
-        data = formation_tops.filter_by_formations(data, p["selected_formations"], "DEPTH")
+    data = _filter_formations(data.copy(), p, formation_tops)
+    if zone and formation_tops is not None:
+        labels, _ = assign_zones(data["DEPTH"], formation_tops)
+        data = data[labels == normalize_zone(zone)]
     rt_curve = curve_mapping.get("RT", "RT")
     if len(data) == 0 or not _has(rt_curve, data):
         return None
@@ -299,7 +344,7 @@ def estimate_rw_rsh(
     vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-        stats_util, calc, vsh, rt_curve, p, warnings
+        stats_util, calc, vsh, rt_curve, p, warnings, temperature_factor(data, p)
     )
     return {
         "rw": rw,
@@ -310,6 +355,292 @@ def estimate_rw_rsh(
         "gr_max": gr_max,
         "warnings": warnings,
     }
+
+
+# ---------------------------------------------------------------------------
+# Zones (spec §4.6)
+# ---------------------------------------------------------------------------
+def assign_zones(depth: pd.Series, formation_tops) -> Tuple[pd.Series, list]:
+    """Zone label per sample, plus warnings.
+
+    A sample belongs to the formation with ``top <= d < bottom`` (the deepest
+    formation keeps its bottom, as in :class:`FormationTops`). Where intervals
+    overlap the shallower formation wins and a warning is returned. Samples
+    outside every interval are :data:`UNZONED`. Labels are normalised names.
+    """
+    labels = pd.Series(UNZONED, index=depth.index, dtype=object)
+    formations = list(getattr(formation_tops, "formations", None) or [])
+    if not formations:
+        return labels, []
+    deepest = max(formations, key=lambda fm: fm.bottom_depth)
+    ordered = sorted(formations, key=lambda fm: fm.top_depth)
+    warnings = []
+    for upper, lower in zip(ordered, ordered[1:]):
+        if lower.top_depth < upper.bottom_depth:
+            warnings.append(
+                f"Formation tops overlap: {upper.name} ({upper.top_depth:g}-"
+                f"{upper.bottom_depth:g}) and {lower.name} ({lower.top_depth:g}-"
+                f"{lower.bottom_depth:g}); the shallower formation is used."
+            )
+    # Deepest first, so a shallower formation overwrites any overlap.
+    for fm in reversed(ordered):
+        inside = depth >= fm.top_depth
+        inside &= (depth <= fm.bottom_depth) if fm is deepest else (depth < fm.bottom_depth)
+        labels[inside] = normalize_zone(fm.name)
+    return labels, warnings
+
+
+def _segment_order(labels: pd.Series, depth: pd.Series):
+    """Zone names in order of their shallowest sample."""
+    return list(depth.groupby(labels).min().sort_values().index)
+
+
+def _enough_data(seg: pd.DataFrame, curve: Optional[str]) -> bool:
+    """Whether a zone has enough samples of ``curve`` for an AUTO estimate (§4.4)."""
+    if not _has(curve, seg):
+        return False
+    valid = seg.loc[seg[curve].notna(), "DEPTH"]
+    return len(valid) >= ZONE_AUTO_MIN_SAMPLES and (
+        float(valid.max() - valid.min()) >= ZONE_AUTO_MIN_FT
+    )
+
+
+def _zone_gr_baseline(seg, gr_curve):
+    """P5/P95 of the zone's GR, or None when the zone cannot support it (§4.4)."""
+    if not _enough_data(seg, gr_curve):
+        return None
+    gr = seg[gr_curve].dropna()
+    lo, hi = float(np.percentile(gr, 5)), float(np.percentile(gr, 95))
+    if hi - lo < MIN_GR_SEPARATION:
+        return None
+    return lo, hi
+
+
+def _fallback_value(name, plan_entry, well_value):
+    fb = plan_entry.get("fallback", {}).get(name, {})
+    if fb.get("scope") == PROJECT_ZONE:
+        return fb.get("value"), f"auto (fallback: {PROJECT_ZONE})"
+    return well_value, "auto (fallback: well)"
+
+
+def _merge_diagnostics(total, diagnostics):
+    for method, diag in diagnostics.items():
+        counts = total.setdefault(method, {"no_root": 0, "failed": 0})
+        counts["no_root"] += int(diag.get("no_root", 0))
+        counts["failed"] += int(diag.get("failed", 0))
+
+
+def _zone_curves(seg, curve_mapping, p, plan_entry, well, temp_factor, warnings):
+    """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
+
+    ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
+    their sources, used wherever the zone does not set its own value.
+    """
+    zone_keys, zone_auto = plan_entry["zone_keys"], plan_entry["zone_auto"]
+    sp = dict(p)
+    for name in zone_keys:
+        for key in SPECS[name].keys:
+            sp[key] = plan_entry["params"].get(key, sp.get(key))
+    sources = dict(well["sources"])
+    for name in zone_keys:
+        sources[name] = plan_entry["info"][name]["source"]
+
+    gr_curve = curve_mapping.get("GR", "GR")
+    rt_curve = curve_mapping.get("RT", "RT")
+    if "gr_baseline" in zone_auto:
+        baseline = _zone_gr_baseline(seg, gr_curve)
+        if baseline is None:
+            baseline, sources["gr_baseline"] = _fallback_value("gr_baseline", plan_entry, well["gr"])
+    elif "gr_baseline" in zone_keys:
+        baseline = (sp["gr_min_manual"], sp["gr_max_manual"])
+    else:
+        baseline = well["gr"]
+    sp["vsh_baseline_method"] = GR_MANUAL
+    sp["gr_min_manual"], sp["gr_max_manual"] = float(baseline[0]), float(baseline[1])
+
+    calc = PetrophysicsCalculator(seg)
+    stats_util = StatisticsUtils(seg)
+    vsh, _, _ = _compute_vsh(calc, stats_util, seg, curve_mapping, sp, warnings)
+    _compute_porosity(calc, vsh, seg, curve_mapping, sp, warnings)
+
+    values = {}
+    estimators = {
+        "rw": lambda: _auto_rw(stats_util, calc, vsh, rt_curve, sp, temp_factor),
+        "rsh": lambda: _auto_rsh(stats_util, vsh, rt_curve),
+    }
+    for name, estimator in estimators.items():
+        if name in zone_auto:
+            estimate = estimator() if _enough_data(seg, rt_curve) else None
+            if estimate is None:
+                estimate, sources[name] = _fallback_value(name, plan_entry, well[name])
+            values[name] = estimate
+        elif name in zone_keys:
+            values[name] = sp[name]
+        else:
+            values[name] = well[name]
+    sp["rw"], sp["rsh"] = values["rw"], values["rsh"]
+    sp["rw_mode"] = sp["rsh_mode"] = "manual"
+    pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
+                             temp_factor, warnings)
+    resolved = {"gr_baseline": [sp["gr_min_manual"], sp["gr_max_manual"]],
+                "rw": values["rw"], "rsh": values["rsh"]}
+    return calc, pay, _sources_table(sp, sources, resolved)
+
+
+def _sources_table(p, sources, resolved):
+    """``{param: {"value", "source"}}`` for every scoped parameter."""
+    table = {}
+    for name in SPECS:
+        value = resolved[name] if name in resolved else flat_value(name, p)
+        table[name] = {"value": value, "source": sources.get(name, PROJECT)}
+    return table
+
+
+def _well_sources(p, rw_source, rsh_source):
+    """Sources of the well-level parameters, from the resolver info when given."""
+    info = p.get("param_info") or {}
+    sources = {name: (info.get(name) or {}).get("source", PROJECT) for name in SPECS}
+    if not info:
+        if p["vsh_baseline_method"] != GR_MANUAL:
+            sources["gr_baseline"] = "auto"
+        for name in ("rw", "rsh"):
+            if p[f"{name}_mode"] == "auto":
+                sources[name] = "auto"
+    for name, src in (("rw", rw_source), ("rsh", rsh_source)):
+        if src == AUTO_UNAVAILABLE:
+            sources[name] = f"auto unavailable ({sources[name]})"
+    return sources
+
+
+# ---------------------------------------------------------------------------
+# Saturation, Swirr, permeability, pay flags
+# ---------------------------------------------------------------------------
+def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, temp_factor, warnings):
+    """Sw, Swirr, permeability and pay flags on ``calc``.
+
+    ``rw`` is a number (at the reference temperature when ``temp_factor`` is
+    given). Returns the ``vsh``/``phie``/``sw``/``swirr`` series used and the
+    net-pay summary of this calculator's samples.
+    """
+    rt_curve = curve_mapping.get("RT", "RT")
+    has_rt = _has(rt_curve, data)
+    a, m, n = p["a"], p["m"], p["n"]
+    rw_eff = rw if temp_factor is None else rw * temp_factor.loc[data.index]
+
+    phie = calc.results.get("PHIE")
+    if phie is None:
+        phie = pd.Series([0.15] * len(data), index=data.index)
+        warnings.append("PHIE defaulted to 0.15 because no usable porosity method was available.")
+
+    if has_rt:
+        selected = p["sw_methods"]
+        if "Archie" in selected:
+            calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n)
+        if "Indonesian" in selected:
+            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh, a, m, n)
+        if "Simandoux" in selected:
+            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh, a, m, n)
+        if "Waxman-Smits" in selected:
+            calc.calculate_sw_waxman_smits(rt_curve, phie, rw_eff, a, m, n, p["ws_qv"], p["ws_b"])
+        if "Dual-Water" in selected:
+            calc.calculate_sw_dual_water(rt_curve, phie, rw_eff, a, m, n, p["dw_swb"], p["dw_rwb"])
+
+        primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
+        if primary_col in calc.results.columns:
+            calc.results["SW"] = calc.results[primary_col]
+        else:
+            available = [c for c in SW_COLUMN_MAP.values() if c in calc.results.columns]
+            if available:
+                calc.results["SW"] = calc.results[available[0]]
+            else:
+                calc.results["SW"] = pd.Series([1.0] * len(data), index=data.index)
+                warnings.append(
+                    "Water saturation defaulted to 1.0 because no selected method produced a result."
+                )
+
+    swirr_method = p["swirr_method"]
+    k_buckles = p["k_buckles"]
+    sw_for_swirr = calc.results.get("SW", pd.Series([0.5] * len(data), index=data.index))
+    if swirr_method == "Hierarchical (Recommended)":
+        calc.calculate_swirr_hierarchical(phie=phie, sw=sw_for_swirr, vsh=vsh, k_buckles=k_buckles)
+    else:
+        calc.calculate_all_swirr(
+            phie=phie,
+            sw=sw_for_swirr,
+            vsh=vsh,
+            k_buckles=k_buckles,
+            vsh_threshold=0.2,
+            methods=SWIRR_METHOD_MAP.get(swirr_method, ["buckles"]),
+        )
+    swirr = calc.results.get("SWIRR", pd.Series([0.2] * len(data), index=data.index))
+
+    perm_timur = calc.calculate_permeability_timur(phie, swirr)
+    calc.calculate_permeability_wyllie_rose(phie, swirr, p["perm_C"], p["perm_P"], p["perm_Q"])
+    calc.classify_flow_units(perm_timur)
+    calc.get_permeability_quality_flags(perm_timur, swirr, phie)
+
+    sw_for_pay = calc.results.get("SW", pd.Series([1.0] * len(data), index=data.index))
+    pay = calc.calculate_net_pay(
+        vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
+    )
+    return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay}
+
+
+def _depth_step(data: pd.DataFrame) -> float:
+    """The net-pay depth step, derived as ``calculate_net_pay`` derives it."""
+    if "DEPTH" in data.columns:
+        depths = data["DEPTH"].dropna()
+        if len(depths) > 1:
+            return abs(np.median(np.diff(depths)))
+    return 0.1
+
+
+def _pay_stats(results, vsh, phie, sw, step, mask=None):
+    """Net-pay numbers from the stored flags (same arithmetic as ``calculate_net_pay``)."""
+    if mask is not None:
+        results, vsh, phie, sw = results[mask], vsh[mask], phie[mask], sw[mask]
+    gross_flag = results["GROSS_SAND_FLAG"].astype(bool)
+    res_flag = results["NET_RES_FLAG"].astype(bool)
+    pay_flag = results["NET_PAY_FLAG"].astype(bool)
+    gross = gross_flag.sum() * step
+    net_res = res_flag.sum() * step
+    net_pay = pay_flag.sum() * step
+    if pay_flag.sum() > 0:
+        avg_phi = float(phie[pay_flag].mean())
+        avg_sw = float(sw[pay_flag].mean())
+        avg_vsh = float(vsh[pay_flag].mean())
+    else:
+        avg_phi = avg_sw = avg_vsh = np.nan
+    return {
+        "gross_sand": float(gross),
+        "net_reservoir": float(net_res),
+        "net_pay": float(net_pay),
+        "ng_reservoir": float(net_res / gross if gross > 0 else 0),
+        "ng_pay": float(net_pay / gross if gross > 0 else 0),
+        "avg_phie_pay": float(avg_phi),
+        "avg_sw_pay": float(avg_sw),
+        "avg_vsh_pay": float(avg_vsh),
+    }
+
+
+ZONE_SUMMARY_PARAMS = ("a", "m", "n", "rw", "rsh", "vsh_cutoff", "phi_cutoff", "sw_cutoff")
+
+
+def _zone_rows(results, labels, data, pay_series, step, sources_by_zone):
+    """Per-zone pay summary rows in depth order (spec §4.8)."""
+    rows = []
+    for zone in _segment_order(labels, data["DEPTH"]):
+        mask = labels == zone
+        depth = data.loc[mask, "DEPTH"]
+        row = {"zone": zone, "top": float(depth.min()), "bottom": float(depth.max()),
+               "samples": int(mask.sum())}
+        row.update(_pay_stats(results, *pay_series, step, mask))
+        if "dHCPV_NET_PAY" in results.columns:
+            row["hcpv_net_pay"] = float(results.loc[mask, "dHCPV_NET_PAY"].sum())
+        table = sources_by_zone.get(zone, {})
+        row["params"] = {k: table[k] for k in ZONE_SUMMARY_PARAMS if k in table}
+        rows.append(row)
+    return rows
 
 
 def run_pipeline(
@@ -324,14 +655,22 @@ def run_pipeline(
     Args:
         data: Log DataFrame with a ``DEPTH`` column. Not mutated.
         curve_mapping: ``{"GR": mnemonic or "None", "RHOB": ..., "NPHI": ..., "DT": ..., "RT": ...}``.
-        params: Plain dict; see :data:`PARAM_DEFAULTS`.
+        params: Plain dict; see :data:`PARAM_DEFAULTS`. Optional extras from
+            :mod:`modules.param_scopes`: ``zone_plan`` (per-zone parameters)
+            and ``param_info`` (provenance of the well-level values).
         progress: Optional ``callback(message, percent)``.
-        formation_tops: ``FormationTops`` instance, needed only for Per-Formation mode.
+        formation_tops: ``FormationTops`` instance; needed for Per-Formation
+            mode and for zones.
 
     Returns:
         ``(results, summary)`` where ``results`` is the original curves plus the
-        computed columns and ``summary`` holds net pay, HCPV, parameters, solver
-        diagnostics, and warnings.
+        computed columns (and ``ZONE`` when tops are given) and ``summary``
+        holds net pay, HCPV, parameters and their sources (``param_sources``),
+        the per-zone pay summary (``zones``), solver diagnostics, and warnings.
+
+    Zones with an entry in ``zone_plan`` are computed as separate segments
+    with their own parameters. All other samples are computed together with
+    the well's parameters, exactly as an unzoned run (spec §4.6).
 
     Raises:
         PipelineError: no data, or nothing left after formation filtering.
@@ -348,26 +687,25 @@ def run_pipeline(
 
     analysis_mode = p["analysis_mode"]
     selected_formations = p["selected_formations"]
-    if analysis_mode == "Per-Formation" and selected_formations and formation_tops:
-        data = formation_tops.filter_by_formations(data, selected_formations, "DEPTH")
+    data = _filter_formations(data, p, formation_tops)
     if len(data) == 0:
         raise PipelineError("No data in selected formation(s)")
+
+    labels = None
+    if formation_tops is not None and getattr(formation_tops, "formations", None):
+        labels, zone_warnings = assign_zones(data["DEPTH"], formation_tops)
+        warnings.extend(zone_warnings)
+    plan = {}
+    if labels is not None:
+        present = set(labels.unique())
+        plan = {z: e for z, e in (p.get("zone_plan") or {}).items() if z in present}
 
     emit("Initializing calculator...", 10)
     calc = PetrophysicsCalculator(data)
     stats_util = StatisticsUtils(data)
-
-    gr_curve = curve_mapping.get("GR", "GR")
-    rhob_curve = curve_mapping.get("RHOB", "RHOB")
-    nphi_curve = curve_mapping.get("NPHI", "NPHI")
-    dt_curve = curve_mapping.get("DT", "DT")
     rt_curve = curve_mapping.get("RT", "RT")
-
-    has_gr = _has(gr_curve, data)
-    has_density = _has(rhob_curve, data)
-    has_neutron = _has(nphi_curve, data)
-    has_sonic = _has(dt_curve, data)
     has_rt = _has(rt_curve, data)
+    temp_factor = temperature_factor(data, p)
 
     # ---- Shale volume -------------------------------------------------------
     emit("Calculating VShale...", 20)
@@ -378,85 +716,67 @@ def run_pipeline(
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     emit("Calculating effective porosity...", 45)
 
-    # ---- Water saturation ---------------------------------------------------
+    # ---- Water saturation (well-level Rw / Rsh) -----------------------------
     emit("Calculating water saturation...", 55)
-    a, m, n = p["a"], p["m"], p["n"]
-
     rw, rsh, rw_source, rsh_source = p["rw"], p["rsh"], "manual", "manual"
     if has_rt:
         rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-            stats_util, calc, vsh, rt_curve, p, warnings
+            stats_util, calc, vsh, rt_curve, p, warnings, temp_factor
         )
-
-    phie = calc.results.get("PHIE")
-    if phie is None:
-        phie = pd.Series([0.15] * len(data), index=data.index)
-        warnings.append("PHIE defaulted to 0.15 because no usable porosity method was available.")
-
-    if has_rt:
-        selected = p["sw_methods"]
-        if "Archie" in selected:
-            calc.calculate_sw_archie(rt_curve, phie, rw, a, m, n)
-        if "Indonesian" in selected:
-            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw, rsh, a, m, n)
-        if "Simandoux" in selected:
-            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw, rsh, a, m, n)
-        if "Waxman-Smits" in selected:
-            calc.calculate_sw_waxman_smits(rt_curve, phie, rw, a, m, n, p["ws_qv"], p["ws_b"])
-        if "Dual-Water" in selected:
-            calc.calculate_sw_dual_water(rt_curve, phie, rw, a, m, n, p["dw_swb"], p["dw_rwb"])
-
-        primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
-        if primary_col in calc.results.columns:
-            calc.results["SW"] = calc.results[primary_col]
-        else:
-            available = [c for c in SW_COLUMN_MAP.values() if c in calc.results.columns]
-            if available:
-                calc.results["SW"] = calc.results[available[0]]
-            else:
-                calc.results["SW"] = pd.Series([1.0] * len(data), index=data.index)
-                warnings.append(
-                    "Water saturation defaulted to 1.0 because no selected method produced a result."
-                )
-
-    # ---- Irreducible saturation ---------------------------------------------
-    emit("Calculating Swirr...", 65)
-    swirr_method = p["swirr_method"]
-    k_buckles = p["k_buckles"]
-    sw_for_swirr = calc.results.get("SW", pd.Series([0.5] * len(data), index=data.index))
-
-    if swirr_method == "Hierarchical (Recommended)":
-        calc.calculate_swirr_hierarchical(phie=phie, sw=sw_for_swirr, vsh=vsh, k_buckles=k_buckles)
-    else:
-        calc.calculate_all_swirr(
-            phie=phie,
-            sw=sw_for_swirr,
-            vsh=vsh,
-            k_buckles=k_buckles,
-            vsh_threshold=0.2,
-            methods=SWIRR_METHOD_MAP.get(swirr_method, ["buckles"]),
-        )
-    swirr = calc.results.get("SWIRR", pd.Series([0.2] * len(data), index=data.index))
-    swirr_mean = swirr.mean()
-
-    # ---- Permeability -------------------------------------------------------
-    emit("Calculating permeability...", 75)
-    perm_timur = calc.calculate_permeability_timur(phie, swirr)
-    calc.calculate_permeability_wyllie_rose(phie, swirr, p["perm_C"], p["perm_P"], p["perm_Q"])
-    calc.classify_flow_units(perm_timur)
-    calc.get_permeability_quality_flags(perm_timur, swirr, phie)
-
-    # ---- Net pay and HCPV ---------------------------------------------------
-    emit("Calculating net pay...", 85)
-    sw_for_pay = calc.results.get("SW", pd.Series([1.0] * len(data), index=data.index))
-    summary = calc.calculate_net_pay(
-        vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
+    well_sources = _well_sources(p, rw_source, rsh_source)
+    well_table = _sources_table(
+        p, well_sources, {"gr_baseline": [gr_min, gr_max], "rw": rw, "rsh": rsh}
     )
+    sources_by_zone = {}
+    solver_raw = {}
+
+    if not plan:
+        emit("Calculating Swirr...", 65)
+        pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, temp_factor, warnings)
+        emit("Calculating permeability...", 75)
+        emit("Calculating net pay...", 85)
+        summary = dict(pay["summary"])
+        _merge_diagnostics(solver_raw, calc.solver_diagnostics)
+    else:
+        # Planned zones run as their own segments; every other sample runs
+        # together with the well's parameters.
+        well = {"gr": (gr_min, gr_max), "rw": rw, "rsh": rsh, "sources": well_sources}
+        zones = [z for z in _segment_order(labels, data["DEPTH"]) if z in plan]
+        parts, pays = [], []
+        for i, zone in enumerate(zones):
+            emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
+            seg_calc, seg_pay, table = _zone_curves(
+                data[labels == zone], curve_mapping, p, plan[zone], well, temp_factor, warnings
+            )
+            parts.append(seg_calc.results)
+            pays.append(seg_pay)
+            sources_by_zone[zone] = table
+            _merge_diagnostics(solver_raw, seg_calc.solver_diagnostics)
+        rest = ~labels.isin(zones)
+        if rest.any():
+            rest_data = data[rest]
+            rest_calc = PetrophysicsCalculator(rest_data)
+            sp = {**p, "vsh_baseline_method": GR_MANUAL,
+                  "gr_min_manual": gr_min, "gr_max_manual": gr_max}
+            rest_vsh, _, _ = _compute_vsh(
+                rest_calc, StatisticsUtils(rest_data), rest_data, curve_mapping, sp, warnings
+            )
+            _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
+            pays.append(_saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
+                                           rw, rsh, temp_factor, warnings))
+            parts.append(rest_calc.results)
+            _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
+        emit("Calculating net pay...", 85)
+        calc.results = pd.concat(parts).reindex(data.index)
+        pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
+               for k in ("vsh", "phie", "sw", "swirr")}
+        summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _depth_step(data))
+        warnings[:] = list(dict.fromkeys(warnings))
 
     emit("Calculating HCPV...", 88)
     hcpv = calc.calculate_hcpv(
-        phie=phie,
-        sw=sw_for_pay,
+        phie=pay["phie"],
+        sw=pay["sw"],
         depth=data["DEPTH"],
         net_res_flag=calc.results.get("NET_RES_FLAG"),
         net_pay_flag=calc.results.get("NET_PAY_FLAG"),
@@ -464,6 +784,8 @@ def run_pipeline(
 
     # ---- Summary ------------------------------------------------------------
     emit("Finalizing results...", 95)
+    if labels is not None:
+        calc.results["ZONE"] = labels
     results = calc.export_results()
     summary["gr_min"] = gr_min
     summary["gr_max"] = gr_max
@@ -471,14 +793,29 @@ def run_pipeline(
     summary["rsh"] = rsh
     summary["rw_source"] = rw_source
     summary["rsh_source"] = rsh_source
-    summary["swirr_method"] = swirr_method
-    summary["swirr_mean"] = swirr_mean
+    summary["swirr_method"] = p["swirr_method"]
+    summary["swirr_mean"] = pay["swirr"].mean()
     summary["analysis_mode"] = analysis_mode
     summary["selected_formations"] = selected_formations
     summary["data_points"] = len(data)
+    if temp_factor is not None:
+        rw_at_depth = rw * temp_factor
+        summary["rw_ref_temp"] = float(p["rw_ref_temp"])
+        summary["rw_at_depth_range"] = [float(rw_at_depth.min()), float(rw_at_depth.max())]
+
+    param_sources = {WELL_SOURCES_KEY: well_table}
+    if labels is not None:
+        for zone in _segment_order(labels, data["DEPTH"]):
+            param_sources[zone] = sources_by_zone.get(zone, well_table)
+    summary["param_sources"] = param_sources
+    summary["zones"] = (
+        _zone_rows(calc.results, labels, data, (pay["vsh"], pay["phie"], pay["sw"]),
+                   _depth_step(data), param_sources)
+        if labels is not None else []
+    )
 
     solver_diagnostics = {}
-    for method, diagnostics in calc.solver_diagnostics.items():
+    for method, diagnostics in solver_raw.items():
         counts = {
             "no_root": int(diagnostics.get("no_root", 0)),
             "failed": int(diagnostics.get("failed", 0)),

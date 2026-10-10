@@ -14,6 +14,137 @@
  "net_reservoir": 24.489795918367236,
  "ng_pay": 1.0,
  "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": true
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     30.205844942958024,
+     39.699098521619945
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
  "rsh": 50.0,
  "rsh_source": "auto",
  "rw": 0.05,
@@ -33,5 +164,6 @@
  "swirr_method": "All Methods",
  "warnings": [
   "SW_DW: 31 no-root, 0 failed solver points."
- ]
+ ],
+ "zones": []
 }

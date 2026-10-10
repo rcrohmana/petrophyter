@@ -148,6 +148,19 @@ class PetrophysicsCalculator:
         """
         return pd.Series([fill_value] * len(self.data), index=self.data.index)
 
+    def _rw_values(self, rw):
+        """Rw as a float, or as a float array aligned to the data rows.
+
+        An array (or Series) Rw carries a per-sample value, e.g. Rw corrected
+        to formation temperature (Arps); it must have one value per row.
+        """
+        if np.ndim(rw) == 0:
+            return float(rw)
+        values = np.asarray(rw, dtype=float)
+        if values.shape != (len(self.data),):
+            raise ValueError("rw array must have one value per data row")
+        return values
+
     @staticmethod
     def _validate_positive_parameter(name: str, value, allow_nan: bool = False):
         """Reject non-physical scalar/array parameters at formula boundaries."""
@@ -851,6 +864,7 @@ class PetrophysicsCalculator:
 
         rt = self.data[rt_curve]
         self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
@@ -906,6 +920,7 @@ class PetrophysicsCalculator:
 
         rt = self.data[rt_curve]
         self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
@@ -985,6 +1000,7 @@ class PetrophysicsCalculator:
 
         rt = self.data[rt_curve]
         self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
@@ -1086,6 +1102,7 @@ class PetrophysicsCalculator:
 
         rt = self.data[rt_curve]
         self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
@@ -1099,7 +1116,7 @@ class PetrophysicsCalculator:
         fail_count = 0
 
         # Pre-calculate constants where possible
-        cw = 1.0 / rw if rw > 0 else 0
+        cw = 1.0 / rw  # validated > 0; an array for per-sample Rw
 
         rt_arr = np.asarray(rt, dtype=float)
         phie_arr = np.asarray(phie, dtype=float)
@@ -1113,13 +1130,14 @@ class PetrophysicsCalculator:
             with np.errstate(all="ignore"):
                 f_star = a / np.power(phie_arr[valid], m)
                 ct = 1.0 / rt_arr[valid]
+                cw_v = cw[valid] if np.ndim(cw) else cw
 
                 # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
                 # Model_Ct = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
                 def ws_func(sw):
                     # Guard against small Sw
                     sw = np.maximum(sw, 1e-6)
-                    term1 = cw * np.power(sw, n)
+                    term1 = cw_v * np.power(sw, n)
                     term2 = (B * qv) * np.power(sw, n - 1)
                     return (1.0 / f_star) * (term1 + term2) - ct
 
@@ -1182,6 +1200,7 @@ class PetrophysicsCalculator:
 
         rt = self.data[rt_curve]
         self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
         self._validate_positive_parameter("rwb", rwb)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
@@ -1200,7 +1219,7 @@ class PetrophysicsCalculator:
 
         fail_count = 0
 
-        cw = 1.0 / rw if rw > 0 else 0
+        cw = 1.0 / rw  # validated > 0; an array for per-sample Rw
         cwb = 1.0 / rwb if rwb > 0 else 0
 
         rt_arr = np.asarray(rt, dtype=float)
@@ -1216,13 +1235,14 @@ class PetrophysicsCalculator:
                 # Formation factor based on total porosity (usually)
                 f_t = a / np.power(phi_arr[valid], m)
                 ct_measured = 1.0 / rt_arr[valid]
+                cw_v = cw[valid] if np.ndim(cw) else cw
 
                 # f(Swt) = Model_Ct - Measured_Ct
                 def dw_func(swt):
                     # Swt must be >= Swb ideally; allow [Swb, 1] for stability.
                     swt = np.maximum(swt, swb + 1e-4)  # Ensure slightly above Swb
                     # Ct = (Swt^n / Ft) * (Cw + (Cwb - Cw) * Swb / Swt)
-                    term = cw + (cwb - cw) * (swb / swt)
+                    term = cw_v + (cwb - cw_v) * (swb / swt)
                     return (np.power(swt, n) / f_t) * term - ct_measured
 
                 # Root search in [Swb, 1.0]
