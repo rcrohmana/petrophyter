@@ -1112,7 +1112,8 @@ class AppModel(QObject):
         """Set as project default: write a value to the project scope."""
         from modules.param_scopes import MANUAL
 
-        self.set_entry(name, MANUAL, value, scope=SCOPE_PROJECT, zone=None)
+        # zone="" (not None) so the edited zone is not used.
+        self.set_entry(name, MANUAL, value, scope=SCOPE_PROJECT, zone="")
 
     def get_available_curves(self) -> List[str]:
         """Get list of available curves from loaded LAS data."""

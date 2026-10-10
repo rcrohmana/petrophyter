@@ -17,8 +17,12 @@ from .parameter_groups import (
     PermParamsGroup,
     SwirEstimationGroup,
     CutoffParamsGroup,
-    GasCorrectionGroup
+    GasCorrectionGroup,
+    TemperatureGroup,
+    FieldModeControl,
 )
+from .scope_bar import ScopeBar
+from .zone_grid import ZoneParamGrid
 
 __all__ = [
     'PlotWidget',
@@ -39,5 +43,9 @@ __all__ = [
     'PermParamsGroup',
     'SwirEstimationGroup',
     'CutoffParamsGroup',
-    'GasCorrectionGroup'
+    'GasCorrectionGroup',
+    'TemperatureGroup',
+    'FieldModeControl',
+    'ScopeBar',
+    'ZoneParamGrid',
 ]

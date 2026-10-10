@@ -158,6 +158,11 @@ QLabel[status="warning"] { color: $warning; }
 QLabel[status="error"] { color: $error; }
 QLabel[status="muted"] { color: $text_muted; }
 QLabel[status="accent"] { color: $accent; }
+/* Parameter fields inherited from another scope, or with a validation warning. */
+QDoubleSpinBox[status="muted"], QSpinBox[status="muted"], QComboBox[status="muted"],
+QCheckBox[status="muted"], QLineEdit[status="muted"] { color: $text_muted; }
+QDoubleSpinBox[status="warning"], QSpinBox[status="warning"], QComboBox[status="warning"],
+QLineEdit[status="warning"] { border-color: $warning; }
 
 /* ============ Named structural widgets ============ */
 QLabel#SectionLabel { color: $text_muted; font-size: $font_caption;

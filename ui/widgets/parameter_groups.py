@@ -24,8 +24,12 @@ from PyQt6.QtWidgets import (
     QFrame,
     QScrollArea,
     QSizePolicy,
+    QToolButton,
+    QMenu,
+    QLayout,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent
+from PyQt6.QtGui import QAction, QActionGroup
 from typing import List, Dict, Optional
 
 from themes.helpers import set_status
@@ -646,6 +650,7 @@ class ArchieParamsGroup(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.updating = False  # True while a preset rewrites a/m/n
         self._setup_ui()
 
     def _setup_ui(self):
@@ -715,9 +720,13 @@ class ArchieParamsGroup(QWidget):
             self.preset_info.setText(
                 f"a={preset['a']}, m={preset['m']}, n={preset['n']}"
             )
-            self.a_spin.setValue(preset["a"])
-            self.m_spin.setValue(preset["m"])
-            self.n_spin.setValue(preset["n"])
+            self.updating = True
+            try:
+                self.a_spin.setValue(preset["a"])
+                self.m_spin.setValue(preset["m"])
+                self.n_spin.setValue(preset["n"])
+            finally:
+                self.updating = False
 
         self.params_changed.emit()
 
@@ -832,6 +841,17 @@ class ResistivityParamsGroup(QWidget):
             self.result_label.setText("")
             self.apply_btn.setVisible(False)
 
+    def calculated(self):
+        """The pending ``(rw, rsh)`` from Calculate, or None."""
+        if hasattr(self, "_calculated_rw"):
+            return self._calculated_rw, self._calculated_rsh
+        return None
+
+    def discard_calculated(self):
+        """Clear the calculated result after it was applied elsewhere."""
+        self.result_label.setText("")
+        self.apply_btn.setVisible(False)
+
     def get_params(self) -> Dict:
         return {
             "rw": self.rw_spin.value(),
@@ -920,6 +940,10 @@ class PermParamsGroup(QWidget):
         self.apply_btn.setVisible(False)
         layout.addWidget(self.apply_btn)
 
+        # When set, Apply first offers (C, P, Q) to this callable; a truthy return
+        # means it was handled (the Parameters window does so at non-project scopes).
+        self.scoped_apply = None
+
         # Connect signals
         self.c_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.p_spin.valueChanged.connect(lambda: self.params_changed.emit())
@@ -957,6 +981,12 @@ class PermParamsGroup(QWidget):
 
     def _do_apply(self):
         """Internal apply handler."""
+        if (self.scoped_apply is not None and hasattr(self, "_calculated_C")
+                and self.scoped_apply(self._calculated_C, self._calculated_P,
+                                      self._calculated_Q)):
+            self.result_label.setText("Values applied")
+            self.apply_btn.setVisible(False)
+            return
         self.apply_calculated()
         self.apply_clicked.emit()
 
@@ -973,6 +1003,7 @@ class SwirEstimationGroup(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.updating = False  # True while a Buckles preset rewrites k
         self._setup_ui()
 
     def _setup_ui(self):
@@ -1059,7 +1090,11 @@ class SwirEstimationGroup(QWidget):
             self.k_buckles_spin.setVisible(False)
             self.buckles_info.setVisible(True)
             k = presets[text]
-            self.k_buckles_spin.setValue(k)
+            self.updating = True
+            try:
+                self.k_buckles_spin.setValue(k)
+            finally:
+                self.updating = False
             self.buckles_info.setText(f"K_buckles = {k}")
 
         self.params_changed.emit()
@@ -1470,3 +1505,227 @@ class PorosityMethodGroup(QWidget):
             self.fallback_label.setVisible(True)
         else:
             self.fallback_label.setVisible(False)
+
+
+class TemperatureGroup(QWidget):
+    """Formation-temperature correction (well-only parameters, spec §4.5)."""
+
+    params_changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.enable_check = QCheckBox("Correct Rw for formation temperature")
+        self.enable_check.setToolTip(
+            "Scale Rw from its reference temperature to formation temperature (Arps)"
+        )
+        layout.addWidget(self.enable_check)
+
+        form = QFormLayout()
+        self.surface_spin = QDoubleSpinBox()
+        self.surface_spin.setRange(-50.0, 200.0)
+        self.surface_spin.setValue(80.0)
+        self.surface_spin.setDecimals(1)
+        self.surface_spin.setSuffix(" °F")
+
+        self.gradient_spin = QDoubleSpinBox()
+        self.gradient_spin.setRange(0.1, 10.0)
+        self.gradient_spin.setValue(1.5)
+        self.gradient_spin.setDecimals(2)
+        self.gradient_spin.setSingleStep(0.1)
+        self.gradient_spin.setSuffix(" °F/100 ft")
+
+        self.grad_auto_cb = QCheckBox("Auto")
+        self.grad_auto_cb.setToolTip("From the LAS header (BHT and TD) when available")
+        gradient_row = QHBoxLayout()
+        gradient_row.addWidget(self.gradient_spin, 1)
+        gradient_row.addWidget(self.grad_auto_cb)
+
+        self.ref_spin = QDoubleSpinBox()
+        self.ref_spin.setRange(32.0, 400.0)
+        self.ref_spin.setValue(75.0)
+        self.ref_spin.setDecimals(1)
+        self.ref_spin.setSuffix(" °F")
+        self.ref_spin.setToolTip("Temperature at which the entered Rw was measured")
+
+        form.addRow("Surface temp:", self.surface_spin)
+        form.addRow("Gradient:", gradient_row)
+        form.addRow("Rw ref. temp:", self.ref_spin)
+        layout.addLayout(form)
+
+        self.enable_check.toggled.connect(lambda: self.params_changed.emit())
+        self.surface_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.gradient_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.ref_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.grad_auto_cb.toggled.connect(self._on_auto_toggled)
+
+    def _on_auto_toggled(self, checked: bool):
+        self.gradient_spin.setEnabled(not checked)
+        self.params_changed.emit()
+
+    def get_params(self) -> Dict:
+        return {
+            "temp_correction": self.enable_check.isChecked(),
+            "surface_temp": self.surface_spin.value(),
+            "temp_gradient": self.gradient_spin.value(),
+            "rw_ref_temp": self.ref_spin.value(),
+        }
+
+    def set_params(self, enabled: bool, surface: float, gradient: float,
+                   ref_temp: float, gradient_auto: bool = False):
+        """Restore the temperature controls."""
+        self.enable_check.setChecked(bool(enabled))
+        self.surface_spin.setValue(surface)
+        self.gradient_spin.setValue(gradient)
+        self.ref_spin.setValue(ref_temp)
+        self.grad_auto_cb.setChecked(gradient_auto)
+
+
+def _find_layout(layout: Optional[QLayout], widget: QWidget) -> Optional[QLayout]:
+    """The (possibly nested) layout that directly holds ``widget``."""
+    if layout is None:
+        return None
+    for index in range(layout.count()):
+        item = layout.itemAt(index)
+        if item is None:
+            continue
+        if item.widget() is widget:
+            return layout
+        found = _find_layout(item.layout(), widget)
+        if found is not None:
+            return found
+    return None
+
+
+class FieldModeControl(QWidget):
+    """Compact per-field mode control shown beside a scoped parameter.
+
+    A muted caption (where the value comes from) and a menu button with
+    Auto / Manual / Inherit plus "Copy to…" and "Set as project default".
+    It only emits the user's explicit choices; it never reads field values.
+    """
+
+    mode_chosen = pyqtSignal(str, str)      # (parameter name, "auto"|"manual"|"inherit")
+    copy_requested = pyqtSignal(str)
+    promote_requested = pyqtSignal(str)
+
+    def __init__(self, name: str, anchor: QWidget, auto: bool = False, parent=None):
+        super().__init__(parent)
+        self.name = name
+        self.anchor = anchor
+        self._scope_visible = False
+        self._anchor_visible = not anchor.isHidden()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        self.caption = QLabel("")
+        set_status(self.caption, "muted")
+        self.button = QToolButton()
+        self.button.setIcon(get_icon("settings-2"))
+        self.button.setToolTip("Value source for this scope")
+        self.button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        row.addWidget(self.caption)
+        row.addWidget(self.button)
+
+        self.menu = QMenu(self)
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        self.actions_ = {}
+        for mode, text, icon in (("auto", "Auto", "refresh-cw"),
+                                 ("manual", "Manual", "sliders-horizontal"),
+                                 ("inherit", "Inherit", "layers")):
+            if mode == "auto" and not auto:
+                continue
+            action = QAction(get_icon(icon), text, self.menu)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _checked=False, m=mode: self.mode_chosen.emit(self.name, m)
+            )
+            group.addAction(action)
+            self.menu.addAction(action)
+            self.actions_[mode] = action
+        self.menu.addSeparator()
+        copy_action = QAction(get_icon("copy"), "Copy to…", self.menu)
+        copy_action.triggered.connect(lambda: self.copy_requested.emit(self.name))
+        promote_action = QAction(get_icon("house"), "Set as project default", self.menu)
+        promote_action.triggered.connect(lambda: self.promote_requested.emit(self.name))
+        self.menu.addAction(copy_action)
+        self.menu.addAction(promote_action)
+        self.button.setMenu(self.menu)
+
+        anchor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        anchor.customContextMenuRequested.connect(self._show_context_menu)
+        anchor.installEventFilter(self)
+        self._insert_beside(anchor)
+        self.hide()
+
+    # ---- layout surgery: put the control right of the field ----
+    def _insert_beside(self, anchor: QWidget):
+        parent = anchor.parentWidget()
+        layout = _find_layout(parent.layout(), anchor) if parent is not None else None
+        if layout is None:
+            return
+        if isinstance(layout, QGridLayout):
+            row, col, _rs, cs = layout.getItemPosition(layout.indexOf(anchor))
+            layout.addWidget(self, row, col + cs + 1)
+            return
+        box = QWidget(parent)
+        box_layout = QHBoxLayout(box)
+        box_layout.setContentsMargins(0, 0, 0, 0)
+        box_layout.setSpacing(6)
+        stretch = 0 if isinstance(anchor, QCheckBox) else 1
+        if isinstance(layout, QFormLayout):
+            row, _role = layout.getWidgetPosition(anchor)
+            taken = layout.takeRow(row)
+            label = taken.labelItem.widget() if taken.labelItem is not None else None
+            box_layout.addWidget(anchor, stretch)
+            box_layout.addWidget(self)
+            if label is not None:
+                layout.insertRow(row, label, box)
+            else:
+                layout.insertRow(row, box)
+        else:  # box layout
+            index = layout.indexOf(anchor)
+            layout.removeWidget(anchor)
+            box_layout.addWidget(anchor, stretch)
+            box_layout.addWidget(self)
+            layout.insertWidget(index, box)
+
+    def eventFilter(self, obj, event):
+        if obj is self.anchor:
+            if event.type() == QEvent.Type.HideToParent:
+                self._anchor_visible = False
+                self._sync_visible()
+            elif event.type() == QEvent.Type.ShowToParent:
+                self._anchor_visible = True
+                self._sync_visible()
+        return super().eventFilter(obj, event)
+
+    def _sync_visible(self):
+        self.setVisible(self._scope_visible and self._anchor_visible)
+
+    def set_active(self, active: bool):
+        """Show the control (non-project scopes) or hide it (project scope)."""
+        self._scope_visible = active
+        self._sync_visible()
+
+    def _show_context_menu(self, pos):
+        if self._scope_visible and self.anchor.isEnabled():
+            self.menu.exec(self.anchor.mapToGlobal(pos))
+
+    def show_state(self, here: bool, mode: str, caption: str, tip: str,
+                   warning: Optional[str] = None):
+        """Reflect the scope view. ``here``: set in this very scope."""
+        checked = mode if here and mode in self.actions_ else "inherit"
+        if checked in self.actions_:
+            self.actions_[checked].setChecked(True)
+        if warning:
+            self.caption.setText("Check value")
+            self.caption.setToolTip(warning)
+            set_status(self.caption, "warning")
+        else:
+            self.caption.setText(caption)
+            self.caption.setToolTip(tip)
+            set_status(self.caption, "muted")
