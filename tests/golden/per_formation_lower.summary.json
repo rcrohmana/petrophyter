@@ -285,6 +285,24 @@
  "swirr_mean": 0.2802931180708407,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [],
+ "zone_diagnostics": {
+  "LOWER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 25.252525252523128,
+   "limiting": "vsh_cutoff",
+   "net_pay": 25.252525252523128,
+   "net_reservoir": 25.252525252523128,
+   "pass_phi": 0.5833333333333334,
+   "pass_sw": 0.8,
+   "pass_vsh": 0.4166666666666667,
+   "status": "ok",
+   "valid": 60
+  }
+ },
  "zones": [
   {
    "avg_phie_pay": 0.180856871065075,
