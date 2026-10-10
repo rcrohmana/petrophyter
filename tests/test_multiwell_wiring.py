@@ -125,6 +125,19 @@ def test_zone_calculate_uses_the_zone(two_wells, tmp_path, monkeypatch):
     assert seen["zone"] == "UPPER"
 
 
+def test_zone_shale_calculate_uses_the_zone(two_wells, tmp_path, monkeypatch):
+    window = two_wells
+    window._on_tops_file_selected(_shared_tops(tmp_path))
+    seen = []
+    monkeypatch.setattr(window.analysis_service, "calculate_shale_parameters",
+                        lambda model, zone=None: seen.append(zone))
+    monkeypatch.setattr("ui.main_window.QMessageBox.warning", staticmethod(lambda *a, **k: None))
+    window._on_calculate_shale()
+    window.model.set_edit_scope("well", "UPPER")
+    window._on_calculate_shale()
+    assert seen == [None, "UPPER"]
+
+
 def test_hidden_plot_tabs_redraw_when_shown(two_wells, monkeypatch):
     window = two_wells
     calls = []
