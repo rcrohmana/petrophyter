@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 
 from ..widgets.plot_widget import CompositeLogPlot, CrossPlot
 from ..widgets.interactive_log import InteractiveLogPlot, HAS_PYQTGRAPH
-from themes.colors import get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color
 
 
 class LogDisplayTab(QWidget):
@@ -99,6 +99,12 @@ class LogDisplayTab(QWidget):
         self.show_tops_check.setChecked(True)
         self.show_tops_check.stateChanged.connect(self._on_show_tops_changed)
         controls_layout.addWidget(self.show_tops_check)
+
+        # Zone shading: alternating subtle fills with zone labels (off by default)
+        self.show_zones_check = QCheckBox("Zone shading")
+        self.show_zones_check.setChecked(False)
+        self.show_zones_check.toggled.connect(lambda _on: self._update_plot())
+        controls_layout.addWidget(self.show_zones_check)
 
         # HCPV Display Options
         controls_layout.addSpacing(20)
@@ -437,6 +443,89 @@ class LogDisplayTab(QWidget):
             self._update_interactive_log()
         else:
             self._update_classic_log()
+        self._apply_zone_shading()
+
+    # ---- zone shading ----
+    def _zone_spans(self) -> list:
+        """[(zone, top, bottom)] from the results' ZONE column, else the well's tops."""
+        results = self.model.results
+        spans = []
+        if (results is not None and "ZONE" in results.columns
+                and "DEPTH" in results.columns):
+            zone = results["ZONE"]
+            depth = results["DEPTH"]
+            for name in zone.dropna().astype(str).unique():
+                if not name.strip():
+                    continue
+                d = depth[zone.astype(str) == name].dropna()
+                if len(d):
+                    spans.append((name, float(d.min()), float(d.max())))
+        if not spans:
+            tops = self.model.formation_tops
+            for fm in getattr(tops, "formations", None) or []:
+                spans.append((fm.name, float(fm.top_depth), float(fm.bottom_depth)))
+        return sorted(spans, key=lambda s: s[1])
+
+    def _clear_zone_items(self):
+        plots = getattr(self.interactive_log, "plot_widgets", None) or []
+        for plot, item in getattr(self, "_zone_items", []):
+            try:
+                plot.removeItem(item)
+            except Exception:
+                pass
+        self._zone_items = []
+        return plots
+
+    def _apply_zone_shading(self):
+        """Draw (or remove) zone shading on whichever log viewer is showing."""
+        interactive = self.plot_stack.currentIndex() == 0 and HAS_PYQTGRAPH
+        plots = self._clear_zone_items()
+        if not self.show_zones_check.isChecked() or self.model.results is None:
+            return
+        spans = self._zone_spans()
+        if not spans:
+            return
+        chrome = get_plot_chrome()
+        if interactive:
+            from PyQt6.QtGui import QColor
+            import pyqtgraph as pg
+
+            fill = QColor(chrome["text"])
+            fill.setAlpha(22)
+            for i, (name, top, bottom) in enumerate(spans):
+                if i % 2:
+                    continue
+                for plot in plots:
+                    region = pg.LinearRegionItem(
+                        values=(top, bottom), orientation="horizontal",
+                        brush=fill, movable=False)
+                    for line in region.lines:
+                        line.setPen(pg.mkPen(None))
+                    region.setZValue(-20)
+                    plot.addItem(region, ignoreBounds=True)
+                    self._zone_items.append((plot, region))
+            for name, top, bottom in spans:
+                if plots:
+                    label = pg.TextItem(name, color=chrome["text"], anchor=(1, 0))
+                    label.setPos(plots[0].getViewBox().viewRange()[0][1], top)
+                    plots[0].addItem(label, ignoreBounds=True)
+                    self._zone_items.append((plots[0], label))
+        else:
+            axes = self.classic_log.figure.axes
+            if not axes:
+                return
+            limits = [ax.get_ylim() for ax in axes]
+            for i, (name, top, bottom) in enumerate(spans):
+                if i % 2 == 0:
+                    for ax in axes:
+                        ax.axhspan(top, bottom, facecolor=chrome["text"],
+                                   alpha=0.08, edgecolor="none", zorder=0)
+                axes[0].text(0.98, top, name, fontsize=6, color=chrome["text"],
+                             ha="right", va="top",
+                             transform=axes[0].get_yaxis_transform())
+            for ax, lim in zip(axes, limits):
+                ax.set_ylim(lim)
+            self.classic_log.canvas.draw()
 
     def _update_interactive_log(self):
         """Update interactive pyqtgraph viewer."""

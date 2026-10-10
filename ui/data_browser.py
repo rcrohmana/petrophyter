@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from modules.param_scopes import normalize_zone
 from themes.colors import get_color
 from themes.icon_loader import get_icon
 from themes.tokens import METRICS
@@ -13,6 +14,7 @@ from ui.widgets.status_dot import dot_pixmap
 
 _KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 _WELL_ROLE = Qt.ItemDataRole.UserRole + 2
+_ZONE_ROLE = Qt.ItemDataRole.UserRole + 3
 _ROLES = ("GR", "RHOB", "NPHI", "DT", "RT")
 _DEFAULT_EXPANDED = {"lasgrp", "tops", "results"}
 _STATUS_DOTS = {
@@ -235,6 +237,16 @@ class DataBrowserPanel(QWidget):
             restore(root[0])
             self._walk(root[0], restore)
 
+    def _zone_param_names(self, ds) -> dict:
+        """{NORMALIZED ZONE: set of parameter names} overridden for this well or project-wide."""
+        names = {}
+        stores = [ds.zone_overrides or {}, getattr(self.model.project, "zone_params", None) or {}]
+        for store in stores:
+            for zone, params in store.items():
+                if params:
+                    names.setdefault(normalize_zone(zone), set()).update(map(str, params))
+        return names
+
     @staticmethod
     def _tag_well(item, key):
         """Remember the owning well on an item, its info cell and all descendants."""
@@ -300,9 +312,20 @@ class DataBrowserPanel(QWidget):
         if formations:
             grp = self._row("Formation tops", f"{len(formations)}", "tops", "layers",
                             dot="success", group=True)
+            zone_names = self._zone_param_names(ds)
             for fm in formations:
-                grp[0].appendRow(self._row(
-                    fm.name, f"{fm.top_depth:,.1f}–{fm.bottom_depth:,.1f}", "top"))
+                zone = normalize_zone(fm.name)
+                names = zone_names.get(zone)
+                depths = f"{fm.top_depth:,.1f}–{fm.bottom_depth:,.1f}"
+                if names:
+                    tip = ("Zone parameters: " + ", ".join(sorted(names))
+                           + "\nDouble-click to edit")
+                    row = self._row(fm.name, depths, "top", "sliders-horizontal",
+                                    tooltip=tip)
+                    row[0].setData(zone, _ZONE_ROLE)
+                else:
+                    row = self._row(fm.name, depths, "top")
+                grp[0].appendRow(row)
         else:
             grp = self._row("Formation tops", "Not loaded", "tops", "layers",
                             muted=True, group=True)
@@ -386,3 +409,5 @@ class DataBrowserPanel(QWidget):
             self.action_requested.emit("open_core")
         elif kind == "curve":
             self.action_requested.emit("page_curves")
+        elif kind == "top" and name_index.data(_ZONE_ROLE):
+            self.action_requested.emit(f"edit_zone:{name_index.data(_ZONE_ROLE)}")
