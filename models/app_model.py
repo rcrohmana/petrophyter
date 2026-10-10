@@ -901,6 +901,7 @@ class AppModel(QObject):
         hand to a worker thread.
         """
         from modules.param_scopes import resolve, zone_plan
+        from modules.shale_estimation import SHALE_SETTING_DEFAULTS
 
         ds = well if well is not None else self._well
         global_params = self.project_params()
@@ -914,6 +915,13 @@ class AppModel(QObject):
             self.zones_for(ds), header,
         )
         flat["curve_mapping"] = dict(ds.curve_mapping)
+        if flat.get("shale_auto") or any(
+            e["params"].get("shale_auto") for e in flat["zone_plan"].values()
+        ):
+            # The shale-point estimator needs the selection settings; they are
+            # only carried (and hashed) when a shale parameter is AUTO.
+            for key in SHALE_SETTING_DEFAULTS:
+                flat[key] = getattr(self, key, SHALE_SETTING_DEFAULTS[key])
         return copy.deepcopy(flat)
 
     def to_params(self) -> dict:

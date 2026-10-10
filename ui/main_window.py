@@ -1484,7 +1484,9 @@ class MainWindow(QMainWindow):
             return
 
         self._sync_model_from_ui()
-        result = self.analysis_service.calculate_shale_parameters(self.model)
+        # At the well · zone scope only that zone's samples are used.
+        zone = self.model.edit_zone if self.model.edit_scope == "well" else None
+        result = self.analysis_service.calculate_shale_parameters(self.model, zone=zone)
 
         if result:
             self.model.calculated_shale = result
