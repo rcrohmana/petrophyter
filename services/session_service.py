@@ -49,6 +49,8 @@ _SESSION_DEFAULTS = {
     "n": 2.0,
     "rw": 0.05,
     "rsh": 5.0,
+    "rw_mode": "manual",
+    "rsh_mode": "auto",
     "perm_C": 8581.0,
     "perm_P": 4.4,
     "perm_Q": 2.0,
@@ -87,7 +89,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "1.3"
+    SESSION_VERSION = "1.4"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
@@ -160,6 +162,7 @@ class SessionService(QObject):
                     self.SESSION_VERSION,
                 )
             
+            self._upgrade_legacy(session_data)
             self.session_loaded.emit(session_data)
             return session_data
             
@@ -180,6 +183,7 @@ class SessionService(QObject):
             True if successful
         """
         try:
+            self._upgrade_legacy(session_data)
             # Analysis mode
             if 'analysis_mode' in session_data:
                 model.analysis_mode = session_data['analysis_mode']
@@ -235,6 +239,10 @@ class SessionService(QObject):
                 model.rw = session_data['rw']
             if 'rsh' in session_data:
                 model.rsh = session_data['rsh']
+            if 'rw_mode' in session_data:
+                model.rw_mode = session_data['rw_mode']
+            if 'rsh_mode' in session_data:
+                model.rsh_mode = session_data['rsh_mode']
             
             # Permeability parameters
             if 'perm_C' in session_data:
@@ -314,6 +322,22 @@ class SessionService(QObject):
             self.error.emit(f"Failed to apply session: {str(e)}")
             return False
     
+    @staticmethod
+    def _upgrade_legacy(session_data: Dict) -> None:
+        """Fill rw_mode/rsh_mode for sessions saved before version 1.4.
+
+        Older pipelines treated ``rw <= 0.01`` as "estimate automatically" and
+        always estimated Rsh when the value was not usable.
+        """
+        if "rw_mode" not in session_data:
+            try:
+                rw = float(session_data.get("rw", _SESSION_DEFAULTS["rw"]))
+            except (TypeError, ValueError):
+                rw = _SESSION_DEFAULTS["rw"]
+            session_data["rw_mode"] = "auto" if rw <= 0.01 else "manual"
+        if "rsh_mode" not in session_data:
+            session_data["rsh_mode"] = "auto"
+
     def _model_to_dict(self, model) -> Dict[str, Any]:
         """Convert known model parameters, tolerating older/minimal models."""
         return {

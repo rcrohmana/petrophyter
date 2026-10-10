@@ -15,7 +15,12 @@ Saved parameters include:
 - Archie coefficients and lithology settings
 - Cutoff values
 - Gas-correction settings *(v1.1)*
+- Rw and Rsh values with their Auto/Manual modes *(session format 1.4)*
 - Merge and core settings
+
+The current session format version is **1.4**. Version 1.4 adds `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
+
+A session restores parameters only, not results. If results are on screen when you load a session, they are marked stale until you run the analysis again.
 
 ## Workflow
 

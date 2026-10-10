@@ -579,6 +579,105 @@ class MainWindow(QMainWindow):
         self.stale_label.setVisible(True)
         self.data_browser.set_results_stale(True)
 
+    # ---- well identity / depth sanity helpers ---------------------------
+
+    def _current_well_info(self):
+        """well_info of the loaded LAS parser, or None when no LAS is loaded."""
+        parser = self.model.las_parser
+        if parser is None:
+            return None
+        return dict(getattr(parser, "well_info", None) or {})
+
+    def _drop_other_well_context(self, prev_info, new_info) -> list:
+        """Clear tops/core/formation selection when a different well is loaded.
+
+        Keeps them only when ``same_well`` is True; an undecidable comparison
+        counts as different. Returns info lines for the load banner.
+        """
+        from modules.las_utils import same_well
+
+        if prev_info is None:
+            return []  # nothing loaded before: tops/core cannot belong elsewhere
+        has_context = (
+            self.model.formation_tops is not None
+            or self.model.core_data is not None
+            or bool(self.model.selected_formations)
+        )
+        if not has_context or same_well(prev_info, new_info) is True:
+            return []
+        self.model.formation_tops = None
+        self.model.core_data = None
+        self.model.selected_formations = []
+        self.model.analysis_mode = "Whole Well"
+        self.params_window.update_formations_list([])
+        self.params_window.analysis_mode_widget.whole_well_radio.setChecked(True)
+        self.params_window.set_core_available(False)
+        self._refresh_core_actions()
+        return [
+            "Formation tops and core data were cleared because a different "
+            "well was loaded."
+        ]
+
+    @staticmethod
+    def _fmt_depth(value: float) -> str:
+        from PyQt6.QtCore import QLocale
+
+        return QLocale().toString(float(value), "f", 1)
+
+    def _log_depth_range(self):
+        data = self.model.las_data
+        if data is None or len(data) == 0:
+            return None
+        col = "DEPTH" if "DEPTH" in data.columns else data.columns[0]
+        series = data[col].dropna()
+        if series.empty:
+            return None
+        return float(series.min()), float(series.max())
+
+    def _depth_overlap_warnings(self) -> list:
+        """Warn when tops or core lie entirely outside the log depth range."""
+        rng = self._log_depth_range()
+        if rng is None:
+            return []
+        lo, hi = rng
+        spans = []
+        tops = self.model.formation_tops
+        if tops is not None and getattr(tops, "formations", None):
+            spans.append((
+                "Formation tops",
+                min(f.top_depth for f in tops.formations),
+                max(f.bottom_depth for f in tops.formations),
+            ))
+        core = self.model.core_data
+        cdata = getattr(core, "data", None)
+        ccol = getattr(core, "depth_col", None)
+        if cdata is not None and ccol in getattr(cdata, "columns", []):
+            depths = cdata[ccol].dropna()
+            if not depths.empty:
+                spans.append(("Core depths", float(depths.min()), float(depths.max())))
+        out = []
+        for label, a, b in spans:
+            if b < lo or a > hi:
+                out.append(
+                    f"{label} ({self._fmt_depth(a)}–{self._fmt_depth(b)} ft) "
+                    f"do not overlap the log depth range "
+                    f"({self._fmt_depth(lo)}–{self._fmt_depth(hi)} ft). "
+                    "Check the depth unit."
+                )
+        return out
+
+    def _show_load_notes(self, parser=None, extra=()):
+        """One banner for load-time notes so none hides another."""
+        lines = list(extra)
+        if parser is not None:
+            if getattr(parser, "depth_unit_warning", None):
+                lines.append(parser.depth_unit_warning)
+            lines.extend(getattr(parser, "unit_warnings", None) or [])
+        lines.extend(self._depth_overlap_warnings())
+        if lines:
+            only_info = all(l.startswith("Formation tops and core data were cleared") for l in lines)
+            self.show_banner("info" if only_info else "warning", "\n".join(lines))
+
     def _clear_results_stale(self):
         self.stale_label.setVisible(False)
         self.data_browser.set_results_stale(False)
@@ -639,6 +738,9 @@ class MainWindow(QMainWindow):
                 success = parser.read_las_from_buffer(f)
 
             if success and parser.data is not None:
+                notes = self._drop_other_well_context(
+                    self._current_well_info(), parser.well_info
+                )
                 self.model.las_parser = parser
                 self.model.las_data = parser.data
                 self.model.las_filename = file_path
@@ -692,9 +794,8 @@ class MainWindow(QMainWindow):
                 # data_loaded signal fires earlier to clear stale result content.
                 self._on_data_loaded()
 
-                # Surface an ambiguous depth-unit instead of silently (mis)converting.
-                if getattr(parser, "depth_unit_warning", None):
-                    self.show_banner("warning", parser.depth_unit_warning)
+                # Surface depth/curve-unit warnings and well-change notes.
+                self._show_load_notes(parser, notes)
             else:
                 detail = getattr(parser, "last_error", None)
                 logger.error("Failed to load LAS file %s: %s", file_path, detail)
@@ -814,8 +915,17 @@ class MainWindow(QMainWindow):
 
         # Store merged data
         # A shallow copy keeps the first source parser's own data intact.
+        notes = self._drop_other_well_context(
+            self._current_well_info(), self._loaded_parsers[0].well_info
+        )
         merged_parser = copy.copy(self._loaded_parsers[0])
         merged_parser.data = merged_df
+        well_info = getattr(merge_report, "well_info", None)
+        if well_info:
+            merged_parser.well_info = dict(well_info)
+        curve_info = getattr(merge_report, "curve_info", None)
+        if curve_info:
+            merged_parser.curve_info = dict(curve_info)
         self.model.las_parser = merged_parser
         self.model.las_data = merged_df
         self.model.las_filename = f"MERGED_{len(self._loaded_parsers)}_files"
@@ -859,6 +969,7 @@ class MainWindow(QMainWindow):
         )
 
         self._on_data_loaded()
+        self._show_load_notes(self._loaded_parsers[0], notes)
 
     def _on_merge_error(self, error: str):
         """Handle merge error."""
@@ -904,8 +1015,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {len(tops.formations)} formations"
                     )
 
-                    if getattr(tops, "depth_unit_warning", None):
-                        self.show_banner("warning", tops.depth_unit_warning)
+                    self._show_load_notes(tops)
 
                     # Update QC tab
                     self.qc_tab.update_display()
@@ -948,8 +1058,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {summary['n_samples']} core samples"
                     )
 
-                    if getattr(handler, "depth_unit_warning", None):
-                        self.show_banner("warning", handler.depth_unit_warning)
+                    self._show_load_notes(handler)
                 else:
                     QMessageBox.warning(
                         self, "Warning", "Failed to parse core data file"
@@ -1263,7 +1372,12 @@ class MainWindow(QMainWindow):
             if session_data:
                 self.session_service.apply_session_to_model(self.model, session_data)
                 self._update_ui_from_model()
-                self._clear_results_stale()  # results and parameters restored together
+                # Sessions restore parameters only; any results in memory
+                # were computed with the old parameters.
+                if self.model.calculated:
+                    self._mark_results_stale()
+                else:
+                    self._clear_results_stale()
                 self.statusBar.showMessage(f"Session loaded from {file_path}")
             else:
                 QMessageBox.critical(self, "Error", "Failed to load session")
@@ -1437,7 +1551,9 @@ class MainWindow(QMainWindow):
             (
                 "resistivity",
                 lambda: self.params_window.res_params_widget.set_params(
-                    self.model.rw, self.model.rsh
+                    self.model.rw, self.model.rsh,
+                    getattr(self.model, "rw_mode", "manual"),
+                    getattr(self.model, "rsh_mode", "auto"),
                 ),
             ),
             (

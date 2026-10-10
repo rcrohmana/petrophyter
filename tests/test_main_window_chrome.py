@@ -410,7 +410,8 @@ def test_merge_keeps_per_source_row_counts(window, qtbot, tmp_path, monkeypatch)
     assert len(window.model.las_parser.data) == len(window.model.las_data)
 
 
-def test_load_session_clears_stale(window, monkeypatch, tmp_path):
+def test_load_session_marks_results_stale(window, monkeypatch, tmp_path):
+    # Sessions restore parameters only, so results in memory stay stale.
     from PyQt6.QtWidgets import QFileDialog
 
     window.model.calculated = True
@@ -423,6 +424,9 @@ def test_load_session_clears_stale(window, monkeypatch, tmp_path):
     monkeypatch.setattr(
         window.session_service, "apply_session_to_model", lambda m, d: None
     )
+    window._on_load_session()
+    assert window.stale_label.isVisibleTo(window)
+    window.model.calculated = False
     window._on_load_session()
     assert not window.stale_label.isVisibleTo(window)
 

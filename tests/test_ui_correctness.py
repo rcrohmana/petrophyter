@@ -82,7 +82,9 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
     assert pw.archie_params_widget.get_params() == {
         "lithology": "Custom", "a": 1.11, "m": 2.31, "n": 2.2
     }
-    assert pw.res_params_widget.get_params() == {"rw": 0.123, "rsh": 7.4}
+    assert pw.res_params_widget.get_params() == {
+        "rw": 0.123, "rsh": 7.4, "rw_mode": "manual", "rsh_mode": "auto"
+    }
     assert pw.perm_params_widget.get_params() == {"C": 4321.0, "P": 5.1, "Q": 2.7}
     assert pw.swir_params_widget.get_params() == {
         "method": "Buckles Number", "buckles_preset": "Custom", "k_buckles": 0.037

@@ -768,8 +768,21 @@ class ResistivityParamsGroup(QWidget):
         self.rsh_spin.setDecimals(1)
         self.rsh_spin.setSuffix(" Ω.m")
 
-        form.addRow("Rw:", self.rw_spin)
-        form.addRow("Rsh:", self.rsh_spin)
+        self.rw_auto_cb = QCheckBox("Auto")
+        self.rw_auto_cb.setToolTip("Estimate from the loaded data on every run")
+        self.rsh_auto_cb = QCheckBox("Auto")
+        self.rsh_auto_cb.setToolTip("Estimate from the loaded data on every run")
+        self.rsh_auto_cb.setChecked(True)
+        self.rsh_spin.setEnabled(False)
+
+        rw_row = QHBoxLayout()
+        rw_row.addWidget(self.rw_spin, 1)
+        rw_row.addWidget(self.rw_auto_cb)
+        rsh_row = QHBoxLayout()
+        rsh_row.addWidget(self.rsh_spin, 1)
+        rsh_row.addWidget(self.rsh_auto_cb)
+        form.addRow("Rw:", rw_row)
+        form.addRow("Rsh:", rsh_row)
         layout.addLayout(form)
 
         # Calculate button
@@ -793,6 +806,13 @@ class ResistivityParamsGroup(QWidget):
         # Connect signals
         self.rw_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.rsh_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.rw_auto_cb.toggled.connect(self._on_auto_toggled)
+        self.rsh_auto_cb.toggled.connect(self._on_auto_toggled)
+
+    def _on_auto_toggled(self, _checked: bool = False):
+        self.rw_spin.setEnabled(not self.rw_auto_cb.isChecked())
+        self.rsh_spin.setEnabled(not self.rsh_auto_cb.isChecked())
+        self.params_changed.emit()
 
     def show_calculated_result(self, rw: float, rsh: float):
         """Show calculated values."""
@@ -806,16 +826,27 @@ class ResistivityParamsGroup(QWidget):
         if hasattr(self, "_calculated_rw"):
             self.rw_spin.setValue(self._calculated_rw)
             self.rsh_spin.setValue(self._calculated_rsh)
+            # Applied values are fixed numbers: switch both to manual.
+            self.rw_auto_cb.setChecked(False)
+            self.rsh_auto_cb.setChecked(False)
             self.result_label.setText("")
             self.apply_btn.setVisible(False)
 
     def get_params(self) -> Dict:
-        return {"rw": self.rw_spin.value(), "rsh": self.rsh_spin.value()}
+        return {
+            "rw": self.rw_spin.value(),
+            "rsh": self.rsh_spin.value(),
+            "rw_mode": "auto" if self.rw_auto_cb.isChecked() else "manual",
+            "rsh_mode": "auto" if self.rsh_auto_cb.isChecked() else "manual",
+        }
 
-    def set_params(self, rw: float, rsh: float):
+    def set_params(self, rw: float, rsh: float,
+                   rw_mode: str = "manual", rsh_mode: str = "auto"):
         """Restore resistivity parameters."""
         self.rw_spin.setValue(rw)
         self.rsh_spin.setValue(rsh)
+        self.rw_auto_cb.setChecked(rw_mode == "auto")
+        self.rsh_auto_cb.setChecked(rsh_mode == "auto")
 
     def refresh_theme(self):
         """Re-fetch button icons so they recolor on theme change."""
