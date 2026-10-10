@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QPushButton,
     QLabel,
     QTabWidget,
     QStatusBar,
@@ -19,25 +18,9 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QDialog,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
-
-from .tabs import (
-    QCTab,
-    PetrophysicsTab,
-    LogDisplayTab,
-    DiagnosticsTab,
-    SummaryTab,
-    ExportTab,
-)
-
-from PyQt6.QtCore import Qt, QTimer, QSettings, QElapsedTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QSettings, QElapsedTimer
 import functools
-import traceback
-import threading
 import logging
-import re
 
 import sys
 import os
