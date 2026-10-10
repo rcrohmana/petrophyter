@@ -123,9 +123,9 @@ def test_session_ui_restore_continues_after_one_widget_failure(window, monkeypat
 
 
 def test_data_invalidation_refreshes_and_clears_every_result_tab(window, monkeypatch):
-    window.model._qc_report = None
-    window.model._results = None
-    window.model._summary = None
+    window.model._well.qc_report = None
+    window.model._well.results = None
+    window.model._well.summary = None
     window.model.calculated = False
 
     window.qc_tab.qc_table_model.set_dataframe(pd.DataFrame({"old": [1]}))
@@ -158,8 +158,8 @@ def test_data_invalidation_refreshes_and_clears_every_result_tab(window, monkeyp
 
 
 def test_stale_results_cannot_drive_perm_or_export(window, monkeypatch):
-    window.model._results = pd.DataFrame({"PHIE": np.linspace(0.1, 0.2, 20)})
-    window.model._summary = {"net_pay": 1.0}
+    window.model._well.results = pd.DataFrame({"PHIE": np.linspace(0.1, 0.2, 20)})
+    window.model._well.summary = {"net_pay": 1.0}
     window.model.calculated = False
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
@@ -176,7 +176,7 @@ def test_stale_results_cannot_drive_perm_or_export(window, monkeypatch):
 
 
 def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypatch):
-    window.model._las_data = pd.DataFrame({"DEPTH": [100.0]})
+    window.model._well.las_data = pd.DataFrame({"DEPTH": [100.0]})
     window.actions_["run_analysis"].setEnabled(True)
     states = []
     monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
@@ -327,8 +327,8 @@ def test_summary_accepts_missing_keys_and_none_metrics(qtbot):
     model = AppModel()
     tab = SummaryTab(model)
     qtbot.addWidget(tab)
-    model._calculated = True
-    model._summary = {"avg_phie_pay": None, "avg_sw_pay": None, "avg_vsh_pay": None,
+    model._well.calculated = True
+    model._well.summary = {"avg_phie_pay": None, "avg_sw_pay": None, "avg_vsh_pay": None,
                       "hcpv_gross": None, "hcpv_net_res": None, "hcpv_net_pay": None}
 
     tab.update_display()
@@ -414,9 +414,9 @@ def test_core_validation_uses_configured_max_distance(qtbot, monkeypatch):
             return None
 
     model = AppModel()
-    model._calculated = True
-    model._results = pd.DataFrame({"DEPTH": [100.0, 101.0], "PHIE": [0.1, 0.2], "PERM_TIMUR": [1.0, 2.0]})
-    model._summary = {}
+    model._well.calculated = True
+    model._well.results = pd.DataFrame({"DEPTH": [100.0, 101.0], "PHIE": [0.1, 0.2], "PERM_TIMUR": [1.0, 2.0]})
+    model._well.summary = {}
     model.core_data = Core()
     model.core_max_dist = 6.5
     tab = DiagnosticsTab(model)
@@ -463,11 +463,11 @@ def test_core_fit_failure_is_logged_before_statistical_fallback(window, caplog):
         def get_core_permeability(self):
             raise ValueError("bad core fit")
 
-    window.model._results = pd.DataFrame(
+    window.model._well.results = pd.DataFrame(
         {"PHIE": np.linspace(0.1, 0.2, 20)}
     )
-    window.model._calculated = True
-    window.model._core_data = BrokenCore()
+    window.model._well.calculated = True
+    window.model._well.core_data = BrokenCore()
 
     with caplog.at_level(logging.ERROR):
         window._on_calculate_perm()
@@ -559,8 +559,8 @@ def test_diagnostics_sw_overlay_consumes_canonical_plot_palette(qtbot, monkeypat
         diagnostics_module, "get_plot_color", lambda key: colors[key], raising=False
     )
     model = AppModel()
-    model._calculated = True
-    model._results = pd.DataFrame(
+    model._well.calculated = True
+    model._well.results = pd.DataFrame(
         {
             "DEPTH": [100.0, 101.0],
             "SW_ARCHIE": [0.2, 0.3],
@@ -568,7 +568,7 @@ def test_diagnostics_sw_overlay_consumes_canonical_plot_palette(qtbot, monkeypat
             "SW_SIMAN": [0.4, 0.5],
         }
     )
-    model._summary = {}
+    model._well.summary = {}
     tab = DiagnosticsTab(model)
     qtbot.addWidget(tab)
 

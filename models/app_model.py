@@ -8,6 +8,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 import pandas as pd
 from typing import Dict, List, Optional, Any
 
+from models.project import Project, WellDataset, default_curve_mapping, make_well_key, display_name_for
+
 
 class AppModel(QObject):
     """
@@ -28,36 +30,11 @@ class AppModel(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # =====================================================================
-        # DATA STORAGE
-        # =====================================================================
-        self._las_data: Optional[pd.DataFrame] = None
-        self._las_parser = None
-        self._las_filename: str = ""
-        self._qc_report = None
-        self._results: Optional[pd.DataFrame] = None
-        self._summary: Optional[Dict] = None
-        self._formation_tops = None
-        self._core_data = None
-        self._merge_report = None
-        self._calculated: bool = False
-
-        # =====================================================================
-        # CURVE MAPPING
-        # =====================================================================
-        self._curve_mapping: Dict[str, str] = {
-            "GR": "None",
-            "RHOB": "None",
-            "NPHI": "None",
-            "DT": "None",
-            "RT": "None",
-        }
-
-        # =====================================================================
-        # ANALYSIS MODE
-        # =====================================================================
-        self._analysis_mode: str = "Whole Well"
-        self._selected_formations: List[str] = []
+        # Wells live in the project; the well-scoped properties below are a
+        # facade over the active well. Without wells they read and write a
+        # scratch dataset, which becomes a real well once data is assigned.
+        self.project = Project(self)
+        self._scratch = WellDataset()
 
         # =====================================================================
         # VSHALE PARAMETERS
@@ -89,8 +66,6 @@ class AppModel(QObject):
         self._rho_shale: float = 2.45
         self._dt_shale: float = 100.0
         self._nphi_shale: float = 0.35
-        self._shale_method_used: str = "custom"
-        self._calculated_shale: Optional[Dict] = None
         # Shale estimation settings (v2.0)
         self._shale_vsh_threshold: float = 0.80  # Min VSH to be considered "pure shale"
         self._shale_gate_logs: bool = True  # Apply RHOB/NPHI/DT range gating
@@ -121,8 +96,6 @@ class AppModel(QObject):
         # "manual" uses the value above; "auto" estimates it from the loaded data.
         self._rw_mode: str = "manual"
         self._rsh_mode: str = "auto"
-        self._calculated_rw: Optional[float] = None
-        self._calculated_rsh: Optional[float] = None
 
         # =====================================================================
         # PERMEABILITY COEFFICIENTS
@@ -130,9 +103,6 @@ class AppModel(QObject):
         self._perm_C: float = 8581.0
         self._perm_P: float = 4.4
         self._perm_Q: float = 2.0
-        self._calculated_C: Optional[float] = None
-        self._calculated_P: Optional[float] = None
-        self._calculated_Q: Optional[float] = None
 
         # =====================================================================
         # SWIRR ESTIMATION
@@ -187,113 +157,147 @@ class AppModel(QObject):
     # =========================================================================
     @property
     def las_data(self) -> Optional[pd.DataFrame]:
-        return self._las_data
+        return self._well.las_data
 
     @las_data.setter
     def las_data(self, value: Optional[pd.DataFrame]):
-        # A new/cleared LAS dataset invalidates all calculated state from the
-        # previous well while preserving user-selected parameters.
+        # New data for the active well invalidates its calculated state while
+        # preserving user-selected parameters. With no well yet, the scratch
+        # dataset becomes the project's first well.
         self._clear_derived_state()
-        self._las_data = value
+        self._well.las_data = value
+        if value is not None and self.project.active is None:
+            self._promote_scratch()
         if value is not None:
             self.data_loaded.emit()
 
+    # =========================================================================
+    # WELLS
+    # =========================================================================
+    @property
+    def _well(self) -> WellDataset:
+        """The active well, or the scratch dataset when the project is empty."""
+        return self.project.active or self._scratch
+
+    @property
+    def active_well(self) -> Optional[WellDataset]:
+        return self.project.active
+
+    def _promote_scratch(self):
+        well = self._scratch
+        self._scratch = WellDataset()
+        info = getattr(well.las_parser, "well_info", None) or {}
+        well.key = make_well_key(info, well.las_filename)
+        well.display_name = display_name_for(info, well.las_filename)
+        well.identity = dict(info)
+        self.project.add_well(well, activate=True)
+
+    def add_well(self, dataset: WellDataset, activate: bool = True) -> str:
+        """Add (or replace, by key) a well; emits ``data_loaded`` when it becomes active."""
+        key = self.project.add_well(dataset, activate=activate)
+        if activate:
+            self.data_loaded.emit()
+        return key
+
+    def set_active_well(self, key: Optional[str]):
+        self.project.set_active(key)
+
     @property
     def las_parser(self):
-        return self._las_parser
+        return self._well.las_parser
 
     @las_parser.setter
     def las_parser(self, value):
-        self._las_parser = value
+        self._well.las_parser = value
 
     @property
     def las_filename(self) -> str:
-        return self._las_filename
+        return self._well.las_filename
 
     @las_filename.setter
     def las_filename(self, value: str):
-        self._las_filename = value
+        self._well.las_filename = value
 
     @property
     def qc_report(self):
-        return self._qc_report
+        return self._well.qc_report
 
     @qc_report.setter
     def qc_report(self, value):
-        self._qc_report = value
+        self._well.qc_report = value
 
     @property
     def results(self) -> Optional[pd.DataFrame]:
-        return self._results
+        return self._well.results
 
     @results.setter
     def results(self, value: Optional[pd.DataFrame]):
-        self._results = value
-        self._calculated = value is not None
+        self._well.results = value
+        self._well.calculated = value is not None
         if value is not None:
             self.analysis_complete.emit()
 
     @property
     def summary(self) -> Optional[Dict]:
-        return self._summary
+        return self._well.summary
 
     @summary.setter
     def summary(self, value: Optional[Dict]):
-        self._summary = value
+        self._well.summary = value
 
     @property
     def formation_tops(self):
-        return self._formation_tops
+        return self._well.formation_tops
 
     @formation_tops.setter
     def formation_tops(self, value):
-        self._formation_tops = value
+        self._well.formation_tops = value
         if value is not None:
             self.formation_tops_loaded.emit()
 
     @property
     def core_data(self):
-        return self._core_data
+        return self._well.core_data
 
     @core_data.setter
     def core_data(self, value):
-        self._core_data = value
+        self._well.core_data = value
         if value is not None:
             self.core_data_loaded.emit()
 
     @property
     def merge_report(self):
-        return self._merge_report
+        return self._well.merge_report
 
     @merge_report.setter
     def merge_report(self, value):
-        self._merge_report = value
+        self._well.merge_report = value
         if value is not None:
             self.merge_complete.emit()
 
     @property
     def calculated(self) -> bool:
-        return self._calculated
+        return self._well.calculated
 
     @calculated.setter
     def calculated(self, value: bool):
-        self._calculated = value
+        self._well.calculated = value
 
     # =========================================================================
     # PROPERTIES - CURVE MAPPING
     # =========================================================================
     @property
     def curve_mapping(self) -> Dict[str, str]:
-        return self._curve_mapping
+        return self._well.curve_mapping
 
     @curve_mapping.setter
     def curve_mapping(self, value: Dict[str, str]):
-        self._curve_mapping = value
+        self._well.curve_mapping = value
         self.parameters_changed.emit()
 
     def set_curve_mapping(self, curve_type: str, curve_name: str):
         """Set a single curve mapping."""
-        self._curve_mapping[curve_type] = curve_name
+        self._well.curve_mapping[curve_type] = curve_name
         self.parameters_changed.emit()
 
     # =========================================================================
@@ -301,20 +305,20 @@ class AppModel(QObject):
     # =========================================================================
     @property
     def analysis_mode(self) -> str:
-        return self._analysis_mode
+        return self._well.analysis_mode
 
     @analysis_mode.setter
     def analysis_mode(self, value: str):
-        self._analysis_mode = value
+        self._well.analysis_mode = value
         self.parameters_changed.emit()
 
     @property
     def selected_formations(self) -> List[str]:
-        return self._selected_formations
+        return self._well.selected_formations
 
     @selected_formations.setter
     def selected_formations(self, value: List[str]):
-        self._selected_formations = value
+        self._well.selected_formations = value
         self.parameters_changed.emit()
 
     # =========================================================================
@@ -436,19 +440,19 @@ class AppModel(QObject):
 
     @property
     def shale_method_used(self) -> str:
-        return self._shale_method_used
+        return self._well.shale_method_used
 
     @shale_method_used.setter
     def shale_method_used(self, value: str):
-        self._shale_method_used = value
+        self._well.shale_method_used = value
 
     @property
     def calculated_shale(self) -> Optional[Dict]:
-        return self._calculated_shale
+        return self._well.calculated_shale
 
     @calculated_shale.setter
     def calculated_shale(self, value: Optional[Dict]):
-        self._calculated_shale = value
+        self._well.calculated_shale = value
 
     @property
     def shale_vsh_threshold(self) -> float:
@@ -605,19 +609,19 @@ class AppModel(QObject):
 
     @property
     def calculated_rw(self) -> Optional[float]:
-        return self._calculated_rw
+        return self._well.calculated_rw
 
     @calculated_rw.setter
     def calculated_rw(self, value: Optional[float]):
-        self._calculated_rw = value
+        self._well.calculated_rw = value
 
     @property
     def calculated_rsh(self) -> Optional[float]:
-        return self._calculated_rsh
+        return self._well.calculated_rsh
 
     @calculated_rsh.setter
     def calculated_rsh(self, value: Optional[float]):
-        self._calculated_rsh = value
+        self._well.calculated_rsh = value
 
     # =========================================================================
     # PROPERTIES - PERMEABILITY
@@ -648,27 +652,27 @@ class AppModel(QObject):
 
     @property
     def calculated_C(self) -> Optional[float]:
-        return self._calculated_C
+        return self._well.calculated_C
 
     @calculated_C.setter
     def calculated_C(self, value: Optional[float]):
-        self._calculated_C = value
+        self._well.calculated_C = value
 
     @property
     def calculated_P(self) -> Optional[float]:
-        return self._calculated_P
+        return self._well.calculated_P
 
     @calculated_P.setter
     def calculated_P(self, value: Optional[float]):
-        self._calculated_P = value
+        self._well.calculated_P = value
 
     @property
     def calculated_Q(self) -> Optional[float]:
-        return self._calculated_Q
+        return self._well.calculated_Q
 
     @calculated_Q.setter
     def calculated_Q(self, value: Optional[float]):
-        self._calculated_Q = value
+        self._well.calculated_Q = value
 
     # =========================================================================
     # PROPERTIES - SWIRR
@@ -844,45 +848,21 @@ class AppModel(QObject):
     # METHODS
     # =========================================================================
     def _clear_derived_state(self):
-        """Clear data-dependent results without changing user parameters."""
-        self._qc_report = None
-        self._results = None
-        self._summary = None
-        self._merge_report = None
-        self._calculated = False
-        self._calculated_shale = None
-        self._shale_method_used = "custom"
-        self._calculated_rw = None
-        self._calculated_rsh = None
-        self._calculated_C = None
-        self._calculated_P = None
-        self._calculated_Q = None
+        """Clear the active well's data-dependent results (parameters stay)."""
+        self._well.clear_derived()
 
     def set_analysis_results(self, results: Optional[pd.DataFrame], summary: Optional[Dict]):
         """Store results and summary together, then emit one completion signal."""
-        self._results = results
-        self._summary = summary
-        self._calculated = results is not None
+        self._well.results = results
+        self._well.summary = summary
+        self._well.calculated = results is not None
         if results is not None:
             self.analysis_complete.emit()
 
     def reset(self):
-        """Reset all data and derived results (keep user parameters)."""
-        self._las_data = None
-        self._las_parser = None
-        self._las_filename = ""
-        self._formation_tops = None
-        self._core_data = None
-        self._selected_formations = []
-        self._analysis_mode = "Whole Well"
-        self._clear_derived_state()
-        self._curve_mapping = {
-            "GR": "None",
-            "RHOB": "None",
-            "NPHI": "None",
-            "DT": "None",
-            "RT": "None",
-        }
+        """Remove every well and its results (keep user parameters)."""
+        self._scratch = WellDataset()
+        self.project.clear()
 
     def to_params(self) -> dict:
         """Snapshot the analysis parameters as a plain, detached dict.
@@ -898,17 +878,17 @@ class AppModel(QObject):
             key: copy.deepcopy(getattr(self, key, default))
             for key, default in PARAM_DEFAULTS.items()
         }
-        params["curve_mapping"] = dict(self._curve_mapping)
+        params["curve_mapping"] = dict(self._well.curve_mapping)
         return params
 
     def get_available_curves(self) -> List[str]:
         """Get list of available curves from loaded LAS data."""
-        if self._las_parser is not None:
-            return self._las_parser.get_available_curves()
+        if self._well.las_parser is not None:
+            return self._well.las_parser.get_available_curves()
         return []
 
     def get_formation_list(self) -> List[str]:
         """Get list of formation names."""
-        if self._formation_tops is not None:
-            return self._formation_tops.get_formation_list()
+        if self._well.formation_tops is not None:
+            return self._well.formation_tops.get_formation_list()
         return []
