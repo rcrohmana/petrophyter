@@ -86,3 +86,58 @@ def replace_null_values(df: pd.DataFrame,
                 mask = np.abs(df[col] - null) < tolerance
                 df.loc[mask, col] = np.nan
     return df
+
+
+# ---------------------------------------------------------------------------
+# Well identity
+# ---------------------------------------------------------------------------
+# Header values that mean "no name" rather than a real identifier.
+_PLACEHOLDER_NAMES = {"", "UNKNOWN", "NONE", "NULL", "N/A", "NA", "-", "?"}
+
+# Identity fields in priority order: a shared UWI beats a shared API number,
+# which beats a shared well name.
+WELL_IDENTITY_FIELDS = ("uwi", "api", "well_name")
+
+
+def normalize_well_name(value) -> str:
+    """Return a comparable form of a header identifier, or '' when it is blank.
+
+    Strips, upper-cases, collapses whitespace and treats ``_`` as ``-``, so
+    "a_1 ", "A-1" and "A  -1" style variants of one name compare equal.
+    Placeholder values such as "Unknown" become ''.
+    """
+    if value is None:
+        return ""
+    text = " ".join(str(value).replace("_", "-").split()).upper()
+    text = text.replace(" -", "-").replace("- ", "-")
+    return "" if text in _PLACEHOLDER_NAMES else text
+
+
+def well_key(well_info: dict) -> tuple:
+    """Return ``(key, identified)`` for a parser's ``well_info`` dict.
+
+    ``key`` is ``"<FIELD>:<value>"`` for the highest-priority identity field
+    that is present (UWI, then API, then WELL). ``identified`` is False when
+    none is present, in which case ``key`` is ``""``.
+    """
+    info = well_info or {}
+    for field in WELL_IDENTITY_FIELDS:
+        value = normalize_well_name(info.get(field))
+        if value:
+            return f"{field.upper()}:{value}", True
+    return "", False
+
+
+def same_well(info_a: dict, info_b: dict) -> Optional[bool]:
+    """Decide whether two ``well_info`` dicts describe the same well.
+
+    Compares the highest-priority identity field that BOTH carry. Returns True
+    or False when such a field exists, and None when it cannot be decided
+    (at least one side has no usable identifier, or they share no field).
+    """
+    a, b = info_a or {}, info_b or {}
+    for field in WELL_IDENTITY_FIELDS:
+        va, vb = normalize_well_name(a.get(field)), normalize_well_name(b.get(field))
+        if va and vb:
+            return va == vb
+    return None
