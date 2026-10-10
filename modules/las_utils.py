@@ -124,10 +124,11 @@ def well_key(well_info: dict) -> tuple:
     none is present, in which case ``key`` is ``""``.
     """
     info = well_info or {}
+    labels = {"uwi": "UWI", "api": "API", "well_name": "WELL"}
     for field in WELL_IDENTITY_FIELDS:
         value = normalize_well_name(info.get(field))
         if value:
-            return f"{field.upper()}:{value}", True
+            return f"{labels[field]}:{value}", True
     return "", False
 
 

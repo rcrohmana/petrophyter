@@ -305,11 +305,11 @@ def test_diagnostics_tab_shows_solver_counts_only_when_nonzero(qtbot):
     from ui.tabs.diagnostics_tab import DiagnosticsTab
 
     model = AppModel()
-    model._calculated = True
-    model._results = pd.DataFrame(
+    model._well.calculated = True
+    model._well.results = pd.DataFrame(
         {"SW_WS": [1.0], "SW_DW": [1.0]}
     )
-    model._summary = {
+    model._well.summary = {
         "solver_diagnostics": {
             "SW_WS": {"no_root": 2, "failed": 1},
             "SW_DW": {"no_root": 0, "failed": 0},
@@ -325,7 +325,7 @@ def test_diagnostics_tab_shows_solver_counts_only_when_nonzero(qtbot):
     assert "1 failed" in tab.sw_warnings.text()
     assert "SW_DW" not in tab.sw_warnings.text()
 
-    model._summary = {
+    model._well.summary = {
         "solver_diagnostics": {
             "SW_WS": {"no_root": 0, "failed": 0},
             "SW_DW": {"no_root": 0, "failed": 0},
@@ -340,11 +340,11 @@ def test_diagnostics_selected_phie_row_is_marked_not_suffixed(qtbot):
     from ui.tabs.diagnostics_tab import DiagnosticsTab
 
     model = AppModel()
-    model._calculated = True
-    model._results = pd.DataFrame(
+    model._well.calculated = True
+    model._well.results = pd.DataFrame(
         {"DEPTH": [1.0, 2.0], "PHIE_D": [0.1, 0.2], "PHIE_DN": [0.15, 0.25]}
     )
-    model._summary = {}
+    model._well.summary = {}
     tab = DiagnosticsTab(model)
     qtbot.addWidget(tab)
     tab.update_display()
