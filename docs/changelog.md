@@ -4,6 +4,28 @@
 
 ## Unreleased
 
+### Multi-well tops and core import
+
+- Added **File → Open Formation Tops (Multi-Well)…** and **Open Core Data (Multi-Well)…**, also in the Data Browser well menu. One file with a well column is assigned to the loaded wells in a preview dialog: detected delimiter and encoding, column mapping, depth unit, fill-down for merged cells, sheet, a raw preview, and one row per file well with its match, existing data, Keep or Replace action, porosity scale, and notes. Nothing changes until you confirm, and a failed assignment changes nothing.
+- **Open Formation Tops…** and **Open Core Data…** now send a file with a well column to the same dialog instead of distributing it silently. The last formation of a tops file without bottom depths runs to the bottom of the log.
+- Tops and core files can be `.xlsx`, and can be delimited by tab, comma, semicolon, or pipe, with UTF-8 or Windows-1252 text, comment and preamble lines, a unit row, and decimal commas. Commas that all read as thousands groups (`1,250`) are thousands separators.
+- Every excluded row is counted with its file line number and reason. Core porosity is read as percent or fraction per well from its median, with an override in the dialog. A TVD core depth column raises a warning. Petrel `Surface` and `MD` columns and `wellbore` or `borehole` well columns are recognised.
+
+### Temperature, scopes and diagnostics
+
+- **Correct resistivities for formation temperature** now also corrects an auto Rsh, a manual Rsh with a new **Rsh ref. temp**, and the Dual-Water Rwb. **Waxman-Smits B from temperature** (Juhasz, 1981) is optional. Applying a calculated Rsh stores its reference temperature. All options are off by default.
+- Formation temperature follows true vertical depth: a mapped **TVD** curve in Curve Mapping, then a TVD depth index, then measured depth. A new **Datum depth** sets where the surface temperature applies, and a live readout shows the temperature at the log ends and the header gradient.
+- A lithology preset at a well or zone scope now supplies a, m, and n there and stays linked; typing a value switches it to Custom. Older sessions with explicit values equal to the preset are collapsed on load.
+- Permeability **Calculate** fits Wyllie-Rose coefficients to the edited scope. A zone with fewer than five core pairs reports it instead of widening the fit.
+- Zones with no gross, no net reservoir, or no net pay are marked in the Summary Zones table, and the limiting cutoff is marked in the Zones grid, with a tooltip that explains the likely cause. Results are stored in `summary["zone_diagnostics"]`.
+
+### Responsiveness and sessions
+
+- Loading a LAS file refreshes the result tabs once instead of twice.
+- The status bar shows the stage of the running well, or the combined progress and the current well and stage when several wells run.
+- Loading a session rebuilds its wells in the background. The window stays responsive, the status bar shows `Restoring 3 of 10: BKS-03`, and New Project or Load Session cancels the restore.
+- Session format 2.1 stores an import record for each well's tops and core data and replays it exactly on load, with a fall back to name matching and a note. Format 2.0 and 1.x sessions still load.
+
 ### Interface
 
 - Every menu action now has an icon, and menus use a fixed icon column.
