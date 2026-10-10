@@ -9,12 +9,16 @@ import re
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .las_utils import (
     COMMON_NULL_VALUES,
     DEPTH_COLUMN_CANDIDATES,
+    canonical_unit,
+    normalize_well_name,
     replace_null_values,
+    same_well,
+    well_key,
 )
 
 
@@ -46,6 +50,10 @@ class MergeReport:
     files_processed: List[str]
     warnings: List[str]
     well_name: str
+    # Per merged curve: unit, description and source_file of the primary source.
+    curve_info: Dict[str, Dict] = field(default_factory=dict)
+    # First file's header with start/stop/step taken from the master grid (FT).
+    well_info: Dict = field(default_factory=dict)
 
 
 def _get_las_metadata(las_obj, key: str, default: Any = None) -> Any:
@@ -483,18 +491,27 @@ class LASHandler:
         
         warnings = []
         
-        # Validate same well
-        well_names = set()
+        # Distinct normalised well names, in input order (deterministic).
+        distinct_names = []
         for las in las_objects:
-            well_name = _get_las_metadata(las, 'well_name', 'Unknown')
-            well_names.add(well_name)
-        
-        if len(well_names) > 1:
-            warnings.append(f"Multiple wells detected: {well_names}")
+            name = normalize_well_name(_get_las_metadata(las, 'well_name', 'Unknown'))
+            if name and name not in distinct_names:
+                distinct_names.append(name)
+        if len(distinct_names) > 1:
+            warnings.append(f"Multiple wells detected: {', '.join(distinct_names)}")
+
+        # Raw (stripped) WELL of the first file that has a usable one.
+        well_name = 'Unknown'
+        for las in las_objects:
+            raw = _get_las_metadata(las, 'well_name', 'Unknown')
+            if normalize_well_name(raw):
+                well_name = str(raw).strip()
+                break
         
         # Normalize all DataFrames
         normalized_dfs = []
         file_names = []  # Actual file identifiers
+        kept_las = []    # Parsers matching file_names (a file may fail to normalize)
         
         for i, las in enumerate(las_objects):
             df = las.data.copy()
@@ -515,6 +532,7 @@ class LASHandler:
                 )
                 normalized_dfs.append(normalized)
                 file_names.append(file_id)
+                kept_las.append(las)
             except Exception as e:
                 warnings.append(f"Error normalizing {file_id}: {str(e)}")
         
@@ -553,15 +571,24 @@ class LASHandler:
                     curve_type = col.upper()
                     qc_scores[filename][col] = self.curve_qc_score(df[col], curve_type)
         
-        # Get all curves
-        all_curves = set()
+        # Get all curves in first-appearance order (input file order)
+        all_curves = []
         for _, df in projected_dfs:
-            all_curves.update([c for c in df.columns if c != 'DEPTH'])
+            for c in df.columns:
+                if c != 'DEPTH' and c not in all_curves:
+                    all_curves.append(c)
+
+        parser_by_file = dict(zip(file_names, kept_las))
+
+        def _curve_attr(file_id, curve, attr):
+            info = getattr(parser_by_file[file_id], 'curve_info', None) or {}
+            return str((info.get(curve) or {}).get(attr) or '').strip()
         
         # Merge curves
         merged_df = pd.DataFrame({'DEPTH': master_depth})
         curve_sources = {}
-        
+        merged_curve_info = {}
+
         for curve in all_curves:
             rankings = self.select_best_source(curve, projected_dfs, qc_scores)
             
@@ -582,11 +609,31 @@ class LASHandler:
                 'gaps_count': 0
             }
             
+            merged_curve_info[curve] = {
+                'unit': _curve_attr(primary_file, curve, 'unit'),
+                'description': _curve_attr(primary_file, curve, 'description'),
+                'source_file': primary_file,
+            }
+
+            # Files that disagree on the unit must not be mixed value by value.
+            units_seen = {}
+            for fn, _, _ in rankings:
+                u = _curve_attr(fn, curve, 'unit')
+                if u:
+                    units_seen.setdefault(canonical_unit(u), u)
+            fill_allowed = len(units_seen) <= 1
+            if not fill_allowed:
+                warnings.append(
+                    f"Curve {curve} has different units across files "
+                    f"({', '.join(units_seen.values())}); gaps were not filled "
+                    f"from secondary files, only {primary_file} was used."
+                )
+
             # Fill gaps from secondary sources
             total_gaps_filled = 0
             secondary_sources = []
-            
-            for sec_file, _, _ in rankings[1:]:
+
+            for sec_file, _, _ in (rankings[1:] if fill_allowed else []):
                 if merged_df[curve].isna().any():
                     sec_df = next((df for fn, df in projected_dfs if fn == sec_file), None)
                     if sec_df is not None and curve in sec_df.columns:
@@ -606,6 +653,15 @@ class LASHandler:
             )
             curve_sources[curve]['gaps_count'] = total_gaps_filled
         
+        # Header of the first file, re-based on the merged (feet) grid.
+        merged_well_info = dict(getattr(las_objects[0], 'well_info', None) or {})
+        merged_well_info.update({
+            'start_depth': float(master_depth.min()),
+            'stop_depth': float(master_depth.max()),
+            'step': step_ft,
+            'depth_unit': 'FT',
+        })
+
         # Create merge report
         merge_report = MergeReport(
             curves=curve_sources,
@@ -617,7 +673,9 @@ class LASHandler:
             },
             files_processed=file_names,
             warnings=warnings,
-            well_name=list(well_names)[0] if well_names else 'Unknown'
+            well_name=well_name,
+            curve_info=merged_curve_info,
+            well_info=merged_well_info,
         )
         
         self.merged_df = merged_df
@@ -632,20 +690,33 @@ class LASHandler:
 def validate_same_well(las_objects: List[Any]) -> Tuple[bool, List[str]]:
     """
     Validate that all LAS files are from the same well.
-    
+
+    Each file is compared with the first identified file via ``same_well``
+    (UWI, then API, then well name). Files with no usable identifier are
+    undecidable and count as the same well; see ``count_unidentified``.
+
     Args:
         las_objects: List of LASParser objects
-        
+
     Returns:
-        Tuple of (is_valid, list_of_well_names)
+        Tuple of (is_same, list_of_well_names). is_same is False when any
+        file is definitively a different well.
     """
-    well_names = []
-    for las in las_objects:
-        name = _get_las_metadata(las, 'well_name', 'Unknown')
-        well_names.append(name)
-    
-    unique_names = set(well_names)
-    return len(unique_names) == 1, well_names
+    infos = [getattr(las, 'well_info', None) or {} for las in las_objects]
+    names = [_get_las_metadata(las, 'well_name', 'Unknown') for las in las_objects]
+    reference = next((i for i in infos if well_key(i)[1]), None)
+    if reference is None:
+        return True, names
+    is_same = all(same_well(reference, info) is not False for info in infos)
+    return is_same, names
+
+
+def count_unidentified(las_objects: List[Any]) -> int:
+    """Number of files whose header has no usable well identifier."""
+    return sum(
+        1 for las in las_objects
+        if not well_key(getattr(las, 'well_info', None) or {})[1]
+    )
 
 
 _LAS_UNIT_DEFAULTS = {

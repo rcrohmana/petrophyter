@@ -9,7 +9,7 @@ import math
 import pandas as pd
 from typing import List
 
-from modules.las_handler import LASHandler, validate_same_well
+from modules.las_handler import LASHandler, count_unidentified, validate_same_well
 
 
 logger = logging.getLogger(__name__)
@@ -62,12 +62,18 @@ class MergeWorker(QRunnable):
                 self.signals.error.emit("Need at least 2 valid LAS files to merge")
                 return
 
-            # Validate same well and make a visible, non-fatal warning.
+            # Files from different wells must never be merged into one dataset.
             is_same_well, well_names = validate_same_well(self.parsers)
             if not is_same_well:
                 well_list = ", ".join(str(name) for name in well_names) or "unknown"
+                self.signals.error.emit(
+                    f"These files belong to different wells ({well_list}). "
+                    "Merging is only allowed within one well; load each well separately."
+                )
+                return
+            if count_unidentified(self.parsers):
                 self.signals.progress.emit(
-                    f"Warning: Files may be from different wells ({well_list}). Proceeding with merge...",
+                    "Warning: Some files have no well identifier; assuming they are the same well.",
                     20,
                 )
 
