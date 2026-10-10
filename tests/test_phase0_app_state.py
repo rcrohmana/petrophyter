@@ -253,3 +253,23 @@ def test_e2e_merge_refuses_different_wells(tmp_path):
     worker.signals.completed.connect(lambda df, report: completed.append(report))
     worker.run()
     assert completed == [] and "different wells" in errors[0]
+
+
+def test_merge_completion_shows_report_and_all_file_unit_warnings(window, banners):
+    from modules.las_handler import MergeReport
+
+    first, second = _parser("WELL A"), _parser("WELL A")
+    second.unit_warnings = ["NPHI converted to V/V (from PU)."]
+    window._loaded_parsers = [first, second]
+    window._loaded_file_names = ["a.las", "b.las"]
+    window._loaded_row_counts = [11, 11]
+    report = MergeReport(
+        curves={}, master_depth={"min": 1000.0, "max": 1100.0, "step": 0.5, "points": 201},
+        files_processed=["a.las", "b.las"],
+        warnings=["Curve RHOB has different units across files (G/C3, KG/M3)."],
+        well_name="WELL A",
+    )
+    window._on_merge_completed(first.data.copy(), report)
+    text = "\n".join(t for _, t in banners)
+    assert "different units across files" in text
+    assert "NPHI converted to V/V" in text
