@@ -13,6 +13,32 @@ from scipy.optimize import curve_fit
 logger = logging.getLogger(__name__)
 
 
+# Minimum GR separation (API) between the clean-sand and shale baselines. If the
+# P5/P95 baselines are closer than this, the full min/max range is used instead.
+MIN_GR_SEPARATION = 20.0
+
+
+def gr_baseline_from_series(gr: pd.Series) -> Tuple[float, float]:
+    """The single GR baseline rule used by the pipeline, Vshale and "Calculate Rw/Rsh".
+
+    GRmin = P5, GRmax = P95 of the non-null GR. If they are closer than
+    :data:`MIN_GR_SEPARATION`, fall back to the full min/max range. An empty
+    curve returns ``(0, 150)``.
+    """
+    gr = gr.dropna()
+    if len(gr) == 0:
+        return (0, 150)
+
+    gr_min = float(np.percentile(gr, 5))
+    gr_max = float(np.percentile(gr, 95))
+
+    if gr_max - gr_min < MIN_GR_SEPARATION:
+        gr_min = float(gr.min())
+        gr_max = float(gr.max())
+
+    return (gr_min, gr_max)
+
+
 class StatisticsUtils:
     """
     Statistical utilities for data-driven parameter estimation.
@@ -57,34 +83,17 @@ class StatisticsUtils:
     def estimate_gr_baseline(self, gr_curve: str = 'GR') -> Tuple[float, float]:
         """
         Estimate GR clean sand (GRmin) and shale (GRmax) baselines.
-        
-        Uses percentile method:
-        - GRmin: P5 percentile (clean sand baseline)
-        - GRmax: P95 percentile (shale baseline)
-        
+
         Args:
             gr_curve: Name of GR curve
-            
+
         Returns:
-            Tuple of (GRmin, GRmax)
+            Tuple of (GRmin, GRmax); see :func:`gr_baseline_from_series`.
         """
         if gr_curve not in self.data.columns:
             raise ValueError(f"GR curve '{gr_curve}' not found in data")
-            
-        gr = self.data[gr_curve].dropna()
-        
-        if len(gr) == 0:
-            return (0, 150)  # Default fallback
-        
-        gr_min = float(np.percentile(gr, 5))
-        gr_max = float(np.percentile(gr, 95))
-        
-        # Ensure minimum separation
-        if gr_max - gr_min < 20:
-            gr_min = float(gr.min())
-            gr_max = float(gr.max())
-            
-        return (gr_min, gr_max)
+
+        return gr_baseline_from_series(self.data[gr_curve])
     
     def estimate_matrix_density(self, rhob_curve: str = 'RHOB',
                                  vsh_series: pd.Series = None) -> float:
@@ -185,64 +194,66 @@ class StatisticsUtils:
         return max(0.01, min(rw, 5.0))  # Bound to reasonable range
     
     def estimate_rw_from_rt_water_zone(self, rt_curve: str = 'RT',
-                                        phi_curve: str = 'PHIT',
+                                        phi_curve='PHIT',
                                         porosity_threshold: float = 0.15,
                                         a: float = 0.62,
-                                        m: float = 2.15) -> Optional[float]:
+                                        m: float = 2.15,
+                                        vsh_series: pd.Series = None,
+                                        vsh_clean_max: float = 0.3,
+                                        min_samples: int = 10) -> Optional[float]:
         """
-        Estimate Rw from Rt in water-bearing zones.
-        
-        Assumes 100% water saturation in zones with:
-        - High porosity
-        - High resistivity relative to local minimum
-        
+        Estimate Rw with the apparent water resistivity (Rwa) method.
+
+        Candidates are clean (VSH < ``vsh_clean_max`` when ``vsh_series`` is
+        given), porous (> ``porosity_threshold``) samples with RT > 0. For each,
+        Rwa = RT * phi^m / a. Rw is the median of the Rwa values at or below
+        the 25th percentile of Rwa (the water-bearing end of the distribution).
+
         Args:
             rt_curve: Resistivity curve mnemonic
-            phi_curve: Porosity curve mnemonic
-            porosity_threshold: Minimum porosity for water zone
+            phi_curve: Porosity column name, or a Series aligned to the data
+                (the pipeline passes PHIE, falling back to PHIT)
+            porosity_threshold: Minimum porosity for a candidate sample
             a, m: Archie parameters
-            
+            vsh_series: Reference Vshale; enables the clean-zone filter
+            vsh_clean_max: Vshale ceiling for a clean sample
+            min_samples: Fewest candidate samples that give a trustworthy estimate
+
         Returns:
-            Estimated Rw in ohm.m
+            Estimated Rw in ohm.m, or None when there are too few candidates.
         """
         if rt_curve not in self.data.columns:
             return None
-            
-        rt = self.data[rt_curve].dropna()
 
-        if len(rt) == 0:
+        if isinstance(phi_curve, pd.Series):
+            phi = self._align_external_series(phi_curve, "phi_curve")
+        elif phi_curve in self.data.columns:
+            phi = self.data[phi_curve]
+        else:
             return None
 
-        if phi_curve in self.data.columns:
-            # Drop NaN jointly so RT and PHI share a common index. Dropping
-            # only RT (as before) left PHI on the full index; ANDing the two
-            # masks then aligned on the union index and silently produced a
-            # wrong water-zone selection whenever RT (or PHI) had NaN gaps.
-            valid = self.data[[rt_curve, phi_curve]].dropna()
-            if len(valid) > 0:
-                rt_valid = valid[rt_curve]
-                phi_valid = valid[phi_curve]
-                # Water zones: high porosity, low Rt
-                water_mask = (phi_valid > porosity_threshold) & \
-                             (rt_valid < np.percentile(rt_valid, 25))
-                if water_mask.sum() > 0:
-                    rt_water = rt_valid[water_mask].median()
-                    phi_water = phi_valid[water_mask].median()
+        frame = pd.DataFrame({"rt": self.data[rt_curve], "phi": phi})
+        if vsh_series is not None:
+            frame["vsh"] = self._align_external_series(vsh_series, "vsh_series")
+        # Drop NaN jointly so every curve shares one index.
+        frame = frame.dropna()
 
-                    # Rw = Rt * phi^m / a (assuming Sw = 1)
-                    rw = rt_water * (phi_water ** m) / a
-                    return max(0.01, min(float(rw), 5.0))
+        mask = (frame["rt"] > 0) & (frame["phi"] > porosity_threshold)
+        if vsh_series is not None:
+            mask &= frame["vsh"] < vsh_clean_max
+        frame = frame[mask]
 
-        # Fallback: use minimum Rt with typical porosity
-        rt_min = float(np.percentile(rt, 5))
-        phi_assumed = 0.20
-        rw = rt_min * (phi_assumed ** m) / a
-        
+        if len(frame) < min_samples:
+            return None
+
+        rwa = frame["rt"] * frame["phi"] ** m / a
+        rw = float(rwa[rwa <= np.percentile(rwa, 25)].median())
         return max(0.01, min(rw, 5.0))
-    
+
     def estimate_rsh(self, rt_curve: str = 'RT',
                       vsh_series: pd.Series = None,
-                      gr_curve: str = 'GR') -> float:
+                      gr_curve: str = 'GR',
+                      unavailable_default: Optional[float] = 5.0) -> Optional[float]:
         """
         Estimate shale resistivity (Rsh) from pure shale zones.
         
@@ -250,12 +261,14 @@ class StatisticsUtils:
             rt_curve: Resistivity curve mnemonic
             vsh_series: Vshale series
             gr_curve: GR curve mnemonic (fallback)
-            
+            unavailable_default: Returned when no shale zone can be found
+                (pass None to detect that case)
+
         Returns:
             Estimated Rsh in ohm.m
         """
         if rt_curve not in self.data.columns:
-            return 5.0  # Default
+            return unavailable_default  # Default
             
         rt = self.data[rt_curve]
         
@@ -274,19 +287,19 @@ class StatisticsUtils:
                 # present but entirely null.
                 rt_valid = rt.dropna()
                 if len(rt_valid) == 0:
-                    return 5.0
+                    return unavailable_default
                 shale_mask = rt < np.percentile(rt_valid, 20)
         else:
             # Use low resistivity as proxy
             rt_valid = rt.dropna()
             if len(rt_valid) == 0:
-                return 5.0
+                return unavailable_default
             shale_mask = rt < np.percentile(rt_valid, 20)
         
         rt_shale = rt[shale_mask].dropna()
         
         if len(rt_shale) == 0:
-            return 5.0
+            return unavailable_default
             
         rsh = float(rt_shale.median())
         

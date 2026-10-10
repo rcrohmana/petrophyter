@@ -8,6 +8,8 @@ import pandas as pd
 from typing import Dict, Tuple, Optional
 from scipy.optimize import brentq
 
+from modules.statistics_utils import gr_baseline_from_series
+
 
 class PetrophysicsCalculator:
     """
@@ -19,12 +21,6 @@ class PetrophysicsCalculator:
     - Water Saturation (Archie, Indonesian, Simandoux)
     - Permeability (Wyllie-Rose, Timur)
     """
-
-    # Minimum GR separation (API units) required between the clean-sand and
-    # pure-shale baselines. If the auto-derived P5/P95 baselines are closer than
-    # this, we widen to the full min/max range so Vshale is not compressed into a
-    # tiny GR window.
-    MIN_GR_SEPARATION = 10.0
 
     # A per-sample depth increment larger than GAP_STEP_FACTOR x the median
     # logging step is treated as a non-physical depth gap (e.g. Per-Formation
@@ -131,16 +127,15 @@ class PetrophysicsCalculator:
             self.results["VSH"] = vsh
             return vsh
 
-        # Auto-calculate baselines if not provided
-        if gr_min is None:
-            gr_min = float(np.nanpercentile(gr, 5))
-        if gr_max is None:
-            gr_max = float(np.nanpercentile(gr, 95))
-
-        # Ensure minimum separation
-        if gr_max - gr_min < self.MIN_GR_SEPARATION:
-            gr_min = float(np.nanmin(gr))
-            gr_max = float(np.nanmax(gr))
+        # Auto-derive baselines (single shared rule, including its minimum
+        # separation check) only when the caller did not supply them. Explicit
+        # baselines are used as given.
+        if gr_min is None or gr_max is None:
+            auto_min, auto_max = gr_baseline_from_series(gr)
+            if gr_min is None:
+                gr_min = auto_min
+            if gr_max is None:
+                gr_max = auto_max
 
         # Guard against zero (or inverted) separation, e.g. constant GR. Without
         # GR contrast Vshale is undefined, so return NaN rather than dividing by

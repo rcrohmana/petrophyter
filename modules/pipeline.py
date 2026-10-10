@@ -142,6 +142,176 @@ def _has(curve: Optional[str], data: pd.DataFrame) -> bool:
     return bool(curve and curve != "None" and curve in data.columns)
 
 
+AUTO_UNAVAILABLE = "manual (auto estimate unavailable)"
+
+
+def _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings):
+    """GR baseline and reference VSH, shared by the pipeline and Rw/Rsh estimation.
+
+    Also sets the ``VSH`` result column to the series used downstream (with
+    several methods that is the row-wise maximum, not the first method).
+    """
+    gr_curve = curve_mapping.get("GR", "GR")
+    has_gr = _has(gr_curve, data)
+    if p["vsh_baseline_method"] == "Custom (Manual)":
+        gr_min, gr_max = p["gr_min_manual"], p["gr_max_manual"]
+    elif has_gr:
+        gr_min, gr_max = stats_util.estimate_gr_baseline(gr_curve)
+    else:
+        gr_min, gr_max = 20, 120
+
+    vsh_selected = p["vsh_methods"] or ["Linear"]
+    methods_to_calc = [VSH_METHOD_MAP[m] for m in vsh_selected if m in VSH_METHOD_MAP] or ["linear"]
+
+    if has_gr:
+        calc.calculate_all_vshale(gr_curve, gr_min, gr_max, methods_to_calc)
+        vsh, _ = vsh_reference(calc, methods_to_calc, data, gr_curve)
+        calc.results["VSH"] = vsh
+    else:
+        vsh = pd.Series([0.3] * len(data), index=data.index)
+        calc.results["VSH"] = vsh
+        warnings.append("VSH defaulted to 0.3 because no GR curve was available.")
+    return vsh, gr_min, gr_max
+
+
+def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
+    """Density, neutron and sonic porosity, PHIT and PHIE (results land in ``calc``)."""
+    rhob_curve = curve_mapping.get("RHOB", "RHOB")
+    nphi_curve = curve_mapping.get("NPHI", "NPHI")
+    dt_curve = curve_mapping.get("DT", "DT")
+    has_density = _has(rhob_curve, data)
+    has_neutron = _has(nphi_curve, data)
+    has_sonic = _has(dt_curve, data)
+    rho_matrix, rho_fluid = p["rho_matrix"], p["rho_fluid"]
+    dt_matrix, dt_fluid = p["dt_matrix"], p["dt_fluid"]
+
+    if has_neutron and data[nphi_curve].median() > 1.0:
+        warnings.append(
+            f"NPHI curve {nphi_curve} has a median above 1.0; it looks like percent, "
+            "not fractional porosity (v/v). Porosity and Sw results will be wrong."
+        )
+
+    if has_density:
+        calc.calculate_porosity_density(rhob_curve, rho_matrix, rho_fluid)
+    if has_neutron:
+        calc.calculate_porosity_neutron(nphi_curve, resolve_nphi_matrix(p))
+    if has_sonic:
+        calc.calculate_porosity_sonic(dt_curve, dt_matrix, dt_fluid)
+    if has_density or has_neutron:
+        calc.calculate_phit_neutron_density()
+    else:
+        warnings.append("PHIT was not calculated because no RHOB or NPHI curve was available.")
+
+    calc.calculate_all_phie(
+        vsh=vsh,
+        nphi_shale=p["nphi_shale"],
+        rhob_shale=p["rho_shale"],
+        dt_shale=p["dt_shale"],
+        rho_matrix=rho_matrix,
+        rho_fluid=rho_fluid,
+        dt_matrix=dt_matrix,
+        dt_fluid=dt_fluid,
+        gas_correction=p["gas_correction_enabled"],
+        gas_nphi_factor=p["gas_nphi_factor"],
+        gas_rhob_factor=p["gas_rhob_factor"],
+        primary_method=p["primary_phie_method"],
+    )
+
+
+def _auto_rw(stats_util, calc, vsh, rt_curve, p):
+    """Rwa-method Rw on PHIE (PHIT if PHIE is absent) and the reference VSH, or None."""
+    phi = calc.results.get("PHIE")
+    if phi is None or not phi.notna().any():
+        phi = calc.results.get("PHIT")
+    if phi is None:
+        return None
+    rw = stats_util.estimate_rw_from_rt_water_zone(
+        rt_curve, phi, 0.15, p["a"], p["m"], vsh_series=vsh
+    )
+    return rw or None
+
+
+def _auto_rsh(stats_util, vsh, rt_curve):
+    """Median RT of the shale zone (VSH > 0.8), or None when there is none."""
+    return stats_util.estimate_rsh(rt_curve, vsh, unavailable_default=None) or None
+
+
+def _unavailable_warning(name, entered):
+    return (
+        f"{name} could not be estimated automatically; using the entered "
+        f"{name} of {entered}."
+    )
+
+
+def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings):
+    """Effective Rw/Rsh per ``rw_mode`` / ``rsh_mode``.
+
+    Returns ``(rw, rsh, rw_source, rsh_source)``; a source is ``"manual"``,
+    ``"auto"`` or :data:`AUTO_UNAVAILABLE`.
+    """
+    rw, rsh = p["rw"], p["rsh"]
+    rw_source = rsh_source = "manual"
+    if p["rw_mode"] == "auto":
+        estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p)
+        if estimate is not None:
+            rw, rw_source = estimate, "auto"
+        else:
+            rw_source = AUTO_UNAVAILABLE
+            warnings.append(_unavailable_warning("Rw", rw))
+    if p["rsh_mode"] == "auto":
+        estimate = _auto_rsh(stats_util, vsh, rt_curve)
+        if estimate is not None:
+            rsh, rsh_source = estimate, "auto"
+        else:
+            rsh_source = AUTO_UNAVAILABLE
+            warnings.append(_unavailable_warning("Rsh", rsh))
+    return rw, rsh, rw_source, rsh_source
+
+
+def estimate_rw_rsh(
+    data: pd.DataFrame,
+    curve_mapping: Dict[str, str],
+    params: Dict,
+    formation_tops=None,
+) -> Optional[Dict]:
+    """Rw and Rsh exactly as a pipeline run in auto mode would estimate them.
+
+    Uses the same formation filter, GR baseline, VSH and porosity steps as
+    :func:`run_pipeline`, then the same estimators, regardless of ``rw_mode`` /
+    ``rsh_mode``. Returns ``None`` when there is no data or no RT curve,
+    otherwise a dict with ``rw`` and ``rsh`` (the estimate, or the entered value
+    when it is unavailable), ``rw_source``, ``rsh_source``, ``gr_min``,
+    ``gr_max`` and ``warnings``.
+    """
+    if data is None:
+        return None
+    p = {**PARAM_DEFAULTS, **params, "rw_mode": "auto", "rsh_mode": "auto"}
+    data = data.copy()
+    if p["analysis_mode"] == "Per-Formation" and p["selected_formations"] and formation_tops:
+        data = formation_tops.filter_by_formations(data, p["selected_formations"], "DEPTH")
+    rt_curve = curve_mapping.get("RT", "RT")
+    if len(data) == 0 or not _has(rt_curve, data):
+        return None
+
+    warnings = []
+    calc = PetrophysicsCalculator(data)
+    stats_util = StatisticsUtils(data)
+    vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
+    _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
+    rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
+        stats_util, calc, vsh, rt_curve, p, warnings
+    )
+    return {
+        "rw": rw,
+        "rsh": rsh,
+        "rw_source": rw_source,
+        "rsh_source": rsh_source,
+        "gr_min": gr_min,
+        "gr_max": gr_max,
+        "warnings": warnings,
+    }
+
+
 def run_pipeline(
     data: pd.DataFrame,
     curve_mapping: Dict[str, str],
@@ -201,70 +371,22 @@ def run_pipeline(
 
     # ---- Shale volume -------------------------------------------------------
     emit("Calculating VShale...", 20)
-    if p["vsh_baseline_method"] == "Custom (Manual)":
-        gr_min, gr_max = p["gr_min_manual"], p["gr_max_manual"]
-    elif has_gr:
-        gr_min, gr_max = stats_util.estimate_gr_baseline(gr_curve)
-    else:
-        gr_min, gr_max = 20, 120
-
-    vsh_selected = p["vsh_methods"] or ["Linear"]
-    methods_to_calc = [VSH_METHOD_MAP[m] for m in vsh_selected if m in VSH_METHOD_MAP] or ["linear"]
-
-    if has_gr:
-        calc.calculate_all_vshale(gr_curve, gr_min, gr_max, methods_to_calc)
-        vsh, _ = vsh_reference(calc, methods_to_calc, data, gr_curve)
-    else:
-        vsh = pd.Series([0.3] * len(data), index=data.index)
-        calc.results["VSH"] = vsh
-        warnings.append("VSH defaulted to 0.3 because no GR curve was available.")
+    vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
 
     # ---- Porosity -----------------------------------------------------------
     emit("Calculating porosity...", 35)
-    rho_matrix, rho_fluid = p["rho_matrix"], p["rho_fluid"]
-    dt_matrix, dt_fluid = p["dt_matrix"], p["dt_fluid"]
-
-    if has_density:
-        calc.calculate_porosity_density(rhob_curve, rho_matrix, rho_fluid)
-    if has_neutron:
-        calc.calculate_porosity_neutron(nphi_curve, resolve_nphi_matrix(p))
-    if has_sonic:
-        calc.calculate_porosity_sonic(dt_curve, dt_matrix, dt_fluid)
-    if has_density or has_neutron:
-        calc.calculate_phit_neutron_density()
-    else:
-        warnings.append("PHIT was not calculated because no RHOB or NPHI curve was available.")
-
+    _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     emit("Calculating effective porosity...", 45)
-    calc.calculate_all_phie(
-        vsh=vsh,
-        nphi_shale=p["nphi_shale"],
-        rhob_shale=p["rho_shale"],
-        dt_shale=p["dt_shale"],
-        rho_matrix=rho_matrix,
-        rho_fluid=rho_fluid,
-        dt_matrix=dt_matrix,
-        dt_fluid=dt_fluid,
-        gas_correction=p["gas_correction_enabled"],
-        gas_nphi_factor=p["gas_nphi_factor"],
-        gas_rhob_factor=p["gas_rhob_factor"],
-        primary_method=p["primary_phie_method"],
-    )
 
     # ---- Water saturation ---------------------------------------------------
     emit("Calculating water saturation...", 55)
-    rw, rsh = p["rw"], p["rsh"]
     a, m, n = p["a"], p["m"], p["n"]
 
-    phi_proxy = nphi_curve if has_neutron else ("NPHI" if "NPHI" in data.columns else None)
-    if rw <= 0.01 and has_rt:
-        rw_est = stats_util.estimate_rw_from_rt_water_zone(rt_curve, phi_proxy, 0.15, a, m)
-        if rw_est:
-            rw = rw_est
+    rw, rsh, rw_source, rsh_source = p["rw"], p["rsh"], "manual", "manual"
     if has_rt:
-        rsh_est = stats_util.estimate_rsh(rt_curve, vsh)
-        if rsh_est:
-            rsh = rsh_est
+        rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
+            stats_util, calc, vsh, rt_curve, p, warnings
+        )
 
     phie = calc.results.get("PHIE")
     if phie is None:
@@ -347,6 +469,8 @@ def run_pipeline(
     summary["gr_max"] = gr_max
     summary["rw"] = rw
     summary["rsh"] = rsh
+    summary["rw_source"] = rw_source
+    summary["rsh_source"] = rsh_source
     summary["swirr_method"] = swirr_method
     summary["swirr_mean"] = swirr_mean
     summary["analysis_mode"] = analysis_mode
