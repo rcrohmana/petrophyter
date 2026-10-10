@@ -118,6 +118,9 @@ class AppModel(QObject):
         # =====================================================================
         self._rw: float = 0.05
         self._rsh: float = 5.0
+        # "manual" uses the value above; "auto" estimates it from the loaded data.
+        self._rw_mode: str = "manual"
+        self._rsh_mode: str = "auto"
         self._calculated_rw: Optional[float] = None
         self._calculated_rsh: Optional[float] = None
 
@@ -583,6 +586,22 @@ class AppModel(QObject):
     @rsh.setter
     def rsh(self, value: float):
         self._rsh = value
+
+    @property
+    def rw_mode(self) -> str:
+        return self._rw_mode
+
+    @rw_mode.setter
+    def rw_mode(self, value: str):
+        self._rw_mode = value
+
+    @property
+    def rsh_mode(self) -> str:
+        return self._rsh_mode
+
+    @rsh_mode.setter
+    def rsh_mode(self, value: str):
+        self._rsh_mode = value
 
     @property
     def calculated_rw(self) -> Optional[float]:
