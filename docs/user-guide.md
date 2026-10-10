@@ -222,7 +222,7 @@ The existing result tabs keep showing the previous run until you run the analysi
 
 ## Running the analysis
 
-Choose **Analysis → Run Analysis** (`F5`) or click **Run Analysis** on the toolbar to analyse the active well; it always runs, even when the results are up to date. The action is disabled until a LAS file is loaded and while an analysis is running. Because the `F5` shortcut is application-wide, it also works while the Parameters window has focus.
+Choose **Analysis → Run Analysis** (`F5`) or click **Run Analysis** on the toolbar to analyse the active well; it always runs, even when the results are up to date. The action is disabled until a LAS file is loaded and while the active well is running. Because the `F5` shortcut is application-wide, it also works while the Parameters window has focus.
 
 **Analysis → Run All Wells** (`Ctrl+Shift+R`, also on the toolbar) analyses every loaded well that has no results or whose results are out of date, in the background (up to four at a time), each with its own effective parameters. Wells that are up to date are skipped. You can keep working, switch wells, or edit parameters meanwhile; results always go to the well they were computed for.
 
@@ -247,7 +247,7 @@ Save Session, export, the **View** and **Help** menus, the Parameters window, an
 
 An analysis run does not lock the window. **Run Analysis** is disabled only while the active well is running, so you can switch to another well and run it. **New Project** and **Load Session…** cancel a run in progress; its results are discarded.
 
-Closing the window while an analysis runs asks **Analysis is still running. Quit anyway?** (or **Files are still loading. Quit anyway?**). Choosing **Yes** quits without waiting for the result.
+Closing the window while an analysis runs asks **Analysis is still running. Quit anyway?** (or **Files are still loading. Quit anyway?**, or **A session is still loading. Quit anyway?**). Choosing **Yes** quits without waiting for the result.
 
 ### QC chip
 
