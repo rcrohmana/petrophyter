@@ -51,7 +51,7 @@ Parameters are not part of the main window. They live in the separate [Parameter
 
 Use **File → Open LAS File(s)…** (or the **Open LAS File(s)…** toolbar button) and select one or more `.las` files.
 
-- **One file** loads directly. Curves are detected and mapped automatically, common NULL values such as `-999.25` and `-9999` are replaced with NaN, and the depth unit (feet or meters) is detected. If the depth unit is ambiguous, a warning banner appears.
+- **One file** loads directly. Curves are detected and mapped automatically, common NULL values such as `-999.25` and `-9999` are replaced with NaN, and the depth unit (feet or meters) is detected. If the depth unit is ambiguous, or a curve unit was converted or could not be recognized, a warning banner lists it. Loading a LAS file from a different well clears any formation tops, core data, and formation selection that were loaded for the previous well, and the banner says so; a file from the same well keeps them.
 - **Two or more files** open the [Merge LAS Files dialog](#merging-las-files) so you can combine them into one well dataset.
 
 Loading a LAS file runs the data quality check, enables **Analysis → Run Analysis**, updates the well indicator and window title, and fills the Data Browser and the **Data QC** tab. **File → New Project** (`Ctrl+N`) clears all data and resets the window after a confirmation.
@@ -67,7 +67,7 @@ When you select two or more files in **File → Open LAS File(s)…**, the **Mer
 
 Click **Merge** to combine the files, or **Cancel** to close the dialog without merging. If you cancel, the files stay pending; reopen the dialog later with **File → Merge LAS Files…**. That menu item is enabled only while two or more files are waiting to be merged.
 
-Merging selects the best curve for each type using quality scoring and interpolates short gaps. The merge warns, without stopping, if the files appear to come from different wells. After the merge:
+Merging selects the best curve for each type using quality scoring and interpolates short gaps. The merge is refused, with an error message, if the files come from different wells. After the merge:
 
 - The Data Browser shows the sources as **n files merged**.
 - The **Data QC** tab shows a **LAS Merge Report** that identifies the source file, coverage, QC score, and gaps filled for each curve.
@@ -75,7 +75,7 @@ Merging selects the best curve for each type using quality scoring and interpola
 
 ### Opening formation tops
 
-Use **File → Open Formation Tops…** and select a `.txt` or `.csv` file. Depths are converted to feet when the file is in meters. The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
+Use **File → Open Formation Tops…** and select a `.txt` or `.csv` file. Depths are converted to feet when the file is in meters. If the tops do not overlap the log depth range at all, a warning banner suggests checking the depth unit; the same check applies to core data. The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
 
 ### Opening core data
 
@@ -120,6 +120,8 @@ A page list on the left groups ten pages under three headings:
 | **Parameters** | **Saturation Models** | Archie constants and lithology presets, the Sw methods to calculate and the primary Sw, and the Rw and Rsh values with a data-driven estimate |
 | **Parameters** | **Permeability** | Wyllie-Rose coefficients C, P, and Q, with a calculate option, and the Swirr estimation method |
 | **Corrections** | **Gas Correction** | Enables the gas correction and sets the NPHI and RHOB factors |
+
+On the **Saturation Models** page, each of Rw and Rsh has an **Auto** checkbox. When it is checked, the value is estimated from the loaded data on every run and the field is disabled; clear it to enter a value yourself. Rw starts in manual mode and Rsh in auto mode. **Apply Calculated Values** fills both fields and switches both to manual.
 
 The **Rock Properties**, **Saturation Models**, and **Permeability** pages are divided into labeled sections. The shale, Rw/Rsh, and permeability sections have **Calculate** and **Apply** buttons that estimate values from the loaded data and let you accept them. The permeability estimate needs a completed analysis, and it uses core data when available. See [Calculation Methods](calculation-methods.md) for the equations, presets, and valid ranges.
 

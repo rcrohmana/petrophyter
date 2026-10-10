@@ -324,6 +324,8 @@ class ParametersWindow(QDialog):
         res_cfg = self.res_params_widget.get_params()
         self.model.rw = res_cfg["rw"]
         self.model.rsh = res_cfg["rsh"]
+        self.model.rw_mode = res_cfg["rw_mode"]
+        self.model.rsh_mode = res_cfg["rsh_mode"]
 
         # Perm params
         perm = self.perm_params_widget.get_params()

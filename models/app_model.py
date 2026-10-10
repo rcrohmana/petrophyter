@@ -873,6 +873,8 @@ class AppModel(QObject):
         self._las_filename = ""
         self._formation_tops = None
         self._core_data = None
+        self._selected_formations = []
+        self._analysis_mode = "Whole Well"
         self._clear_derived_state()
         self._curve_mapping = {
             "GR": "None",

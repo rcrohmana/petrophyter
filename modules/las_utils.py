@@ -21,6 +21,8 @@ their sentinels cleaned on every path. Setting NaN upcasts such a column to
 float, which is the intended outcome for a curve that actually contained nulls.
 """
 
+import re
+
 import numpy as np
 import pandas as pd
 from typing import List, Optional, Sequence
@@ -102,15 +104,16 @@ WELL_IDENTITY_FIELDS = ("uwi", "api", "well_name")
 def normalize_well_name(value) -> str:
     """Return a comparable form of a header identifier, or '' when it is blank.
 
-    Strips, upper-cases, collapses whitespace and treats ``_`` as ``-``, so
-    "a_1 ", "A-1" and "A  -1" style variants of one name compare equal.
+    Strips and upper-cases, and treats any run of spaces, ``_`` and ``-`` as
+    one separator, so "bks_01 ", "BKS-01" and "BKS 01" compare equal.
     Placeholder values such as "Unknown" become ''.
     """
     if value is None:
         return ""
-    text = " ".join(str(value).replace("_", "-").split()).upper()
-    text = text.replace(" -", "-").replace("- ", "-")
-    return "" if text in _PLACEHOLDER_NAMES else text
+    text = str(value).strip().upper()
+    if text in _PLACEHOLDER_NAMES:
+        return ""
+    return re.sub(r"[\s_\-]+", "-", text).strip("-")
 
 
 def well_key(well_info: dict) -> tuple:
