@@ -172,6 +172,10 @@ class MainWindow(QMainWindow):
         self._progress_timer = QElapsedTimer()
         # (key, data_version) the UI was last refreshed for; see _on_data_loaded.
         self._refreshed_for = None
+        # Busy state: see _set_busy. Analysis runs are not a busy state; the
+        # batch runner gates Run per well and New Project / Load Session cancel it.
+        self._busy = None  # None, "load" or "restore"
+        self._busy_status_tips = {}
 
         # Setup UI
         self._build_actions()
@@ -390,6 +394,17 @@ class MainWindow(QMainWindow):
             self._on_core_file_selected(file)
 
     def closeEvent(self, event):
+        busy = self._busy or ("analysis" if self.batch_runner.is_running() else None)
+        if busy:
+            if not self._confirm_quit(busy):
+                event.ignore()
+                return
+            # Don't wait for the workers: late results are dropped and queued
+            # runnables are discarded.
+            self.batch_runner.cancel()
+            self.merge_service.thread_pool.clear()
+            if hasattr(self, "_load_pool"):
+                self._load_pool.clear()
         settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
         settings.setValue("ui/geometry", self.saveGeometry())
         settings.setValue("ui/windowState", self.saveState())
@@ -755,6 +770,64 @@ class MainWindow(QMainWindow):
     def _refresh_core_actions(self):
         self.actions_["page_core"].setEnabled(self.params_window.core_unit_combo.isEnabled())
 
+    # Actions that could replace the data under a running worker, per busy kind.
+    _LOAD_ACTIONS = (
+        "open_las", "open_tops", "open_core", "open_tops_multi", "open_core_multi",
+        "merge_las", "run_analysis", "run_all",
+    )
+    _BUSY_ACTIONS = {
+        "load": ("new_project", "load_session") + _LOAD_ACTIONS,
+        # New Project and Load Session stay available: they cancel the restore.
+        "restore": _LOAD_ACTIONS,
+    }
+    _BUSY_TIPS = {
+        "load": "Unavailable while files are loading",
+        "restore": "Unavailable while a session is loading",
+    }
+    _QUIT_QUESTIONS = {
+        "analysis": "Analysis is still running. Quit anyway?",
+        "load": "Files are still loading. Quit anyway?",
+        "restore": "A session is still loading. Quit anyway?",
+    }
+
+    def _set_busy(self, kind):
+        """The only place that disables actions for a running load or restore.
+
+        ``kind`` is "load", "restore" or None (idle: normal gating applies).
+        """
+        if self._busy:
+            for key, tip in self._busy_status_tips.items():
+                self.actions_[key].setStatusTip(tip)
+            self._busy_status_tips = {}
+        self._busy = kind or None
+        if kind:
+            keys = self._BUSY_ACTIONS[kind]
+            self._busy_status_tips = {key: self.actions_[key].statusTip() for key in keys}
+            for key in keys:
+                self.actions_[key].setEnabled(False)
+                self.actions_[key].setStatusTip(self._BUSY_TIPS[kind])
+        self._refresh_action_states()
+
+    def _refresh_action_states(self):
+        """Normal gating of the data and run actions; busy actions stay disabled."""
+        busy = set(self._BUSY_ACTIONS.get(self._busy, ()))
+        for key in ("new_project", "open_las", "open_tops", "open_core",
+                    "load_session", "merge_las"):
+            if key not in busy:
+                self.actions_[key].setEnabled(True)
+        self._refresh_import_actions()
+        self._refresh_run_action()
+
+    def _confirm_quit(self, kind: str) -> bool:
+        reply = QMessageBox.question(
+            self,
+            "Quit Petrophyter",
+            self._QUIT_QUESTIONS[kind],
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
     def _refresh_action_icons(self):
         """Re-render action icons in the current theme's color."""
         from themes.icon_loader import get_icon
@@ -825,7 +898,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import QThreadPool
 
         self._bulk_loading = True
-        self._set_load_actions_enabled(False)
+        self._set_busy("load")
         self.statusBar.showMessage(f"Reading {len(paths)} LAS files...")
         self._set_progress(1, None)
         worker = LoadWorker(paths)
@@ -870,22 +943,18 @@ class MainWindow(QMainWindow):
         notes = [f"{p.name}: {p.error}" for p in parsed if not p.ok]
         self._begin_load(dialog.groups(), step, gap, multi_file=True, notes=notes)
 
-    def _set_load_actions_enabled(self, enabled: bool):
-        self.actions_["open_las"].setEnabled(enabled)
-        self.actions_["merge_las"].setEnabled(enabled)
-
     def _abort_load(self):
         self._bulk_loading = False
         self._load_queue = []
         self._load_current = None
         self._load_worker = None
-        self._set_load_actions_enabled(True)
+        self._set_busy(None)
         self._set_progress(0, "")
 
     def _begin_load(self, groups, step=None, gap=None, multi_file=False, notes=()):
         """Build one well per group (merging multi-file groups), then activate the last."""
         self._bulk_loading = True
-        self._set_load_actions_enabled(False)
+        self._set_busy("load")
         self._load_queue = [list(group) for group in groups if group]
         self._load_notes = list(notes)
         self._load_added = []
@@ -948,7 +1017,7 @@ class MainWindow(QMainWindow):
     def _finish_load(self):
         self._bulk_loading = False
         self._load_current = None
-        self._set_load_actions_enabled(True)
+        self._set_busy(None)
         self._set_progress(0, "")
         added = self._load_added
         notes = list(dict.fromkeys(self._load_notes))
@@ -1062,6 +1131,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
+        if self._busy:
+            return  # _set_busy(None) refreshes
         project = self.model.project
         runner = self.batch_runner
         self.actions_["run_analysis"].setEnabled(
@@ -1276,6 +1347,8 @@ class MainWindow(QMainWindow):
             self._import_multi_well(kind, file)
 
     def _refresh_import_actions(self, *_):
+        if self._busy:
+            return  # _set_busy(None) refreshes
         enabled = len(self.model.project) > 0
         for key in ("open_tops_multi", "open_core_multi"):
             self.actions_[key].setEnabled(enabled)
@@ -1433,6 +1506,8 @@ class MainWindow(QMainWindow):
         self._start_runs(keys, force=False)
 
     def _start_runs(self, keys, force: bool):
+        if self._busy:
+            return
         # Update the model from the UI and disable Run before the background
         # workers can report back.
         self._sync_model_from_ui()
@@ -1582,7 +1657,8 @@ class MainWindow(QMainWindow):
         """Data Browser request: an action key, or ``edit_zone:<ZONE>``."""
         if key.startswith("edit_zone:"):
             self._edit_zone(key.split(":", 1)[1])
-        elif key in self.actions_:
+        elif key in self.actions_ and self.actions_[key].isEnabled():
+            # QAction.trigger() ignores isEnabled(), so honour the busy state here.
             self.actions_[key].trigger()
 
     def _edit_zone(self, zone: str):

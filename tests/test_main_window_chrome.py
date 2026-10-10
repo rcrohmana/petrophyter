@@ -11,7 +11,8 @@ from ui.main_window import MainWindow
 @pytest.fixture()
 def window(qtbot):
     w = MainWindow()
-    qtbot.addWidget(w)
+    # Tests may leave a run "in flight"; don't hit the quit prompt on close.
+    qtbot.addWidget(w, before_close_func=lambda w: w._set_busy(None))
     return w
 
 
