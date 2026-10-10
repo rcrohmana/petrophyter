@@ -3,6 +3,7 @@ Core Data Handler Module for Petrophyter
 Handles loading and validation of core data against log-derived petrophysical properties.
 """
 
+import copy
 import re
 import logging
 import numpy as np
@@ -11,6 +12,8 @@ from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from scipy import stats
 from scipy.interpolate import interp1d
+
+from modules.well_matching import find_well_column
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,9 @@ class CoreDataHandler:
         self.porosity_unit: str = 'fraction'  # After conversion
         self.converted_to_feet: bool = False
         self.porosity_converted: bool = False
+        # Optional well column of a multi-well core file.
+        self.well_col: Optional[str] = None
+        self.well_kind: str = 'name'  # what the column holds: name / uwi / api
     
     # Updated read_core_from_buffer with depth_unit support
     def read_core_from_buffer(self, file_buffer, separator: str = '\t', depth_unit: str = 'Auto') -> bool:
@@ -112,6 +118,8 @@ class CoreDataHandler:
         self.depth_unit_warning = None
         self.converted_to_feet = False
         self.porosity_converted = False
+        self.well_col = None
+        self.well_kind = 'name'
 
         try:
             # Try to read with specified separator
@@ -140,6 +148,10 @@ class CoreDataHandler:
             self.porosity_col = self._find_column(df, self.POROSITY_ALIASES)
             self.perm_col = self._find_column(df, self.PERM_ALIASES)
             self.grain_density_col = self._find_column(df, self.GRAIN_DENSITY_ALIASES)
+            self.well_col, self.well_kind = find_well_column(df, self._find_column)
+            if self.well_col in (self.depth_col, self.porosity_col, self.perm_col,
+                                 self.grain_density_col):
+                self.well_col, self.well_kind = None, 'name'
             
             # Validate that we have at least one property to validate
             if self.porosity_col is None and self.perm_col is None:
@@ -609,6 +621,32 @@ class CoreDataHandler:
         
         return summary
     
+    # ------------------------------------------------------------------
+    # Multi-well files
+    # ------------------------------------------------------------------
+    def well_names(self) -> List[str]:
+        """Well names in the file's well column, in order of first appearance.
+
+        Empty when the file has no well column.
+        """
+        if self.data is None or not self.well_col or self.well_col not in self.data.columns:
+            return []
+        values = self.data[self.well_col].dropna().astype(str).str.strip()
+        return [v for v in dict.fromkeys(values) if v]
+
+    def split_by_well(self) -> Dict[str, 'CoreDataHandler']:
+        """One CoreDataHandler per well name (same unit state, that well's samples)."""
+        parts: Dict[str, CoreDataHandler] = {}
+        names = self.well_names()
+        if not names:
+            return parts
+        labels = self.data[self.well_col].astype(str).str.strip()
+        for name in names:
+            part = copy.copy(self)
+            part.data = self.data[labels == name].reset_index(drop=True)
+            parts[name] = part
+        return parts
+
     def to_dataframe(self) -> pd.DataFrame:
         """
         Return the core data as a DataFrame.
