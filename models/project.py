@@ -51,6 +51,12 @@ class WellDataset:
         self.las_filename = ""
         self.formation_tops = None
         self.core_data = None
+        # Where the tops / core came from, and how they were imported (session 2.1).
+        self.tops_path = None
+        self.core_path = None
+        self.core_depth_unit = None
+        self.tops_import = None
+        self.core_import = None
         self.curve_mapping: Dict[str, str] = default_curve_mapping()
         self.analysis_mode = "Whole Well"
         self.selected_formations: List[str] = []

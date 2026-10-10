@@ -45,6 +45,31 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
+def _resolve_override(columns, df_columns) -> dict:
+    """Map an explicit column override onto the columns of a frame.
+
+    ``columns`` is ``{role: header name or None}``; header names match
+    case-insensitively after a strip. Returns ``{role: actual column or None}``.
+
+    Raises:
+        ValueError: a named header is not in ``df_columns``.
+    """
+    lookup = {}
+    for col in df_columns:
+        lookup.setdefault(str(col).strip().lower(), col)
+    resolved = {}
+    for role, name in (columns or {}).items():
+        if name is None or str(name).strip() == '':
+            resolved[role] = None
+            continue
+        col = lookup.get(str(name).strip().lower())
+        if col is None:
+            raise ValueError(f"Column '{name}' (for {role}) was not found in the file. "
+                             f"Columns found: {list(df_columns)}")
+        resolved[role] = col
+    return resolved
+
+
 @dataclass
 class Formation:
     """Formation data class."""
@@ -88,6 +113,12 @@ class FormationTops:
         self.notes: List[str] = []
         self.spellings: List[str] = []  # well spellings of a split part
         self.table_read = None  # TableRead without its frame
+        # Columns used, by original header name (None when absent); and the
+        # well text of every excluded line ({line: well}, '' without a well).
+        self.columns_detected: Dict[str, Optional[str]] = {}
+        self.excluded_row_wells: Dict[int, str] = {}
+        self._columns_override: Optional[dict] = None
+        self._override_error: Optional[str] = None
 
     def convert_to_feet(self):
         """
@@ -135,9 +166,13 @@ class FormationTops:
         self.notes = []
         self.spellings = []
         self.table_read = None
+        self.columns_detected = {}
+        self.excluded_row_wells = {}
+        self._override_error = None
 
     def read_tops_file(self, file_path: str, separator: Optional[str] = None, *,
-                       fill_down: bool = False, sheet=0) -> bool:
+                       fill_down: bool = False, sheet=0,
+                       columns: Optional[dict] = None) -> bool:
         """
         Read formation tops from a file (delimited text or .xlsx).
 
@@ -151,21 +186,25 @@ class FormationTops:
             separator: preferred delimiter (None = detect)
             fill_down: blank well cells continue the well above
             sheet: sheet index or name for Excel workbooks
+            columns: explicit column override ``{well|name|top|bottom: header
+                name or None}``; names match case-insensitively, None = no such column
 
         Returns:
             True if successful
         """
         self._reset()
+        self._columns_override = columns
         try:
             table = read_table(file_path, self._columns_found, sheet=sheet, delimiter=separator)
             return self._build_from_table(table, fill_down)
         except Exception as e:
-            self.last_error = str(e)
+            self.last_error = self._override_error or str(e)
             logger.error("Error reading tops file: %s", e, exc_info=True)
             return False
 
     def read_tops_from_buffer(self, file_buffer, separator: Optional[str] = None, *,
-                              fill_down: bool = False, sheet=0) -> bool:
+                              fill_down: bool = False, sheet=0,
+                              columns: Optional[dict] = None) -> bool:
         """
         Read formation tops from a file buffer (for Streamlit uploads).
 
@@ -174,16 +213,18 @@ class FormationTops:
             separator: preferred delimiter (None = detect)
             fill_down: blank well cells continue the well above
             sheet: sheet index or name (Excel bytes only)
+            columns: explicit column override (see ``read_tops_file``)
 
         Returns:
             True if successful
         """
         self._reset()
+        self._columns_override = columns
         try:
             table = read_table(file_buffer, self._columns_found, sheet=sheet, delimiter=separator)
             return self._build_from_table(table, fill_down)
         except Exception as e:
-            self.last_error = str(e)
+            self.last_error = self._override_error or str(e)
             logger.error("Error reading tops: %s", e, exc_info=True)
             return False
 
@@ -196,13 +237,24 @@ class FormationTops:
     ANOMALY_ALIASES = ['anomaly code', 'anomaly', 'code', 'remarks']
 
     def _detect_columns(self, df: pd.DataFrame) -> dict:
-        well_col, well_kind = find_well_column(df, self._find_column)
+        ov = _resolve_override(self._columns_override, df.columns)
+        if 'well' in ov:
+            well_col = ov['well']
+            well_kind = 'name'
+            if well_col is not None:
+                found, kind = find_well_column(df[[well_col]], self._find_column)
+                well_kind = kind if found is not None else 'name'
+        else:
+            well_col, well_kind = find_well_column(df, self._find_column)
         # A 'well_name' column must not be mistaken for the formation name.
         name_df = df.drop(columns=[well_col]) if well_col else df
-        name_col = self._find_column(name_df, self.NAME_ALIASES)
-        top_col = self._find_column(df, self.TOP_ALIASES)
-        bottom_col = self._find_column(df, self.BOTTOM_ALIASES)
-        if top_col is None:
+        name_col = (ov['name'] if 'name' in ov
+                    else self._find_column(name_df, self.NAME_ALIASES))
+        top_col = (ov['top'] if 'top' in ov
+                   else self._find_column(df, self.TOP_ALIASES))
+        bottom_col = (ov['bottom'] if 'bottom' in ov
+                      else self._find_column(df, self.BOTTOM_ALIASES))
+        if top_col is None and 'top' not in ov:
             skip = [c for c in (bottom_col, name_col, well_col) if c is not None]
             top_col = self._find_column(df.drop(columns=skip), self.TOP_FALLBACK_ALIASES)
         anomaly_col = self._find_column(df, self.ANOMALY_ALIASES)
@@ -210,7 +262,11 @@ class FormationTops:
                 'bottom': bottom_col, 'anomaly': anomaly_col}
 
     def _columns_found(self, df: pd.DataFrame) -> bool:
-        cols = self._detect_columns(df)
+        try:
+            cols = self._detect_columns(df)
+        except ValueError as e:
+            self._override_error = str(e)
+            return False
         return cols['name'] is not None and cols['top'] is not None
 
     def _build_from_dataframe(self, df: pd.DataFrame) -> bool:
@@ -237,10 +293,17 @@ class FormationTops:
 
         df = table.frame.copy()
         lines = list(table.line_numbers) or list(range(2, len(df) + 2))
+        original = {}
+        for col in df.columns:
+            original.setdefault(str(col).strip().lower(), col)
         # Normalize column names
         df.columns = df.columns.str.strip().str.lower()
 
-        cols = self._detect_columns(df)
+        try:
+            cols = self._detect_columns(df)
+        except ValueError as e:
+            self.last_error = str(e)
+            return False
         well_col, well_kind = cols['well'], cols['well_kind']
         name_col, top_col = cols['name'], cols['top']
         bottom_col, anomaly_col = cols['bottom'], cols['anomaly']
@@ -275,6 +338,10 @@ class FormationTops:
                                     if not w and filled[i]]
                 wells_txt = [f or '' for f in filled]
         self.well_column, self.well_kind = well_col, well_kind
+        self.columns_detected = {
+            role: (original.get(col) if col else None)
+            for role, col in (('well', well_col), ('name', name_col),
+                              ('top', top_col), ('bottom', bottom_col))}
 
         # Build raw records first (name, top, bottom-or-None, anomaly).
         records = []
@@ -289,6 +356,7 @@ class FormationTops:
                 else:
                     reason = f"non-numeric top depth {str(raw)!r}"
                 self.excluded_rows.append((line, reason))
+                self.excluded_row_wells[line] = wells_txt[i] if well_col else ''
                 continue
             well = wells_txt[i] if well_col else ''
             if well_col and not well:
@@ -298,6 +366,7 @@ class FormationTops:
             name = '' if _is_blank(df[name_col].iloc[i]) else str(df[name_col].iloc[i]).strip()
             if not name:
                 self.excluded_rows.append((line, "missing formation name"))
+                self.excluded_row_wells[line] = well
                 continue
             top = float(top)
 
@@ -387,6 +456,7 @@ class FormationTops:
         part.well_column = self.well_column
         part.well_kind = self.well_kind
         part.table_read = self.table_read
+        part.columns_detected = dict(self.columns_detected)
         return part
 
     def split_by_well(self, group: bool = False) -> Dict[str, 'FormationTops']:

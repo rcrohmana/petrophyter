@@ -23,6 +23,31 @@ from modules.well_matching import (
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_override(columns, df_columns) -> dict:
+    """Map an explicit column override onto the columns of a frame.
+
+    ``columns`` is ``{role: header name or None}``; header names match
+    case-insensitively after a strip. Returns ``{role: actual column or None}``.
+
+    Raises:
+        ValueError: a named header is not in ``df_columns``.
+    """
+    lookup = {}
+    for col in df_columns:
+        lookup.setdefault(str(col).strip().lower(), col)
+    resolved = {}
+    for role, name in (columns or {}).items():
+        if name is None or str(name).strip() == '':
+            resolved[role] = None
+            continue
+        col = lookup.get(str(name).strip().lower())
+        if col is None:
+            raise ValueError(f"Column '{name}' (for {role}) was not found in the file. "
+                             f"Columns found: {list(df_columns)}")
+        resolved[role] = col
+    return resolved
+
 # Depth-unit tokens.
 _FEET_TOKENS = {'ft', 'feet', 'foot'}
 _METER_TOKENS = {'m', 'meter', 'meters', 'metre', 'metres'}
@@ -124,6 +149,12 @@ class CoreDataHandler:
         self.notes: List[str] = []
         self.spellings: List[str] = []  # well spellings of a split part
         self.table_read = None  # TableRead without its frame
+        # Columns used, by original header name (None when absent); and the
+        # well text of every excluded line ({line: well}, '' without a well).
+        self.columns_detected: Dict[str, Optional[str]] = {}
+        self.excluded_row_wells: Dict[int, str] = {}
+        self._columns_override: Optional[dict] = None
+        self._override_error: Optional[str] = None
         self.depth_is_tvd: bool = False
         self.tvd_warning: Optional[str] = None
         # Porosity scale: 'percent' / 'fraction' (None when wells disagree).
@@ -157,6 +188,9 @@ class CoreDataHandler:
         self.notes = []
         self.spellings = []
         self.table_read = None
+        self.columns_detected = {}
+        self.excluded_row_wells = {}
+        self._override_error = None
         self.depth_is_tvd = False
         self.tvd_warning = None
         self.porosity_scale = None
@@ -166,16 +200,44 @@ class CoreDataHandler:
         self._scales_by_group = {}
         self._por_raw = None
 
+    def _detect_columns(self, df: pd.DataFrame) -> dict:
+        """Resolve the columns of ``df``: detected by alias, overridden by ``columns``."""
+        ov = _resolve_override(self._columns_override, df.columns)
+
+        def pick(role, aliases):
+            return ov[role] if role in ov else self._find_column(df, aliases)
+
+        cols = {'depth': pick('depth', self.DEPTH_ALIASES),
+                'porosity': pick('porosity', self.POROSITY_ALIASES),
+                'permeability': pick('permeability', self.PERM_ALIASES),
+                'grain_density': pick('grain_density', self.GRAIN_DENSITY_ALIASES)}
+        if 'well' in ov:
+            well_col, well_kind = ov['well'], 'name'
+            if well_col is not None:
+                found, kind = find_well_column(df[[well_col]], self._find_column)
+                well_kind = kind if found is not None else 'name'
+        else:
+            well_col, well_kind = find_well_column(df, self._find_column)
+        if well_col in (cols['depth'], cols['porosity'], cols['permeability'],
+                        cols['grain_density']):
+            well_col, well_kind = None, 'name'
+        cols['well'], cols['well_kind'] = well_col, well_kind
+        return cols
+
     def _columns_found(self, df: pd.DataFrame) -> bool:
         """Predicate for ``read_table``: a depth column and a porosity or perm column."""
-        if self._find_column(df, self.DEPTH_ALIASES) is None:
+        try:
+            cols = self._detect_columns(df)
+        except ValueError as e:
+            self._override_error = str(e)
             return False
-        return (self._find_column(df, self.POROSITY_ALIASES) is not None
-                or self._find_column(df, self.PERM_ALIASES) is not None)
+        return (cols['depth'] is not None
+                and (cols['porosity'] is not None or cols['permeability'] is not None))
 
     def read_core_from_buffer(self, file_buffer, separator: Optional[str] = None,
                               depth_unit: str = 'Auto', *, fill_down: bool = False,
-                              porosity_scale=None, sheet=0) -> bool:
+                              porosity_scale=None, sheet=0,
+                              columns: Optional[dict] = None) -> bool:
         """
         Read core data from a file buffer (for Streamlit uploads).
 
@@ -187,37 +249,46 @@ class CoreDataHandler:
             porosity_scale: None (decide per well: max > 1 means percent),
                 'percent' / 'fraction' for every well, or ``{well: scale}``
             sheet: sheet index or name (Excel bytes only)
+            columns: explicit column override ``{well|depth|porosity|permeability|
+                grain_density: header name or None}``; names match case-insensitively,
+                None = no such column
 
         Returns:
             True if successful, False otherwise
         """
-        return self._read(file_buffer, separator, depth_unit, fill_down, porosity_scale, sheet)
+        return self._read(file_buffer, separator, depth_unit, fill_down, porosity_scale,
+                          sheet, columns)
 
     def read_core_file(self, file_path: str, separator: Optional[str] = None,
                        depth_unit: str = 'Auto', *, fill_down: bool = False,
-                       porosity_scale=None, sheet=0) -> bool:
+                       porosity_scale=None, sheet=0,
+                       columns: Optional[dict] = None) -> bool:
         """
         Read core data from a file path (delimited text, UTF-8 or CP1252, or .xlsx).
 
         Args:
             file_path: Path to the core data file
             separator: preferred delimiter (None = detect)
+            columns: explicit column override (see ``read_core_from_buffer``)
 
         Returns:
             True if successful
         """
-        return self._read(file_path, separator, depth_unit, fill_down, porosity_scale, sheet)
+        return self._read(file_path, separator, depth_unit, fill_down, porosity_scale,
+                          sheet, columns)
 
-    def _read(self, source, separator, depth_unit, fill_down, porosity_scale, sheet) -> bool:
+    def _read(self, source, separator, depth_unit, fill_down, porosity_scale, sheet,
+              columns=None) -> bool:
         # A handler instance may be reused for another file. Reset all
         # per-load metadata so a prior M conversion or warning cannot suppress
         # or contaminate the next load.
         self._reset()
+        self._columns_override = columns
         try:
             table = read_table(source, self._columns_found, sheet=sheet, delimiter=separator)
             return self._build_from_table(table, depth_unit, fill_down, porosity_scale)
         except Exception as e:
-            self.last_error = str(e)
+            self.last_error = self._override_error or str(e)
             logger.error("Error reading core data: %s", e)
             return False
 
@@ -233,24 +304,30 @@ class CoreDataHandler:
             logger.warning("Empty core file")
             return False
 
+        original = {}
+        for col in df.columns:
+            original.setdefault(str(col).strip().lower(), col)
         # Normalize column names for matching
         df.columns = df.columns.str.strip().str.lower()
 
+        try:
+            cols = self._detect_columns(df)
+        except ValueError as e:
+            self.last_error = str(e)
+            return False
+
         # Find required depth column
-        self.depth_col = self._find_column(df, self.DEPTH_ALIASES)
+        self.depth_col = cols['depth']
         if self.depth_col is None:
             self.last_error = f"Could not find depth column. Columns found: {list(df.columns)}"
             logger.warning("Could not find depth column")
             return False
 
         # Find optional columns
-        self.porosity_col = self._find_column(df, self.POROSITY_ALIASES)
-        self.perm_col = self._find_column(df, self.PERM_ALIASES)
-        self.grain_density_col = self._find_column(df, self.GRAIN_DENSITY_ALIASES)
-        self.well_col, self.well_kind = find_well_column(df, self._find_column)
-        if self.well_col in (self.depth_col, self.porosity_col, self.perm_col,
-                             self.grain_density_col):
-            self.well_col, self.well_kind = None, 'name'
+        self.porosity_col = cols['porosity']
+        self.perm_col = cols['permeability']
+        self.grain_density_col = cols['grain_density']
+        self.well_col, self.well_kind = cols['well'], cols['well_kind']
 
         # Validate that we have at least one property to validate
         if self.porosity_col is None and self.perm_col is None:
@@ -278,6 +355,12 @@ class CoreDataHandler:
                 self.notes.append(f"Well column '{self.well_col}' is empty; it was ignored.")
                 self.well_col, self.well_kind = None, 'name'
                 wells_txt = []
+        self.columns_detected = {
+            role: (original.get(col) if col else None)
+            for role, col in (('well', self.well_col), ('depth', self.depth_col),
+                              ('porosity', self.porosity_col),
+                              ('permeability', self.perm_col),
+                              ('grain_density', self.grain_density_col))}
         if self.well_col:
             self.fill_down_applicable = merged_cell_pattern_applies(
                 wells_txt, depth_num.tolist())
@@ -295,6 +378,7 @@ class CoreDataHandler:
                 reason = ("missing depth" if _is_blank(raw)
                           else f"non-numeric depth {str(raw)!r}")
                 self.excluded_rows.append((lines[i], reason))
+                self.excluded_row_wells[lines[i]] = wells_txt[i] if self.well_col else ''
             elif self.well_col and not wells_txt[i]:
                 self.blank_well_rows.append(lines[i])
                 self.excluded_rows.append((lines[i], "no well (blank well cell)"))
@@ -398,6 +482,8 @@ class CoreDataHandler:
         raw = df[col].to_numpy(dtype=float)
         keys = self._group_keys(df)
         line_of = df['__line__'].to_numpy()
+        well_of = (df[self.well_col].to_numpy() if self.well_col and self.well_col in df.columns
+                   else np.full(len(df), '', dtype=object))
         forced: Dict[str, str] = {}
         if isinstance(requested, dict):
             forced = {group_key(k, self.well_kind): v for k, v in requested.items()}
@@ -427,6 +513,7 @@ class CoreDataHandler:
             shown = raw[i]
             self.excluded_rows.append(
                 (int(line_of[i]), f"porosity {shown:g} out of range (value excluded)"))
+            self.excluded_row_wells[int(line_of[i])] = str(well_of[i])
         converted[bad] = np.nan
 
         df = df.copy()
