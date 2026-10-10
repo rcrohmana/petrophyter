@@ -241,6 +241,11 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.diag_tab, "Diagnostics")
         self.tab_widget.addTab(self.summary_tab, "Summary")
         self.tab_widget.addTab(self.export_tab, "Export")
+        # Plot tabs redraw only while visible; the others are marked dirty
+        # and catch up when they become current.
+        self._lazy_tabs = (self.qc_tab, self.petro_tab, self.log_tab, self.diag_tab)
+        self._dirty_tabs = set()
+        self.tab_widget.currentChanged.connect(self._refresh_current_tab)
 
         content_layout.addWidget(self.tab_widget)
 
@@ -1438,14 +1443,19 @@ class MainWindow(QMainWindow):
         self._update_all_tabs()
 
     def _update_all_tabs(self):
-        """Update all tabs with current results."""
+        """Update the tabs with current results (hidden plot tabs lazily)."""
         self.data_browser.rebuild()
-        self.qc_tab.update_display()
-        self.petro_tab.update_display()
-        self.log_tab.update_display()
-        self.diag_tab.update_display()
+        self._dirty_tabs.update(self._lazy_tabs)
+        self._refresh_current_tab()
         self.summary_tab.update_display()
         self.export_tab.update_display()
+
+    def _refresh_current_tab(self, *_):
+        """Redraw the current tab if results changed while it was hidden."""
+        tab = self.tab_widget.currentWidget()
+        if tab in self._dirty_tabs:
+            self._dirty_tabs.discard(tab)
+            tab.update_display()
 
     # =========================================================================
     # PARAMETER CALCULATIONS
