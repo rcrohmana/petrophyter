@@ -45,6 +45,8 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "n": 2.0,
     "rw": 0.05,
     "rsh": 5.0,
+    "rw_mode": "manual",
+    "rsh_mode": "auto",
     "perm_C": 8581.0,
     "perm_P": 4.4,
     "perm_Q": 2.0,
