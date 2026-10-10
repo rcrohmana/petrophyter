@@ -229,6 +229,10 @@ separated by plain hairline rules. License-table HTML takes its border color fro
   curve nodes, Open Tops and Analysis Scope on tops, Open Core and Core Matching on core,
   Run Analysis on results. Double-clicking a "Not loaded" tops or core node, or a curve
   node, emits `action_requested(str)` (`open_tops`, `open_core`, `page_curves`).
+- A formation with zone parameters (project · zone or this well's well · zone) carries a
+  marker and a tooltip listing them. Double-clicking a formation emits
+  `action_requested("edit_zone:<ZONE>")`; the main window sets the Well scope with that
+  zone and opens the Zones page.
 
 ### 4.13 Parameters window (`ui/parameters_window.py`)
 
@@ -242,6 +246,25 @@ separated by plain hairline rules. License-table HTML takes its border color fro
   Properties, `sat` Saturation Models, `perm` Permeability, `gas` Gas Correction. The
   `PAGES` tuple is the source of truth; each page is reachable from one menu action
   (`test_parameter_menus_cover_pages`, in `tests/test_main_window_chrome.py`).
+  `EXTRA_PAGES` adds `zones` Zones under a SCOPES group label (no menu action).
+- Scope bar (`ui/widgets/scope_bar.py`) above the pages: checkable `Project` /
+  `Well: <name>` buttons (the checked one Primary), a `Zone:` combo (`All zones` plus the
+  zones in scope) and a `text_muted` caption ("Values for every well", "UPPER in
+  BKS-01"). It drives `AppModel.set_edit_scope` and follows `scope_changed` back. At the
+  flat project scope the pages look exactly as before.
+- At any other scope each scoped field gets a `FieldModeControl`: a 22px tool button
+  whose menu holds Auto (`refresh-cw`, only where the parameter supports it) / Manual
+  (`sliders-horizontal`) / Inherit (`layers`), then Copy to… (`copy`) and Set as project
+  default (`house`). Inherited values use the muted input state with a tooltip naming
+  the source; out-of-range values use the warning input state. Fields that cannot be set
+  at the edited scope are disabled with a tooltip.
+- Zones page (`ui/widgets/zone_grid.py`): a `QTableWidget`, one row per zone, columns
+  Zone, a, m, n, Rw, Rsh, ρ matrix, the three cutoffs, and a read-only GR clean–shale.
+  Muted cells inherit; typing sets, clearing inherits, `auto` sets Rw / Rsh to Auto.
+- Temperature section (`TemperatureGroup`) on the Saturation Models page: Correct Rw for
+  formation temperature, Surface temp, Gradient with an Auto checkbox, Rw ref. temp.
+  Well-scoped only (no zone).
+- Apply-to-shale buttons act only at the flat project scope.
 - Live apply: no OK/Cancel/Apply. Edits emit `parameters_updated`. Calculate buttons
   use the `calculator` icon, "Apply Calculated" buttons the `check` icon. Calculate
   results show as status text under the button, never in a popup.
@@ -268,6 +291,8 @@ user choice.
 |---|---|
 | Success, completion (analysis, save/load session, export, merge) | NotificationBanner (success) and/or status-bar message. Never modal. |
 | Non-blocking warnings (depth-unit ambiguity) | NotificationBanner (warning) |
+| Load notes (files, session restore, tops/core well matching, depth coverage) | One NotificationBanner per load listing every note |
+| Some wells failed in a multi-well run | One NotificationBanner (warning) naming each failed well; a single failed well with no other result still uses the error dialog |
 | Precondition warnings | Prevented by action enablement; otherwise status-bar message |
 | Failures (parse, merge, analysis, save/load) | `QMessageBox.critical` / `.warning` |
 | Destructive confirmation (New Project with data) | `QMessageBox.question` |

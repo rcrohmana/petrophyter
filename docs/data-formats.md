@@ -19,6 +19,7 @@ Petrophyter supports LAS 1.2 and 2.0 well-log files. It detects common NULL valu
 - Porosity values greater than 1 are interpreted as percentages and converted to fractions.
 - Permeability is assumed to be in mD.
 - Non-numeric values are coerced to NaN. Rows without depth are dropped, and the data are sorted by depth before use.
+- An optional well column holds data for several wells in one file. Accepted aliases are `well`, `well_name`, `wellname`, `well name`, `well id`, `uwi`, and `api`. Each well's samples go to the loaded well whose header matches (UWI or API for those columns, otherwise the normalised well name); names that match no loaded well are reported.
 
 ## Formation Tops
 
@@ -30,3 +31,5 @@ Petrophyter supports LAS 1.2 and 2.0 well-log files. It detects common NULL valu
 - An anomaly, code, or remarks column is optional.
 - Depths should be supplied in meters; the application converts them to feet after loading.
 - Thickness is calculated from top and bottom depths, and formations are sorted by top depth.
+- An optional well column holds tops for several wells in one file, with the same aliases and matching as for core data. Without it, the tops belong to the active well.
+- Each formation name is also a zone name for zone parameters; names are compared ignoring case and surrounding spaces.

@@ -16,14 +16,15 @@ Petrophyter is a PyQt6 desktop application for loading, analyzing, visualizing, 
 Key capabilities include:
 
 - LAS loading, automatic curve mapping, and intelligent multi-file merging
+- Multi-well projects: run every well in one click, with parameters set per project, well, and formation zone (including a, m, n, Rw, and Rsh)
 - Shale-volume, porosity, water-saturation, Swirr, and permeability calculations
 - Archie, Indonesian, Simandoux, Waxman-Smits, and Dual-Water saturation models
 - Core-calibrated permeability and statistical core-data validation
 - HCPV and configurable net-pay analysis
 - Formation-top overlays and quality-control diagnostics
 - Interactive GPU-accelerated six-track log visualization
-- Excel, CSV, and LAS export
-- JSON session save and load
+- Excel, CSV, and LAS export, per well or for all wells with a field summary
+- JSON session save and load of the whole multi-well project
 - Light and Dark application themes
 
 ## Quick Start
@@ -47,9 +48,9 @@ See [Installation](docs/installation.md) for dependency versions and complete se
 
 ## Basic Workflow
 
-1. **Load data:** Use **File → Open LAS File(s)…** (`Ctrl+O`). Select several files from the same well to merge them.
+1. **Load data:** Use **File → Open LAS File(s)…** (`Ctrl+O`). Select several files to load several wells at once, or to merge files from the same well.
 2. **Configure:** In the Parameters window (`Ctrl+P`), select calculation methods and adjust shale, matrix, fluid, and cutoff parameters.
-3. **Analyze:** Run the petrophysical calculations (`F5`).
+3. **Analyze:** Run the petrophysical calculations (`F5`), or every well at once (`Ctrl+Shift+R`).
 4. **Review:** Inspect logs, crossplots, diagnostics, core validation, and net-pay results.
 5. **Export:** Save the results or session for later use.
 
