@@ -7,6 +7,7 @@ single-well properties (``las_data``, ``results``, ...) as a facade over the
 active well, so views that only ever show one well keep working unchanged.
 """
 
+import itertools
 import os
 from collections import OrderedDict
 from typing import Dict, Iterator, List, Optional
@@ -18,6 +19,11 @@ from modules.las_utils import normalize_well_name, well_key
 
 def default_curve_mapping() -> Dict[str, str]:
     return {"GR": "None", "RHOB": "None", "NPHI": "None", "DT": "None", "RT": "None"}
+
+
+# Process-wide counter: every data replacement gets a version no other dataset
+# ever had, so a reloaded well (new object, same key) never matches an old one.
+_DATA_VERSIONS = itertools.count(1)
 
 
 class WellDataset:
@@ -40,6 +46,7 @@ class WellDataset:
         self.merged = False
 
         self.las_parser = None
+        self.data_version = 0
         self.las_data = None
         self.las_filename = ""
         self.formation_tops = None
@@ -55,6 +62,16 @@ class WellDataset:
 
         self.stale = False
         self.clear_derived()
+
+    @property
+    def las_data(self):
+        return self._las_data
+
+    @las_data.setter
+    def las_data(self, value):
+        """Replacing the data bumps ``data_version`` (UI refresh bookkeeping)."""
+        self._las_data = value
+        self.data_version = next(_DATA_VERSIONS)
 
     def clear_derived(self):
         """Forget results that were computed from the previous data."""

@@ -31,7 +31,7 @@ from .tabs import (
     ExportTab,
 )
 
-from PyQt6.QtCore import Qt, QTimer, QSettings
+from PyQt6.QtCore import Qt, QTimer, QSettings, QElapsedTimer
 from PyQt6.QtGui import QIcon
 import functools
 import traceback
@@ -162,8 +162,15 @@ class MainWindow(QMainWindow):
         self._load_gap = 5.0
         self._bulk_loading = False
         self._load_worker = None
-        # Batch analysis: number of wells in the current run.
+        # Batch analysis: number of wells in the current run, wells finished,
+        # the stage percent of every running well and the throttled status text.
         self._batch_total = 0
+        self._batch_done = 0
+        self._batch_pct = {}
+        self._batch_last = None  # (key, message) of the most recent stage report
+        self._progress_timer = QElapsedTimer()
+        # (key, data_version) the UI was last refreshed for; see _on_data_loaded.
+        self._refreshed_for = None
 
         # Setup UI
         self._build_actions()
@@ -311,6 +318,7 @@ class MainWindow(QMainWindow):
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
         self.batch_runner.progress.connect(self._on_batch_progress)
+        self.batch_runner.well_progress.connect(self._on_well_progress)
         self.batch_runner.well_completed.connect(self._on_well_completed)
         self.batch_runner.well_failed.connect(self._on_well_failed)
         self.batch_runner.finished.connect(self._on_batch_finished)
@@ -1022,7 +1030,9 @@ class MainWindow(QMainWindow):
     def _on_active_well_changed(self, key: str):
         if self._bulk_loading:
             return  # _finish_load refreshes once at the end
-        self._refresh_active_well_ui()
+        # The Data Browser listens to the same signal (connected earlier) and
+        # has already rebuilt itself for this change.
+        self._refresh_active_well_ui(browser_fresh=True)
 
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
@@ -1037,12 +1047,14 @@ class MainWindow(QMainWindow):
         )
 
     @_restoring_guard
-    def _refresh_active_well_ui(self):
+    def _refresh_active_well_ui(self, browser_fresh: bool = False):
         """Point every control and tab at the active well."""
         ds = self.model.active_well
         if ds is None:
+            self._refreshed_for = None
             self._reset_ui()
             return
+        self._refreshed_for = (ds.key, ds.data_version)
         pw = self.params_window
         data = ds.las_data
         if ds.las_parser is not None:
@@ -1087,7 +1099,7 @@ class MainWindow(QMainWindow):
         self._refresh_qc_chip()
         self._sync_stale_label()
         self._refresh_window_title()
-        self._update_all_tabs()
+        self._update_all_tabs(rebuild_browser=not browser_fresh)
 
     def _reset_ui(self):
         """Fresh-state UI: no well is active."""
@@ -1327,17 +1339,59 @@ class MainWindow(QMainWindow):
         )
         self._refresh_run_action()
 
+    # Status-bar updates from running wells are limited to this many per second.
+    _PROGRESS_MAX_HZ = 10
+
     def _on_batch_started(self, total: int):
         self._batch_total = total
+        self._batch_done = 0
+        self._batch_pct = {}
+        self._batch_last = None
+        self._progress_timer.invalidate()
         self.banner.clear()
         self._set_progress(1, "Analyzing..." if total == 1 else f"Running 0/{total} wells…")
         self._refresh_run_action()
 
     def _on_batch_progress(self, done: int, total: int):
         self._batch_total = total
-        message = "Analyzing..." if total == 1 else f"Running {done}/{total} wells…"
-        self._set_progress(max(1, min(99, int(100 * done / max(total, 1)))), message)
+        self._batch_done = done
+        # Finished wells count as done; only wells still running add their stage.
+        runner = self.batch_runner
+        self._batch_pct = {k: v for k, v in self._batch_pct.items() if runner.is_pending(k)}
+        self._show_batch_progress(force=True)
         self._refresh_run_action()
+
+    def _on_well_progress(self, key: str, message: str, percent: int):
+        """One stage report from a running well (key, stage text, 0-100)."""
+        self._batch_pct[key] = max(0, min(100, int(percent)))
+        self._batch_last = (key, message)
+        self._show_batch_progress(force=percent >= 100)
+
+    def _show_batch_progress(self, force: bool = False):
+        timer = self._progress_timer
+        if not force and timer.isValid() and timer.elapsed() < 1000 // self._PROGRESS_MAX_HZ:
+            return
+        timer.restart()
+        total = max(self._batch_total, 1)
+        done = self._batch_done
+        last = self._batch_last
+        project = self.model.project
+        if total == 1:
+            percent = next(iter(self._batch_pct.values()), 0)
+            message = last[1] if last else "Analyzing..."
+        else:
+            percent = (100 * done + sum(self._batch_pct.values())) / total
+            if last:
+                ds = project.get(last[0])
+                name = ds.display_name if ds is not None and ds.display_name else last[0]
+                message = (
+                    f"Analysing {min(done + 1, total)} of {total} wells · "
+                    f"{name}: {last[1]}"
+                )
+            else:
+                message = f"Running {done}/{total} wells…"
+        # 100 only once the whole batch has finished (_on_batch_finished clears it).
+        self._set_progress(max(1, min(99, int(percent))), message)
 
     def _on_well_completed(self, key: str, results, summary, params_hash: str):
         """Store results in the well named by ``key`` (dropped if it is gone)."""
@@ -1435,16 +1489,28 @@ class MainWindow(QMainWindow):
         self.params_window.open_page("zones")
 
     def _on_data_loaded(self):
-        """Refresh every tab after data replacement invalidates derived state."""
+        """Refresh every tab after data replacement invalidates derived state.
+
+        Skipped during a bulk load (``_finish_load`` refreshes once) and when
+        the active well was already refreshed for this very data.
+        """
+        if self._bulk_loading:
+            return
+        ds = self.model.active_well
+        if ds is not None:
+            if self._refreshed_for == (ds.key, ds.data_version):
+                return
+            self._refreshed_for = (ds.key, ds.data_version)
         self._update_all_tabs()
 
     def _on_results_updated(self):
         """Handle results updated signal."""
         self._update_all_tabs()
 
-    def _update_all_tabs(self):
+    def _update_all_tabs(self, rebuild_browser: bool = True):
         """Update the tabs with current results (hidden plot tabs lazily)."""
-        self.data_browser.rebuild()
+        if rebuild_browser:
+            self.data_browser.rebuild()
         self._dirty_tabs.update(self._lazy_tabs)
         self._refresh_current_tab()
         self.summary_tab.update_display()
