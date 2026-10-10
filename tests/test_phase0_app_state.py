@@ -83,7 +83,7 @@ def test_session_round_trip_modes(tmp_path):
     assert svc.save_session(model, path)
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
-    assert data["_session_version"] == "1.4"
+    assert data["_session_version"] == "2.0"
     fresh = AppModel()
     svc.apply_session_to_model(fresh, svc.load_session(path))
     assert (fresh.rw_mode, fresh.rsh_mode) == ("auto", "manual")

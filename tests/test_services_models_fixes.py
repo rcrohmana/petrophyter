@@ -384,10 +384,10 @@ class TestSessionAndModelFixes:
         assert service.save_session(model, str(path))
         restored = AppModel()
         assert service.apply_session_to_model(restored, service.load_session(str(path)))
-        assert restored.las_filename == "well-a.las"
-
+        # v2.0 sessions keep the LAS source and curve mapping per well (see
+        # tests/test_session_v2.py), so only the project parameters round-trip here.
         for field in (
-            "curve_mapping", "primary_phie_method", "shale_vsh_threshold",
+            "primary_phie_method", "shale_vsh_threshold",
             "shale_gate_logs", "shale_iqr_filter", "shale_selection_mode",
             "shale_vsh_quantile", "shale_min_points", "shale_sweep_tmin",
             "shale_sweep_tmax", "shale_sweep_step", "sw_methods",
@@ -413,7 +413,7 @@ class TestSessionAndModelFixes:
 
     def test_session_write_failure_preserves_existing_file(self, tmp_path):
         model = AppModel()
-        model.selected_formations = [object()]
+        model.vsh_methods = [object()]
         path = tmp_path / "session.json"
         path.write_text("original", encoding="utf-8")
 

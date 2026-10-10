@@ -8,7 +8,8 @@ import json
 import logging
 import os
 import tempfile
-from typing import Dict, Any, Optional
+from typing import Callable, Dict, Any, List, Optional
+import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
@@ -73,7 +74,95 @@ _SESSION_DEFAULTS = {
     "gas_correction_enabled": False,
     "gas_nphi_factor": 0.30,
     "gas_rhob_factor": 0.15,
+    "temp_correction": False,
+    "surface_temp": 80.0,
+    "temp_gradient": 1.5,
+    "rw_ref_temp": 75.0,
 }
+
+# Per-well settings that live in each ``wells`` entry in v2.0 sessions, not in
+# ``global_params``.
+_PER_WELL_FIELDS = ("analysis_mode", "selected_formations", "curve_mapping")
+
+
+def _json_safe(value):
+    """Recursively convert numpy / tuple / set values to plain JSON types."""
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, float) and value != value:
+        return None
+    return value
+
+
+def _is_v2(session_data: Dict) -> bool:
+    return str(session_data.get("_session_version", "1.0")).split(".")[0] == "2"
+
+
+def attach_tops(well, path: str) -> List[str]:
+    """Read a tops file for ``well`` and attach it; returns notes (empty when fine).
+
+    A file with a well column contributes only the rows that match ``well``.
+    Sets ``well.formation_tops`` and ``well.tops_path`` on success.
+    """
+    from modules.formation_tops import FormationTops
+    from modules.well_matching import assign_to_wells
+
+    tops = FormationTops()
+    try:
+        with open(path, "r") as handle:
+            ok = tops.read_tops_from_buffer(handle)
+    except OSError as exc:
+        return [f"Formation tops file could not be read ({os.path.basename(path)}): {exc.strerror or exc}"]
+    if not ok:
+        return [f"Formation tops file could not be parsed: {os.path.basename(path)}"]
+    tops.convert_to_feet()
+    notes = []
+    if tops.well_names():
+        matches, _ = assign_to_wells(
+            tops.split_by_well(), [(well.key, well.well_info)], tops.well_kind
+        )
+        if well.key not in matches:
+            return [f"{os.path.basename(path)} has no tops for well {well.display_name}"]
+        tops = matches[well.key]
+    well.formation_tops = tops
+    well.tops_path = path
+    return notes
+
+
+def attach_core(well, path: str, depth_unit: str = "Auto") -> List[str]:
+    """Read a core file for ``well`` and attach it; returns notes (empty when fine).
+
+    A file with a well column contributes only the rows that match ``well``.
+    Sets ``well.core_data``, ``well.core_path`` and ``well.core_depth_unit``.
+    """
+    from modules.core_handler import CoreDataHandler
+    from modules.well_matching import assign_to_wells
+
+    handler = CoreDataHandler()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            ok = handler.read_core_from_buffer(handle, depth_unit=depth_unit)
+    except OSError as exc:
+        return [f"Core file could not be read ({os.path.basename(path)}): {exc.strerror or exc}"]
+    if not ok:
+        return [f"Core file could not be parsed: {os.path.basename(path)}"]
+    if handler.well_names():
+        matches, _ = assign_to_wells(
+            handler.split_by_well(), [(well.key, well.well_info)], handler.well_kind
+        )
+        if well.key not in matches:
+            return [f"{os.path.basename(path)} has no core data for well {well.display_name}"]
+        handler = matches[well.key]
+    well.core_data = handler
+    well.core_path = path
+    well.core_depth_unit = depth_unit
+    return []
 
 
 class SessionService(QObject):
@@ -89,7 +178,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "1.4"
+    SESSION_VERSION = "2.0"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
@@ -108,9 +197,7 @@ class SessionService(QObject):
         """
         temporary_path = None
         try:
-            session_data = self._model_to_dict(model)
-            session_data["_session_version"] = self.SESSION_VERSION
-            session_data["_las_filename"] = getattr(model, "las_filename", "")
+            session_data = self._model_to_session_v2(model)
 
             directory = os.path.dirname(os.path.abspath(file_path)) or "."
             fd, temporary_path = tempfile.mkstemp(
@@ -154,7 +241,7 @@ class SessionService(QObject):
             # Check version compatibility while keeping older parameter-only
             # sessions loadable; unknown fields are simply ignored below.
             version = session_data.get("_session_version", "1.0")
-            if version != self.SESSION_VERSION:
+            if not (_is_v2(session_data) or str(version).startswith("1.")):
                 logger.warning(
                     "Session version %s differs from current version %s; "
                     "loading compatible fields",
@@ -162,7 +249,8 @@ class SessionService(QObject):
                     self.SESSION_VERSION,
                 )
             
-            self._upgrade_legacy(session_data)
+            if not _is_v2(session_data):
+                self._upgrade_legacy(session_data)
             self.session_loaded.emit(session_data)
             return session_data
             
@@ -183,135 +271,21 @@ class SessionService(QObject):
             True if successful
         """
         try:
-            self._upgrade_legacy(session_data)
-            # Analysis mode
-            if 'analysis_mode' in session_data:
-                model.analysis_mode = session_data['analysis_mode']
-            if 'selected_formations' in session_data:
-                model.selected_formations = session_data['selected_formations']
-            
-            # VShale parameters
-            if 'vsh_baseline_method' in session_data:
-                model.vsh_baseline_method = session_data['vsh_baseline_method']
-            if 'gr_min_manual' in session_data:
-                model.gr_min_manual = session_data['gr_min_manual']
-            if 'gr_max_manual' in session_data:
-                model.gr_max_manual = session_data['gr_max_manual']
-            if 'vsh_methods' in session_data:
-                model.vsh_methods = session_data['vsh_methods']
-            
-            # Matrix parameters
-            if 'rho_matrix' in session_data:
-                model.rho_matrix = session_data['rho_matrix']
-            if 'dt_matrix' in session_data:
-                model.dt_matrix = session_data['dt_matrix']
-            if 'nphi_matrix' in session_data:
-                model.nphi_matrix = session_data['nphi_matrix']
-            
-            # Fluid parameters
-            if 'rho_fluid' in session_data:
-                model.rho_fluid = session_data['rho_fluid']
-            if 'dt_fluid' in session_data:
-                model.dt_fluid = session_data['dt_fluid']
-            
-            # Shale parameters
-            if 'shale_approach' in session_data:
-                model.shale_approach = session_data['shale_approach']
-            if 'rho_shale' in session_data:
-                model.rho_shale = session_data['rho_shale']
-            if 'dt_shale' in session_data:
-                model.dt_shale = session_data['dt_shale']
-            if 'nphi_shale' in session_data:
-                model.nphi_shale = session_data['nphi_shale']
-            
-            # Archie parameters
-            if 'lithology_preset' in session_data:
-                model.lithology_preset = session_data['lithology_preset']
-            if 'a' in session_data:
-                model.a = session_data['a']
-            if 'm' in session_data:
-                model.m = session_data['m']
-            if 'n' in session_data:
-                model.n = session_data['n']
-            
-            # Resistivity parameters
-            if 'rw' in session_data:
-                model.rw = session_data['rw']
-            if 'rsh' in session_data:
-                model.rsh = session_data['rsh']
-            if 'rw_mode' in session_data:
-                model.rw_mode = session_data['rw_mode']
-            if 'rsh_mode' in session_data:
-                model.rsh_mode = session_data['rsh_mode']
-            
-            # Permeability parameters
-            if 'perm_C' in session_data:
-                model.perm_C = session_data['perm_C']
-            if 'perm_P' in session_data:
-                model.perm_P = session_data['perm_P']
-            if 'perm_Q' in session_data:
-                model.perm_Q = session_data['perm_Q']
-            
-            # Swirr parameters
-            if 'swirr_method' in session_data:
-                model.swirr_method = session_data['swirr_method']
-            if 'buckles_preset' in session_data:
-                model.buckles_preset = session_data['buckles_preset']
-            if 'k_buckles' in session_data:
-                model.k_buckles = session_data['k_buckles']
-            
-            # Cutoff parameters
-            if 'vsh_cutoff' in session_data:
-                model.vsh_cutoff = session_data['vsh_cutoff']
-            if 'phi_cutoff' in session_data:
-                model.phi_cutoff = session_data['phi_cutoff']
-            if 'sw_cutoff' in session_data:
-                model.sw_cutoff = session_data['sw_cutoff']
-            
-            # Sw Parameters
-            if 'sw_methods' in session_data: model.sw_methods = session_data['sw_methods']
-            if 'sw_primary_method' in session_data: model.sw_primary_method = session_data['sw_primary_method']
-            if 'ws_qv' in session_data: model.ws_qv = session_data['ws_qv']
-            if 'ws_b' in session_data: model.ws_b = session_data['ws_b']
-            if 'dw_swb' in session_data: model.dw_swb = session_data['dw_swb']
-            if 'dw_rwb' in session_data: model.dw_rwb = session_data['dw_rwb']
-            
-            # Merge settings
-            if 'merge_step' in session_data:
-                model.merge_step = session_data['merge_step']
-            if 'merge_gap_limit' in session_data:
-                model.merge_gap_limit = session_data['merge_gap_limit']
-            
-            # Core settings
-            if 'core_depth_unit' in session_data:
-                model.core_depth_unit = session_data['core_depth_unit']
-            if 'core_max_dist' in session_data:
-                model.core_max_dist = session_data['core_max_dist']
-            
-            # Gas correction (v1.2)
-            if 'gas_correction_enabled' in session_data:
-                model.gas_correction_enabled = session_data['gas_correction_enabled']
-            if 'gas_nphi_factor' in session_data:
-                model.gas_nphi_factor = session_data['gas_nphi_factor']
-            if 'gas_rhob_factor' in session_data:
-                model.gas_rhob_factor = session_data['gas_rhob_factor']
+            if _is_v2(session_data):
+                flat = {
+                    k: v for k, v in (session_data.get("global_params") or {}).items()
+                    if k not in _PER_WELL_FIELDS
+                }
+                self._upgrade_legacy(flat)
+                self._apply_flat(model, flat)
+                if hasattr(model, "project"):
+                    model.project.zone_params = copy.deepcopy(
+                        session_data.get("zone_params") or {}
+                    )
+                return True
 
-            # Fields introduced after the original 1.2 schema.
-            for field in (
-                "curve_mapping",
-                "primary_phie_method",
-                "shale_vsh_threshold",
-                "shale_gate_logs",
-                "shale_iqr_filter",
-                "shale_selection_mode",
-                "shale_vsh_quantile",
-                "shale_min_points",
-                "shale_sweep_tmin",
-                "shale_sweep_tmax",
-                "shale_sweep_step",
-            ):
-                if field in session_data:
-                    setattr(model, field, session_data[field])
+            self._upgrade_legacy(session_data)
+            self._apply_flat(model, session_data)
             if "_las_filename" in session_data and hasattr(model, "las_filename"):
                 model.las_filename = session_data["_las_filename"]
 
@@ -330,6 +304,263 @@ class SessionService(QObject):
             logger.exception("Failed to apply session")
             self.error.emit(f"Failed to apply session: {str(e)}")
             return False
+
+    def _apply_flat(self, model, session_data: Dict) -> None:
+        """Set the flat project parameters present in ``session_data`` on ``model``."""
+        # Analysis mode
+        if 'analysis_mode' in session_data:
+            model.analysis_mode = session_data['analysis_mode']
+        if 'selected_formations' in session_data:
+            model.selected_formations = session_data['selected_formations']
+        
+        # VShale parameters
+        if 'vsh_baseline_method' in session_data:
+            model.vsh_baseline_method = session_data['vsh_baseline_method']
+        if 'gr_min_manual' in session_data:
+            model.gr_min_manual = session_data['gr_min_manual']
+        if 'gr_max_manual' in session_data:
+            model.gr_max_manual = session_data['gr_max_manual']
+        if 'vsh_methods' in session_data:
+            model.vsh_methods = session_data['vsh_methods']
+        
+        # Matrix parameters
+        if 'rho_matrix' in session_data:
+            model.rho_matrix = session_data['rho_matrix']
+        if 'dt_matrix' in session_data:
+            model.dt_matrix = session_data['dt_matrix']
+        if 'nphi_matrix' in session_data:
+            model.nphi_matrix = session_data['nphi_matrix']
+        
+        # Fluid parameters
+        if 'rho_fluid' in session_data:
+            model.rho_fluid = session_data['rho_fluid']
+        if 'dt_fluid' in session_data:
+            model.dt_fluid = session_data['dt_fluid']
+        
+        # Shale parameters
+        if 'shale_approach' in session_data:
+            model.shale_approach = session_data['shale_approach']
+        if 'rho_shale' in session_data:
+            model.rho_shale = session_data['rho_shale']
+        if 'dt_shale' in session_data:
+            model.dt_shale = session_data['dt_shale']
+        if 'nphi_shale' in session_data:
+            model.nphi_shale = session_data['nphi_shale']
+        
+        # Archie parameters
+        if 'lithology_preset' in session_data:
+            model.lithology_preset = session_data['lithology_preset']
+        if 'a' in session_data:
+            model.a = session_data['a']
+        if 'm' in session_data:
+            model.m = session_data['m']
+        if 'n' in session_data:
+            model.n = session_data['n']
+        
+        # Resistivity parameters
+        if 'rw' in session_data:
+            model.rw = session_data['rw']
+        if 'rsh' in session_data:
+            model.rsh = session_data['rsh']
+        if 'rw_mode' in session_data:
+            model.rw_mode = session_data['rw_mode']
+        if 'rsh_mode' in session_data:
+            model.rsh_mode = session_data['rsh_mode']
+        
+        # Permeability parameters
+        if 'perm_C' in session_data:
+            model.perm_C = session_data['perm_C']
+        if 'perm_P' in session_data:
+            model.perm_P = session_data['perm_P']
+        if 'perm_Q' in session_data:
+            model.perm_Q = session_data['perm_Q']
+        
+        # Swirr parameters
+        if 'swirr_method' in session_data:
+            model.swirr_method = session_data['swirr_method']
+        if 'buckles_preset' in session_data:
+            model.buckles_preset = session_data['buckles_preset']
+        if 'k_buckles' in session_data:
+            model.k_buckles = session_data['k_buckles']
+        
+        # Cutoff parameters
+        if 'vsh_cutoff' in session_data:
+            model.vsh_cutoff = session_data['vsh_cutoff']
+        if 'phi_cutoff' in session_data:
+            model.phi_cutoff = session_data['phi_cutoff']
+        if 'sw_cutoff' in session_data:
+            model.sw_cutoff = session_data['sw_cutoff']
+        
+        # Sw Parameters
+        if 'sw_methods' in session_data: model.sw_methods = session_data['sw_methods']
+        if 'sw_primary_method' in session_data: model.sw_primary_method = session_data['sw_primary_method']
+        if 'ws_qv' in session_data: model.ws_qv = session_data['ws_qv']
+        if 'ws_b' in session_data: model.ws_b = session_data['ws_b']
+        if 'dw_swb' in session_data: model.dw_swb = session_data['dw_swb']
+        if 'dw_rwb' in session_data: model.dw_rwb = session_data['dw_rwb']
+        
+        # Merge settings
+        if 'merge_step' in session_data:
+            model.merge_step = session_data['merge_step']
+        if 'merge_gap_limit' in session_data:
+            model.merge_gap_limit = session_data['merge_gap_limit']
+        
+        # Core settings
+        if 'core_depth_unit' in session_data:
+            model.core_depth_unit = session_data['core_depth_unit']
+        if 'core_max_dist' in session_data:
+            model.core_max_dist = session_data['core_max_dist']
+        
+        # Gas correction (v1.2)
+        if 'gas_correction_enabled' in session_data:
+            model.gas_correction_enabled = session_data['gas_correction_enabled']
+        if 'gas_nphi_factor' in session_data:
+            model.gas_nphi_factor = session_data['gas_nphi_factor']
+        if 'gas_rhob_factor' in session_data:
+            model.gas_rhob_factor = session_data['gas_rhob_factor']
+
+        # Fields introduced after the original 1.2 schema.
+        for field in (
+            "curve_mapping",
+            "primary_phie_method",
+            "shale_vsh_threshold",
+            "shale_gate_logs",
+            "shale_iqr_filter",
+            "shale_selection_mode",
+            "shale_vsh_quantile",
+            "shale_min_points",
+            "shale_sweep_tmin",
+            "shale_sweep_tmax",
+            "shale_sweep_step",
+            "temp_correction",
+            "surface_temp",
+            "temp_gradient",
+            "rw_ref_temp",
+        ):
+            if field in session_data:
+                setattr(model, field, session_data[field])
+
+    def restore_wells(self, model, session_data: Dict,
+                      progress: Optional[Callable[[str, int], None]] = None) -> List[str]:
+        """Re-open the wells of a v2.0 session (synchronously); returns notes.
+
+        For each well entry the source LAS files are parsed again (merged with
+        the saved step/gap when there are several), then key, name, curve
+        mapping, mode, zones, overrides, tops and core are restored. Results are
+        not stored, so every restored well needs a run. Wells whose files are
+        missing or unreadable are skipped with a note. Finally the saved active
+        well is activated. Existing wells with the same key are replaced; call
+        ``model.reset()`` first to start from an empty project. Call
+        ``apply_session_to_model`` first (it sets the project parameters and
+        project zone parameters). ``progress(message, percent)`` is optional.
+
+        A v1.x session has no LAS paths: nothing is restored and, when no well
+        is loaded, the note says the LAS file must be opened manually.
+        """
+        notes: List[str] = []
+        if not _is_v2(session_data):
+            if getattr(model, "active_well", None) is None:
+                name = session_data.get("_las_filename") or ""
+                name = os.path.basename(str(name)) if name else ""
+                notes.append(
+                    "This session was saved by an older version and does not store its "
+                    "LAS files. Open the LAS file manually"
+                    + (f" ({name})" if name else "") + " to apply the saved parameters."
+                )
+            return notes
+
+        from modules.las_handler import LASHandler
+        from services.load_service import build_well, parse_file
+
+        entries = session_data.get("wells") or []
+        step = session_data.get("merge_step", getattr(model, "merge_step", 0.5))
+        gap = session_data.get("merge_gap_limit", getattr(model, "merge_gap_limit", 5.0))
+        restored = 0
+        for index, entry in enumerate(entries):
+            label = entry.get("display_name") or entry.get("key") or f"well {index + 1}"
+            if progress:
+                progress(f"Restoring {label}...", int(100 * index / max(len(entries), 1)))
+            try:
+                well = self._restore_one_well(entry, step, gap, notes, parse_file,
+                                              build_well, LASHandler)
+            except Exception as exc:
+                logger.exception("Could not restore well %s", label)
+                notes.append(f"{label}: could not be restored ({exc}); skipped.")
+                continue
+            if well is None:
+                continue
+            model.add_well(well, activate=False)
+            restored += 1
+
+        active_key = session_data.get("active_key")
+        if active_key and active_key in model.project:
+            model.set_active_well(active_key)
+        elif restored and active_key:
+            notes.append("The previously active well could not be restored; showing the first well.")
+        if progress:
+            progress("Session restored", 100)
+        return notes
+
+    @staticmethod
+    def _restore_one_well(entry, step, gap, notes, parse_file, build_well, LASHandler):
+        label = entry.get("display_name") or entry.get("key") or "well"
+        paths = [str(p) for p in entry.get("sources") or []]
+        if not paths:
+            notes.append(f"{label}: the session lists no source files; skipped.")
+            return None
+        missing = [p for p in paths if not os.path.isfile(p)]
+        if missing:
+            notes.append(
+                f"{label}: source file not found ({', '.join(os.path.basename(p) for p in missing)}); skipped."
+            )
+            return None
+        files = [parse_file(p) for p in paths]
+        bad = [f for f in files if not f.ok]
+        if bad:
+            notes.append(f"{label}: could not read {bad[0].name} ({bad[0].error}); skipped.")
+            return None
+        merge_result = None
+        if len(files) > 1:
+            merge_result = LASHandler().merge_las_files(
+                [f.parser for f in files], file_identifiers=[f.name for f in files],
+                step_ft=entry.get("merge_step", step),
+                gap_limit_ft=entry.get("merge_gap_limit", gap),
+            )
+        ds = build_well(files, merge_result)
+        if entry.get("key"):
+            ds.key = entry["key"]
+        if entry.get("display_name"):
+            ds.display_name = entry["display_name"]
+
+        columns = set(ds.las_data.columns)
+        for ctype, curve in (entry.get("curve_mapping") or {}).items():
+            if curve == "None" or curve in columns:
+                ds.curve_mapping[ctype] = curve
+            else:
+                notes.append(f"{label}: curve {curve} ({ctype}) is no longer in the data; kept {ds.curve_mapping.get(ctype, 'None')}.")
+        if entry.get("analysis_mode"):
+            ds.analysis_mode = entry["analysis_mode"]
+        ds.selected_formations = list(entry.get("selected_formations") or [])
+        if "overrides" in entry:
+            ds.overrides = copy.deepcopy(entry["overrides"] or {})
+        ds.zone_overrides = copy.deepcopy(entry.get("zone_overrides") or {})
+
+        if entry.get("tops_path"):
+            path = entry["tops_path"]
+            if os.path.isfile(path):
+                notes.extend(f"{label}: {n}" for n in attach_tops(ds, path))
+            else:
+                notes.append(f"{label}: formation tops file not found ({os.path.basename(path)}).")
+        if entry.get("core_path"):
+            path = entry["core_path"]
+            if os.path.isfile(path):
+                notes.extend(f"{label}: {n}" for n in attach_core(
+                    ds, path, entry.get("core_depth_unit") or "Auto"))
+            else:
+                notes.append(f"{label}: core file not found ({os.path.basename(path)}).")
+        ds.calculated = False
+        return ds
+
     
     @staticmethod
     def _upgrade_legacy(session_data: Dict) -> None:
@@ -353,3 +584,43 @@ class SessionService(QObject):
             field: copy.deepcopy(getattr(model, field, default))
             for field, default in _SESSION_DEFAULTS.items()
         }
+
+    def _model_to_session_v2(self, model) -> Dict[str, Any]:
+        """Build the v2.0 session document (parameters + wells; no results)."""
+        global_params = {
+            k: v for k, v in self._model_to_dict(model).items()
+            if k not in _PER_WELL_FIELDS
+        }
+        project = getattr(model, "project", None)
+        wells = []
+        for ds in (list(project) if project is not None else []):
+            paths = [s_.get("path") for s_ in ds.sources if s_.get("path")]
+            if not paths and ds.las_filename and os.path.isfile(str(ds.las_filename)):
+                paths = [ds.las_filename]
+            wells.append({
+                "key": ds.key,
+                "display_name": ds.display_name,
+                "sources": paths,
+                "merged": bool(ds.merged),
+                "merge_step": getattr(model, "merge_step", 0.5),
+                "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
+                "curve_mapping": dict(ds.curve_mapping),
+                "analysis_mode": ds.analysis_mode,
+                "selected_formations": list(ds.selected_formations),
+                "overrides": ds.overrides,
+                "zone_overrides": ds.zone_overrides,
+                "tops_path": getattr(ds, "tops_path", None),
+                "core_path": getattr(ds, "core_path", None),
+                "core_depth_unit": getattr(ds, "core_depth_unit", None)
+                or getattr(model, "core_depth_unit", "Auto"),
+            })
+        data = {
+            "_session_version": self.SESSION_VERSION,
+            "global_params": global_params,
+            "zone_params": getattr(project, "zone_params", {}) if project is not None else {},
+            "wells": wells,
+            "active_key": getattr(project, "active_key", None) if project is not None else None,
+            "merge_step": getattr(model, "merge_step", 0.5),
+            "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
+        }
+        return _json_safe(data)

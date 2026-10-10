@@ -104,8 +104,8 @@ class TestSessionSaveLoad:
                 data = json.load(f)
             
             assert '_session_version' in data
-            assert data['rho_matrix'] == 2.65
-            assert data['rw'] == 0.05
+            assert data['global_params']['rho_matrix'] == 2.65
+            assert data['global_params']['rw'] == 0.05
         finally:
             if os.path.exists(file_path):
                 os.unlink(file_path)

@@ -8,7 +8,9 @@ import logging
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+
+from modules.well_matching import find_well_column
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ class Formation:
     bottom_depth: float
     thickness: float
     anomaly_code: str = ''
+    well: str = ''  # well name from the optional well column
 
 
 class FormationTops:
@@ -47,6 +50,9 @@ class FormationTops:
         self.depth_unit_warning: Optional[str] = None
         self.converted_to_feet = False
         self.last_error: Optional[str] = None
+        # Optional well column of a multi-well tops file.
+        self.well_column: Optional[str] = None
+        self.well_kind: str = 'name'  # what the column holds: name / uwi / api
 
     def convert_to_feet(self):
         """
@@ -134,16 +140,22 @@ class FormationTops:
         self.depth_unit_warning = None
         self.converted_to_feet = False
         self.last_error = None
+        self.well_column = None
+        self.well_kind = 'name'
 
         # Normalize column names
         df.columns = df.columns.str.strip().str.lower()
 
-        name_col = self._find_column(df, ['stratigrafical unit', 'stratigraphical unit',
-                                          'formation', 'unit', 'name', 'fm'])
+        well_col, well_kind = find_well_column(df, self._find_column)
+        # A 'well_name' column must not be mistaken for the formation name.
+        name_df = df.drop(columns=[well_col]) if well_col else df
+        name_col = self._find_column(name_df, ['stratigrafical unit', 'stratigraphical unit',
+                                               'formation', 'unit', 'name', 'fm'])
         top_col = self._find_column(df, ['top (m)', 'top (ft)', 'top', 'top_md', 'top_depth'])
         bottom_col = self._find_column(df, ['bottom (m)', 'bottom (ft)', 'bottom',
                                             'bottom_md', 'bottom_depth'])
         anomaly_col = self._find_column(df, ['anomaly code', 'anomaly', 'code', 'remarks'])
+        self.well_column, self.well_kind = well_col, well_kind
 
         if name_col is None or top_col is None:
             self.last_error = "Could not find required columns (name, top)"
@@ -177,7 +189,11 @@ class FormationTops:
                 top, bottom = bottom, top
 
             anomaly = str(row[anomaly_col]).strip() if anomaly_col and pd.notna(row[anomaly_col]) else ''
-            records.append({'name': name, 'top': top, 'bottom': bottom, 'anomaly': anomaly})
+            well = ''
+            if well_col and pd.notna(row[well_col]):
+                well = str(row[well_col]).strip()
+            records.append({'name': name, 'top': top, 'bottom': bottom,
+                            'anomaly': anomaly, 'well': well})
 
         # Sort by top depth so missing bottoms can be filled from the next top.
         records.sort(key=lambda r: r['top'])
@@ -187,27 +203,62 @@ class FormationTops:
         # thickness (which broke every depth-range query).
         for i, rec in enumerate(records):
             if rec['bottom'] is None:
-                if i + 1 < len(records):
-                    rec['bottom'] = records[i + 1]['top']
+                # The next top of the same well (all rows share one without a well column).
+                nxt = next((r for r in records[i + 1:] if r['well'] == rec['well']), None)
+                if nxt is not None:
+                    rec['bottom'] = nxt['top']
                 else:
                     rec['bottom'] = rec['top']  # last formation: no next top known
 
         self.formations = []
         seen_names = set()
         for rec in records:
-            if rec['name'].lower() in seen_names:
+            seen_key = (rec['well'], rec['name'].lower())
+            if seen_key in seen_names:
                 logger.warning("Duplicate formation name '%s'; queries return the first.", rec['name'])
-            seen_names.add(rec['name'].lower())
+            seen_names.add(seen_key)
             thickness = max(0.0, rec['bottom'] - rec['top'])
             self.formations.append(Formation(
                 name=rec['name'],
                 top_depth=rec['top'],
                 bottom_depth=rec['bottom'],
                 thickness=thickness,
-                anomaly_code=rec['anomaly']
+                anomaly_code=rec['anomaly'],
+                well=rec['well']
             ))
 
         return True
+
+    # ------------------------------------------------------------------
+    # Multi-well files
+    # ------------------------------------------------------------------
+    def well_names(self) -> List[str]:
+        """Well names in the file's well column, ordered by each well's shallowest top.
+
+        Empty when the file has no well column.
+        """
+        if not self.well_column:
+            return []
+        names: List[str] = []
+        for fm in self.formations:
+            if fm.well and fm.well not in names:
+                names.append(fm.well)
+        return names
+
+    def split_by_well(self) -> Dict[str, 'FormationTops']:
+        """One FormationTops per well name (same depth-unit state, that well's formations)."""
+        parts: Dict[str, FormationTops] = {}
+        for name in self.well_names():
+            part = FormationTops()
+            part.depth_unit = self.depth_unit
+            part.depth_unit_detected = self.depth_unit_detected
+            part.depth_unit_warning = self.depth_unit_warning
+            part.converted_to_feet = self.converted_to_feet
+            part.well_column = self.well_column
+            part.well_kind = self.well_kind
+            part.formations = [replace(fm) for fm in self.formations if fm.well == name]
+            parts[name] = part
+        return parts
 
     def _detect_depth_unit(self, top_col: str, bottom_col: Optional[str]):
         """Detect the depth unit from top/bottom column names."""

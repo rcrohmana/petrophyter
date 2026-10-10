@@ -1,6 +1,7 @@
 """Parameter scopes and zoned execution (spec §4.10)."""
 
 import io
+import json
 
 import numpy as np
 import pandas as pd
@@ -299,6 +300,9 @@ def test_session_load_applies_legacy_overrides_to_the_active_well(tmp_path):
     model.rw, model.rw_mode = 0.08, "manual"
     path = tmp_path / "s.json"
     assert svc.save_session(model, str(path))
+    # A v1.x file is flat: rewrite the v2.0 file in that shape.
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**saved["global_params"], "_session_version": "1.4"}))
     model.rw = 0.05
     assert svc.apply_session_to_model(model, svc.load_session(str(path)))
     assert model.to_params()["rw"] == 0.08
