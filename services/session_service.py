@@ -119,7 +119,7 @@ def attach_tops(well, path: str) -> List[str]:
 
     tops = FormationTops()
     try:
-        with open(path, "r") as handle:
+        with open(path, "rb") as handle:
             ok = tops.read_tops_from_buffer(handle)
     except OSError as exc:
         return [f"Formation tops file could not be read ({os.path.basename(path)}): {exc.strerror or exc}"]
@@ -150,7 +150,7 @@ def attach_core(well, path: str, depth_unit: str = "Auto") -> List[str]:
 
     handler = CoreDataHandler()
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        with open(path, "rb") as handle:
             ok = handler.read_core_from_buffer(handle, depth_unit=depth_unit)
     except OSError as exc:
         return [f"Core file could not be read ({os.path.basename(path)}): {exc.strerror or exc}"]

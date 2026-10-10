@@ -10,9 +10,10 @@ depths do not overlap the well's logs.
 """
 
 import math
+import re
 from typing import Dict, List, Optional, Tuple, TypeVar
 
-from modules.las_utils import same_well
+from modules.las_utils import normalize_well_name, same_well
 
 T = TypeVar("T")
 
@@ -26,6 +27,9 @@ WELL_COLUMN_ALIASES: List[Tuple[str, str]] = [
     ("well id", "name"),
     ("uwi", "uwi"),
     ("api", "api"),
+    ("wellbore", "name"),
+    ("borehole", "name"),
+    ("well identifier", "name"),
 ]
 
 
@@ -81,6 +85,81 @@ def assign_to_wells(split: Dict[str, T], wells: List[Tuple[str, Dict]],
         else:
             matches[target] = part
     return matches, unmatched
+
+
+def _clean_name(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value).strip()
+
+
+def group_key(name, kind: str = "name") -> str:
+    """Identity key of a well spelling: ``BKS-01``, ``bks 01`` and ``BKS_01`` share one."""
+    text = _clean_name(name)
+    if kind in ("uwi", "api"):
+        return re.sub(r"[^A-Z0-9]", "", text.upper())
+    return normalize_well_name(text) or text.upper()
+
+
+def group_well_names(names, kind: str = "name") -> Dict[str, List[str]]:
+    """Group spellings of the same well: ``{group_key: [spellings in first-seen order]}``."""
+    groups: Dict[str, List[str]] = {}
+    for name in names:
+        text = _clean_name(name)
+        if not text:
+            continue
+        spellings = groups.setdefault(group_key(text, kind), [])
+        if text not in spellings:
+            spellings.append(text)
+    return groups
+
+
+def fill_down_wells(wells) -> List[Optional[str]]:
+    """Fill blank well cells with the last well above (``None`` before the first well)."""
+    out: List[Optional[str]] = []
+    current: Optional[str] = None
+    for value in wells:
+        text = _clean_name(value)
+        if text:
+            current = text
+        out.append(current)
+    return out
+
+
+def merged_cell_pattern_applies(wells, depths=None) -> bool:
+    """True when blank well cells look like merged cells (an Excel export).
+
+    The first data row must carry a well, at least one cell must be blank, and
+    after filling down every well's rows must form one contiguous block with
+    non-decreasing depths (NaN depths are ignored).
+    """
+    cleaned = [_clean_name(w) for w in wells]
+    if not cleaned or not cleaned[0] or all(cleaned):
+        return False
+    filled = fill_down_wells(wells)
+    depth_list = list(depths) if depths is not None else [None] * len(filled)
+    seen = set()
+    prev = None
+    last_depth = None
+    for well, depth in zip(filled, depth_list):
+        if well != prev:
+            if well in seen:
+                return False
+            seen.add(well)
+            prev = well
+            last_depth = None
+        try:
+            value = float(depth)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(value):
+            continue
+        if last_depth is not None and value < last_depth:
+            return False
+        last_depth = value
+    return True
 
 
 def depth_coverage_warning(name: str, top, bottom, log_min, log_max) -> Optional[str]:

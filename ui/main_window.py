@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QFileDialog
 
         file, _ = QFileDialog.getOpenFileName(
-            self, "Open Formation Tops", "", "Text Files (*.txt *.csv);;All Files (*)"
+            self, "Open Formation Tops", "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
         )
         if file:
             self._on_tops_file_selected(file)
@@ -383,7 +383,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QFileDialog
 
         file, _ = QFileDialog.getOpenFileName(
-            self, "Open Core Data", "", "Text Files (*.txt *.csv);;All Files (*)"
+            self, "Open Core Data", "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
         )
         if file:
             self._on_core_file_selected(file)
@@ -1210,7 +1210,7 @@ class MainWindow(QMainWindow):
             return
         try:
             tops = FormationTops()
-            with open(file_path, "r") as f:
+            with open(file_path, "rb") as f:
                 if tops.read_tops_from_buffer(f):
                     # convert_to_feet() only converts when the unit was detected
                     # as meters; feet/undetected files are left unchanged.
@@ -1271,7 +1271,7 @@ class MainWindow(QMainWindow):
 
             handler = CoreDataHandler()
             depth_unit = self.model.core_depth_unit
-            with open(file_path, "r") as f:
+            with open(file_path, "rb") as f:
                 if handler.read_core_from_buffer(f, depth_unit=depth_unit):
 
                     def attach(ds, part):
