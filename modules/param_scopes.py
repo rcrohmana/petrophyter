@@ -28,6 +28,12 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 AUTO, MANUAL, INHERIT = "auto", "manual", "inherit"
+
+# Shale-point parameters, estimated together from one shale selection. Flat
+# parameters list those in AUTO mode under ``flat["shale_auto"]`` (absent when
+# none is, so project-only parameters are unchanged).
+SHALE_PARAMS = ("rho_shale", "dt_shale", "nphi_shale")
+SHALE_AUTO_KEY = "shale_auto"
 UNZONED = "(unzoned)"
 
 PROJECT, PROJECT_ZONE, WELL, WELL_ZONE = "project", "project·zone", "well", "well·zone"
@@ -62,9 +68,9 @@ SPECS: Dict[str, ParamSpec] = {s.name: s for s in (
     _spec("gas_correction_enabled", "Gas correction"),
     _spec("gr_baseline", "GR clean/shale",
           ("vsh_baseline_method", "gr_min_manual", "gr_max_manual"), auto=True),
-    _spec("rho_shale", "ρ shale"),
-    _spec("dt_shale", "Δt shale"),
-    _spec("nphi_shale", "NPHI shale"),
+    _spec("rho_shale", "ρ shale", auto=True),
+    _spec("dt_shale", "Δt shale", auto=True),
+    _spec("nphi_shale", "NPHI shale", auto=True),
     _spec("rw", "Rw", ("rw", "rw_mode"), auto=True),
     _spec("rsh", "Rsh", ("rsh", "rsh_mode"), auto=True),
     _spec("ws_qv", "WS Qv"),
@@ -158,6 +164,18 @@ def apply_entry(flat: Dict, name: str, entry: Dict) -> None:
         flat[f"{name}_mode"] = AUTO if mode == AUTO else MANUAL
         if mode == MANUAL and value is not None:
             flat[name] = value
+    elif name in SHALE_PARAMS:
+        auto = set(flat.get(SHALE_AUTO_KEY) or ())
+        if mode == AUTO:
+            auto.add(name)
+        else:
+            auto.discard(name)
+            if mode == MANUAL:
+                flat[name] = value
+        if auto:
+            flat[SHALE_AUTO_KEY] = sorted(auto)
+        else:
+            flat.pop(SHALE_AUTO_KEY, None)
     elif mode == MANUAL:
         flat[name] = value
     # AUTO for other parameters (temperature gradient) is resolved by the caller.

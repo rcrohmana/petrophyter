@@ -22,6 +22,7 @@ from modules.param_scopes import (
     ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature, normalize_zone,
 )
 from modules.petrophysics import PetrophysicsCalculator
+from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
 from modules.statistics_utils import (
     MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
 )
@@ -189,6 +190,34 @@ def _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings):
     return vsh, gr_min, gr_max
 
 
+def _shale_auto_names(p):
+    """Shale-point parameters in AUTO mode for the scope resolved into ``p``."""
+    auto = p.get("shale_auto") or ()
+    return [n for n in SHALE_PARAMS if n in auto]
+
+
+def _resolve_shale_auto(data, curve_mapping, p, gr_min, gr_max, warnings):
+    """Fill the AUTO shale-point parameters of ``p`` from ``data`` (in place).
+
+    The estimator runs once on the scope's samples with that scope's GR
+    baseline. Returns the names whose estimate is unavailable; those keep the
+    entered (project) value.
+    """
+    names = _shale_auto_names(p)
+    if not names:
+        return []
+    estimate = estimate_shale_point(data, curve_mapping, p, gr_min, gr_max)
+    if not is_estimate(estimate):
+        warnings.append(
+            "Shale point could not be estimated automatically "
+            f"({estimate.get('vsh_method_used', 'no estimate')}); using the entered values."
+        )
+        return names
+    for name in names:
+        p[name] = estimate[name]
+    return []
+
+
 def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
     """Density, neutron and sonic porosity, PHIT and PHIE (results land in ``calc``)."""
     rhob_curve = curve_mapping.get("RHOB", "RHOB")
@@ -342,6 +371,7 @@ def estimate_rw_rsh(
     calc = PetrophysicsCalculator(data)
     stats_util = StatisticsUtils(data)
     vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
+    _resolve_shale_auto(data, curve_mapping, p, gr_min, gr_max, warnings)
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
         stats_util, calc, vsh, rt_curve, p, warnings, temperature_factor(data, p)
@@ -461,6 +491,19 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, temp_factor, warnings)
     calc = PetrophysicsCalculator(seg)
     stats_util = StatisticsUtils(seg)
     vsh, _, _ = _compute_vsh(calc, stats_util, seg, curve_mapping, sp, warnings)
+    shale_auto = [n for n in SHALE_PARAMS if n in zone_auto]
+    if shale_auto:
+        # The scope's own shale point; the well's value is the fallback.
+        estimate = None
+        if _enough_data(seg, gr_curve):
+            estimate = estimate_shale_point(
+                seg, curve_mapping, sp, sp["gr_min_manual"], sp["gr_max_manual"]
+            )
+        for name in shale_auto:
+            if is_estimate(estimate):
+                sp[name] = estimate[name]
+            else:
+                sp[name], sources[name] = _fallback_value(name, plan_entry, p[name])
     _compute_porosity(calc, vsh, seg, curve_mapping, sp, warnings)
 
     values = {}
@@ -496,7 +539,7 @@ def _sources_table(p, sources, resolved):
     return table
 
 
-def _well_sources(p, rw_source, rsh_source):
+def _well_sources(p, rw_source, rsh_source, shale_failed=()):
     """Sources of the well-level parameters, from the resolver info when given."""
     info = p.get("param_info") or {}
     sources = {name: (info.get(name) or {}).get("source", PROJECT) for name in SPECS}
@@ -506,6 +549,10 @@ def _well_sources(p, rw_source, rsh_source):
         for name in ("rw", "rsh"):
             if p[f"{name}_mode"] == "auto":
                 sources[name] = "auto"
+        for name in _shale_auto_names(p):
+            sources[name] = "auto"
+    for name in shale_failed:
+        sources[name] = "auto unavailable (fallback: project)"
     for name, src in (("rw", rw_source), ("rsh", rsh_source)):
         if src == AUTO_UNAVAILABLE:
             sources[name] = "auto unavailable (fallback: project)"
@@ -638,7 +685,11 @@ def _zone_rows(results, labels, data, pay_series, step, sources_by_zone):
         if "dHCPV_NET_PAY" in results.columns:
             row["hcpv_net_pay"] = float(results.loc[mask, "dHCPV_NET_PAY"].sum())
         table = sources_by_zone.get(zone, {})
-        row["params"] = {k: table[k] for k in ZONE_SUMMARY_PARAMS if k in table}
+        names = ZONE_SUMMARY_PARAMS
+        if any(str(table.get(k, {}).get("source", "")).startswith("auto")
+               for k in SHALE_PARAMS):
+            names = names + SHALE_PARAMS
+        row["params"] = {k: table[k] for k in names if k in table}
         rows.append(row)
     return rows
 
@@ -713,6 +764,7 @@ def run_pipeline(
 
     # ---- Porosity -----------------------------------------------------------
     emit("Calculating porosity...", 35)
+    shale_failed = _resolve_shale_auto(data, curve_mapping, p, gr_min, gr_max, warnings)
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     emit("Calculating effective porosity...", 45)
 
@@ -723,7 +775,7 @@ def run_pipeline(
         rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
             stats_util, calc, vsh, rt_curve, p, warnings, temp_factor
         )
-    well_sources = _well_sources(p, rw_source, rsh_source)
+    well_sources = _well_sources(p, rw_source, rsh_source, shale_failed)
     well_table = _sources_table(
         p, well_sources, {"gr_baseline": [gr_min, gr_max], "rw": rw, "rsh": rsh}
     )
