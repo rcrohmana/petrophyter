@@ -215,6 +215,12 @@ separated by plain hairline rules. License-table HTML takes its border color fro
   Curve role tags (`GR`, `RHOB`, `NPHI`, `DT`, `RT`) are 8pt 600 `text_secondary`.
 - Icons 16px (`file-text` LAS, `activity` curves, `layers` tops, `database` core, `sigma`
   results). Status is an 8px dot from `dot_pixmap`, never colored row text.
+- One root per well of the project, in load order. The root shows the well name, its
+  depth range and a status dot (`off` loaded, `success` analysed, `warning` out of date,
+  `error` failed). The active well's root is bold with the `crosshair` icon and starts
+  expanded; other wells use `cylinder` and start collapsed. Clicking any item makes its
+  well active (`well_selected(str)`); the root menu adds Set as Active Well and Remove
+  Well (`remove_well_requested(str)`, confirmed by the main window).
 - Width 220 to 320px (default 300). Empty state: `No data loaded` with an
   `Open LAS File(s)...` link.
 - Selection `accent_subtle`; hover `bg_hover`; unloaded and merged-away sources are muted.
@@ -241,15 +247,20 @@ separated by plain hairline rules. License-table HTML takes its border color fro
   results show as status text under the button, never in a popup.
 - Run Analysis stays the only accent control; F5 works while this window has focus.
 
-### 4.14 Merge LAS Files dialog (`ui/widgets/merge_dialog.py`)
+### 4.14 Load Summary dialog (`ui/widgets/load_summary_dialog.py`)
 
-Modal task dialog (a choice for an operation the user started, not a notification).
-Contents: summary line, read-only file table (name, rows, depth range, via
-`PandasTableModel`), Step (ft) and Gap limit spin boxes, `Merge` (Standard, `merge`
-icon) and `Cancel`. It opens automatically once two or more LAS files parse, or from
-File > Merge LAS Files and the Data Browser context menu. Cancel leaves the files pending:
-the loaded parsers stay and the Merge LAS Files action stays enabled (it is disabled while
-a merge runs and after it completes; re-enabled on merge error).
+Modal task dialog shown when two or more LAS files are opened (File > Open LAS File(s) or
+Merge LAS Files). Files are parsed on a worker thread first. Contents: a note line
+("Files in the same group are merged into one well. Files from different wells are never
+merged."), a file table (File, Well, Key, Depth range, Step, Curves, Notes, Group combo),
+Step (ft) and Gap limit spin boxes (enabled only when a group holds more than one file),
+`Load N wells` (Standard) and `Cancel`. Files that failed to parse are shown disabled with
+their error. The OK button is disabled, with a tooltip naming the files, when a group mixes
+wells whose identities differ. A single file loads directly without the dialog.
+
+The toolbar `WellSelector` combo (`ui/widgets/well_selector.py`) mirrors the project's
+wells and is shown when there are two or more; it emits `well_selected(str)` only on a
+user choice.
 
 ## 5. Notification policy
 
