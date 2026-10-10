@@ -22,7 +22,7 @@ _STATUS_DOTS = {
     "stale": "warning", "error": "error",
 }
 _CONTEXT_ACTIONS = {
-    "well": ("open_las", "merge_las"),
+    "well": ("open_las", "merge_las", "open_tops_multi", "open_core_multi"),
     "lasgrp": ("open_las", "merge_las"),
     "las": ("open_las", "merge_las"),
     "curves": ("page_curves",),
