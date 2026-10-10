@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QBrush, QColor, QFont
 import numpy as np
 import pandas as pd
 
@@ -26,13 +26,16 @@ from ..widgets.table_model import PandasTableModel
 from services.export_service import (
     FIELD_TOTAL_LABEL, WELL_COLUMNS, wells_summary_frame, well_label,
 )
-from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
+from modules.pipeline import zone_diagnostic_note
+from themes.colors import get_color, get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 
 ZONE_TABLE_COLUMNS = [
     "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw",
     "HCPV", "a", "m", "n", "Rw", "Cutoffs (Vsh/Phi/Sw)",
 ]
 _MAX_TABLE_ROWS = 10
+STATE_ROLE = Qt.ItemDataRole.UserRole + 1     # "warning" | "info" on a zone row
+_STATE_COLORS = {"warning": "warning", "info": "text_muted"}
 
 
 def _fmt(value, digits=1, percent=False) -> str:
@@ -59,9 +62,11 @@ class _AnnotatedTableModel(PandasTableModel):
         self.tooltips = {}
         self.bold_rows = set()
         self.bold_cells = set()
+        self.row_states = {}
 
-    def set_table(self, df, tooltips=None, bold_rows=(), bold_cells=()):
+    def set_table(self, df, tooltips=None, bold_rows=(), bold_cells=(), row_states=None):
         self.tooltips = dict(tooltips or {})
+        self.row_states = dict(row_states or {})
         self.bold_rows = set(bold_rows)
         self.bold_cells = set(bold_cells)
         self.set_dataframe(df)
@@ -71,6 +76,11 @@ class _AnnotatedTableModel(PandasTableModel):
             cell = (index.row(), index.column())
             if role == Qt.ItemDataRole.ToolTipRole:
                 return self.tooltips.get(cell)
+            state = self.row_states.get(index.row())
+            if role == STATE_ROLE:
+                return state
+            if role == Qt.ItemDataRole.ForegroundRole and state:
+                return QBrush(QColor(get_color(_STATE_COLORS[state])))
             if role == Qt.ItemDataRole.FontRole and (
                 index.row() in self.bold_rows or cell in self.bold_cells
             ):
@@ -256,7 +266,8 @@ class SummaryTab(QWidget):
         if not zones:
             self.zones_model.set_table(pd.DataFrame(columns=ZONE_TABLE_COLUMNS))
             return
-        rows, tooltips, bold_cells = [], {}, set()
+        rows, tooltips, bold_cells, row_states = [], {}, set(), {}
+        diagnostics = summary.get("zone_diagnostics") or {}
         for r, zone in enumerate(zones):
             params = zone.get("params") or {}
             cutoffs = " / ".join(
@@ -282,8 +293,15 @@ class SummaryTab(QWidget):
                 if entry.get("source") not in (None, "", "project"):
                     bold_cells.add((r, 13))
             tooltips[(r, 13)] = "Source - " + "; ".join(parts)
+            diag = diagnostics.get(zone.get("zone"))
+            note = zone_diagnostic_note(diag) if diag else None
+            if note:
+                row_states[r] = note[0]
+                for c in (0, 3, 4):
+                    tooltips[(r, c)] = note[1]
         self.zones_model.set_table(
-            pd.DataFrame(rows, columns=ZONE_TABLE_COLUMNS), tooltips, bold_cells=bold_cells)
+            pd.DataFrame(rows, columns=ZONE_TABLE_COLUMNS), tooltips, bold_cells=bold_cells,
+            row_states=row_states)
         _fit_table(self.zones_table, len(rows))
 
     @staticmethod
