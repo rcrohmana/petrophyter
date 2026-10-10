@@ -303,3 +303,11 @@ def test_session_load_applies_legacy_overrides_to_the_active_well(tmp_path):
     assert svc.apply_session_to_model(model, svc.load_session(str(path)))
     assert model.to_params()["rw"] == 0.08
     assert model.to_params()["rw_mode"] == "manual"
+
+
+def test_edit_scope_returns_to_project_when_no_well_is_left():
+    model = _model_with_wells()
+    model.set_edit_scope("well", "upper")
+    assert (model.edit_scope, model.edit_zone) == ("well", "UPPER")
+    model.reset()
+    assert model.edit_scope == "project"

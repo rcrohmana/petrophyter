@@ -508,7 +508,7 @@ def _well_sources(p, rw_source, rsh_source):
                 sources[name] = "auto"
     for name, src in (("rw", rw_source), ("rsh", rsh_source)):
         if src == AUTO_UNAVAILABLE:
-            sources[name] = f"auto unavailable ({sources[name]})"
+            sources[name] = "auto unavailable (fallback: project)"
     return sources
 
 
