@@ -1,4 +1,4 @@
-"""Main-window wiring for multi-well: session v2, shared tops/core, zone hooks."""
+"""Main-window wiring for multi-well: session v2, shared tops/core, zone hooks, lazy tabs."""
 
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -123,6 +123,21 @@ def test_zone_calculate_uses_the_zone(two_wells, tmp_path, monkeypatch):
     window.model.set_edit_scope("well", "UPPER")
     window._on_calculate_rw_rsh()
     assert seen["zone"] == "UPPER"
+
+
+def test_hidden_plot_tabs_redraw_when_shown(two_wells, monkeypatch):
+    window = two_wells
+    calls = []
+    monkeypatch.setattr(window.log_tab, "update_display", lambda: calls.append("log"))
+    window.tab_widget.setCurrentWidget(window.qc_tab)
+    window._update_all_tabs()
+    assert calls == []
+    assert window.log_tab in window._dirty_tabs
+    window.tab_widget.setCurrentWidget(window.log_tab)
+    assert calls == ["log"]
+    window.tab_widget.setCurrentWidget(window.qc_tab)
+    window.tab_widget.setCurrentWidget(window.log_tab)
+    assert calls == ["log"]                       # nothing changed since
 
 
 def test_v2_session_round_trip_restores_wells(two_wells, tmp_path, monkeypatch):

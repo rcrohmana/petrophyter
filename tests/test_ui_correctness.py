@@ -141,7 +141,11 @@ def test_data_invalidation_refreshes_and_clears_every_result_tab(window, monkeyp
     window.export_tab.csv_btn.setEnabled(True)
     window.export_tab.excel_btn.setEnabled(True)
 
+    window.tab_widget.setCurrentWidget(window.qc_tab)
     window._on_data_loaded()
+    # Hidden plot tabs redraw when they are shown.
+    for tab in (window.petro_tab, window.log_tab, window.diag_tab):
+        window.tab_widget.setCurrentWidget(tab)
 
     assert window.qc_tab.qc_table_model.rowCount() == 0
     assert window.qc_tab.triple_combo_plot.figure.axes == []
@@ -246,16 +250,18 @@ def test_analysis_completion_refreshes_each_tab_once_with_matching_summary(
     results = pd.DataFrame({"DEPTH": [100.0]})
     summary = {"marker": "matching", "net_pay": 0, "gross_sand": 0, "ng_pay": 0}
 
+    window.tab_widget.setCurrentWidget(window.qc_tab)
+    calls.clear()
+
     window._on_well_completed(key, results, summary, "h")
 
-    assert calls == [
-        ("qc", "matching"),
-        ("petro", "matching"),
-        ("log", "matching"),
-        ("diag", "matching"),
-        ("summary", "matching"),
-        ("export", "matching"),
-    ]
+    # The visible tab and the cheap table tabs refresh at once ...
+    assert calls == [("qc", "matching"), ("summary", "matching"), ("export", "matching")]
+    # ... the hidden plot tabs once each, when shown.
+    for tab in (window.petro_tab, window.log_tab, window.diag_tab, window.qc_tab,
+                window.petro_tab):
+        window.tab_widget.setCurrentWidget(tab)
+    assert calls[3:] == [("petro", "matching"), ("log", "matching"), ("diag", "matching")]
 
 
 def test_single_las_load_syncs_detected_mapping_before_final_qc_refresh(
