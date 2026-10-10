@@ -29,7 +29,7 @@ This guide walks through a complete Petrophyter session: loading data, setting p
 The main window has five areas:
 
 - **Menu bar.** From left to right: **File**, **Session**, **Analysis**, **Parameters**, **Corrections**, **View**, and **Help**.
-- **Main toolbar.** Four controls on the left: **Open LAS File(s)…**, **Save Session…**, **Parameters Window**, and **Run Analysis**. On the right, a well indicator shows a status dot and a summary such as `Well name · 12,345 rows · 18 curves`, or `No data loaded`.
+- **Main toolbar.** Four controls on the left: **Open LAS File(s)…**, **Save Session…**, **Parameters Window**, and **Run Analysis**. On the right, a well selector appears once two or more wells are loaded, next to a well indicator that shows a status dot and a summary of the active well such as `Well name · 12,345 rows · 18 curves`, or `No data loaded`.
 - **Data Browser.** A read-only tree on the left that summarizes the loaded well. See [What the Data Browser shows](#what-the-data-browser-shows).
 - **Result tabs.** Six tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Summary**, and **Export**. A notification banner appears above the tabs when there is something to report.
 - **Status bar.** The left side shows the latest message. The right side holds the stale-results label, a progress bar, and the QC chip. See [Running the analysis](#running-the-analysis).
@@ -51,35 +51,44 @@ Parameters are not part of the main window. They live in the separate [Parameter
 
 Use **File → Open LAS File(s)…** (or the **Open LAS File(s)…** toolbar button) and select one or more `.las` files.
 
-- **One file** loads directly. Curves are detected and mapped automatically, common NULL values such as `-999.25` and `-9999` are replaced with NaN, and the depth unit (feet or meters) is detected. If the depth unit is ambiguous, or a curve unit was converted or could not be recognized, a warning banner lists it. Loading a LAS file from a different well clears any formation tops, core data, and formation selection that were loaded for the previous well, and the banner says so; a file from the same well keeps them.
-- **Two or more files** open the [Merge LAS Files dialog](#merging-las-files) so you can combine them into one well dataset.
+- **One file** loads directly as one well. Curves are detected and mapped automatically, common NULL values such as `-999.25` and `-9999` are replaced with NaN, and the depth unit (feet or meters) is detected. If the depth unit is ambiguous, or a curve unit was converted or could not be recognized, a warning banner lists it.
+- **Two or more files** are read in the background and then open the [Load Summary](#load-summary-several-files-several-wells), where you decide which files belong to the same well.
 
-Loading a LAS file runs the data quality check, enables **Analysis → Run Analysis**, updates the well indicator and window title, and fills the Data Browser and the **Data QC** tab. **File → New Project** (`Ctrl+N`) clears all data and resets the window after a confirmation.
+Loading a LAS file runs the data quality check for that well, enables **Analysis → Run Analysis**, updates the well indicator and window title, and fills the Data Browser and the **Data QC** tab. All notes from a load (depth-unit and curve-unit warnings from every file, merge warnings, and reloaded wells) are collected in one banner. **File → New Project** (`Ctrl+N`) removes all wells and resets the window after a confirmation.
 
-### Merging LAS files
+### Load Summary: several files, several wells
 
-When you select two or more files in **File → Open LAS File(s)…**, the **Merge LAS Files** dialog opens automatically. The dialog lists each file with its row count and top and bottom depth, and offers two settings:
+When you select two or more files, the **Load LAS Files** dialog lists one row per file: file name, the well name from the header, the well key, depth range, depth step, number of curves, and notes (the number of unit or depth warnings, or the reason a file could not be read; hover for details). Files that could not be read are shown greyed out and are skipped.
 
-| Setting | Range | Default | Meaning |
-|---|---|---|---|
-| **Step (ft)** | 0.1 to 1.0 | 0.5 | Depth step the files are resampled to |
-| **Gap limit** | 1.0 to 50.0 | 5.0 | Largest gap that is filled by interpolation |
+The **Group** column proposes a grouping. Files whose header identifies the same well (same UWI, or same API number, or the same well name after ignoring case, spaces, hyphens, and underscores) share a group such as **Well 1: BKS-01**. A file with no usable well identifier gets a group of its own. Change a file's group in the combo box, or choose **Separate well**.
 
-Click **Merge** to combine the files, or **Cancel** to close the dialog without merging. If you cancel, the files stay pending; reopen the dialog later with **File → Merge LAS Files…**. That menu item is enabled only while two or more files are waiting to be merged.
+- Files in the same group are merged into one well. Files from different wells are never merged: if you put files with clearly different identities in one group, the load button is disabled and its tooltip names the conflicting files.
+- **Merge step (ft)** (0.1 to 1.0, default 0.5) and **Merge gap limit** (1.0 to 50.0, default 5.0) are enabled only while some group has more than one file. They are the depth step the files are resampled to and the largest gap that is filled by interpolation.
+- The button reads **Load N wells**. Each group becomes one well, and the last well loaded becomes the active well.
 
-Merging selects the best curve for each type using quality scoring and interpolates short gaps. The merge is refused, with an error message, if the files come from different wells. After the merge:
+Merging selects the best curve for each type using quality scoring and interpolates short gaps. After a merge:
 
-- The Data Browser shows the sources as **n files merged**.
-- The **Data QC** tab shows a **LAS Merge Report** that identifies the source file, coverage, QC score, and gaps filled for each curve.
-- **File → Save Merged LAS…** becomes available so you can write the merged data to a new `.las` file.
+- The Data QC tab shows a **LAS Merge Report** that identifies the source file, coverage, QC score, and gaps filled for each curve.
+- **File → Save Merged LAS…** is available while the active well is a merged well, so you can write its data to a new `.las` file.
+- **File → Merge LAS Files…** opens the same multi-file open dialog as **Open LAS File(s)…**; merging happens per group in the Load Summary.
+
+### Working with several wells
+
+A project can hold any number of wells. Exactly one is the **active well**, and everything else in the window (the Parameters window curve mapping, analysis scope, the result tabs, the QC chip, the well indicator, and the window title) shows that well. The window title reads `Well name · 3 wells — Petrophyter` when more than one well is loaded.
+
+- **Switch wells** by clicking a well (or anything under it) in the Data Browser, or by choosing it in the well selector in the toolbar.
+- **Formation tops and core data belong to the active well.** A newly loaded well never inherits another well's tops, core data, or formation selection. Switching back to a well restores its own.
+- **Reloading a well** replaces it. A file whose well key matches a loaded well (for example `WELL:BKS-01`) replaces that well's data and results, keeps its tops, core data, and scope, and the banner reads **Reloaded BKS-01**.
+- **Results and the out-of-date flag are per well.** If you switch wells while an analysis is running, the results are stored in the well that started the run. Changing a parameter marks only the active well's results out of date.
+- **Remove a well** from the Data Browser context menu; Petrophyter asks for confirmation first.
 
 ### Opening formation tops
 
-Use **File → Open Formation Tops…** and select a `.txt` or `.csv` file. Depths are converted to feet when the file is in meters. If the tops do not overlap the log depth range at all, a warning banner suggests checking the depth unit; the same check applies to core data. The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
+Use **File → Open Formation Tops…** and select a `.txt` or `.csv` file. The tops are attached to the active well, so load a LAS file first. Depths are converted to feet when the file is in meters. If the tops do not overlap the log depth range at all, a warning banner suggests checking the depth unit; the same check applies to core data. The formations appear in the Data Browser and in the **Analysis Scope** page of the Parameters window, where you can restrict the analysis to selected formations. On the **Log Display** tab, **Show Formation Tops** overlays them on the log.
 
 ### Opening core data
 
-Use **File → Open Core Data…** and select a `.txt` or `.csv` file containing depth and at least porosity or permeability. Load the LAS file first. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab.
+Use **File → Open Core Data…** and select a `.txt` or `.csv` file containing depth and at least porosity or permeability. Load a LAS file first; the core data are attached to the active well. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab.
 
 See [Supported Data Formats](data-formats.md) for the complete column names, aliases, and unit rules for LAS, tops, and core files.
 
@@ -89,8 +98,8 @@ The Data Browser is a read-only tree. You cannot edit values in it; use the menu
 
 | Node | Contents |
 |---|---|
-| Well name | Depth range of the loaded data |
-| **LAS files** | File count and row count per file; marked **not merged** while a merge is pending and **merged** afterward |
+| Well name | Depth range of the loaded data; with several wells, one such node per well, and clicking a well makes it the active well |
+| **LAS files** | File count and row count per file; marked **merged** when the well was merged from several files |
 | **Curves** | Every curve with its unit; curves mapped to GR, RHOB, NPHI, DT, or RT carry that role tag |
 | **Formation tops** | Formation names with top and bottom depth, or **Not loaded** |
 | **Core data** | Sample count and depth unit, or **Not loaded** |
@@ -248,7 +257,7 @@ Sessions store parameters and settings, not the LAS file itself. Load the LAS fi
 - **Plot Engine shows Interactive (requires pyqtgraph) and it cannot be selected.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Plot Engine**.
 - **Run Analysis is greyed out.** Load a LAS file first. The action is also disabled while a run is in progress.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
-- **Merge LAS Files… is greyed out.** It is enabled only while two or more LAS files from **Open LAS File(s)…** are waiting to be merged.
+- **A file I opened was not merged.** Only files placed in the same group in the Load Summary are merged. Files with different well identities are loaded as separate wells; change the group only if the header names differ but the files belong to the same well.
 - **Numbers use a decimal point even though Windows uses a decimal comma.** This is intended. Petrophyter always shows and accepts numbers in English (US) format, with a period as the decimal separator and no thousands separator (for example, `4500.0 ft`), whatever the Windows regional setting.
 - **Results look wrong.** Check the curve units, the curve mapping, and the shale parameters, and confirm that the depth unit is correct.
 

@@ -36,14 +36,12 @@ def _tops(top=1010.0, bottom=1090.0):
     return t
 
 
-def _load(window, parser):
-    """Mimic the tail of _load_single_las using the real helpers."""
-    notes = window._drop_other_well_context(
-        window._current_well_info(), parser.well_info
-    )
-    window.model.las_parser = parser
-    window.model.las_data = parser.data
-    window._show_load_notes(parser, notes)
+def _load(window, parser, name=None):
+    """Load an in-memory parser as one well through the real load path."""
+    from services.load_service import ParsedFile
+
+    name = name or f"{parser.well_info.get('well_name') or 'unnamed'}.las"
+    window._begin_load([[ParsedFile(name, name, parser)]])
 
 
 def test_auto_checkbox_disables_spin_and_syncs_model(window):
@@ -119,7 +117,7 @@ def test_session_load_marks_existing_results_stale(window, monkeypatch, tmp_path
     assert window.stale_label.isHidden()
 
 
-def test_different_well_clears_tops_and_core(window):
+def test_new_well_does_not_inherit_tops_and_core(window):
     _load(window, _parser("WELL-A"))
     window.model.formation_tops = _tops()
     window.model.core_data = CoreDataHandler()
@@ -130,22 +128,29 @@ def test_different_well_clears_tops_and_core(window):
     assert window.model.core_data is None
     assert window.model.selected_formations == []
     assert window.model.analysis_mode == "Whole Well"
-    assert "different well" in window.banner.message_label.text()
+    # Well A still owns its tops and scope.
+    window.model.set_active_well("WELL:WELL-A")
+    assert window.model.formation_tops is not None
+    assert window.model.selected_formations == ["Zone A"]
+    assert window.model.analysis_mode == "Per-Formation"
 
 
-def test_same_well_keeps_tops(window):
+def test_reload_same_well_keeps_its_tops(window):
     _load(window, _parser("WELL-A"))
     window.model.formation_tops = _tops()
     window.model.selected_formations = ["Zone A"]
     _load(window, _parser("well-a"))
+    assert len(window.model.project) == 1
     assert window.model.formation_tops is not None
     assert window.model.selected_formations == ["Zone A"]
+    assert "Reloaded" in window.banner.message_label.text()
 
 
-def test_undecidable_well_clears(window):
+def test_unidentified_well_is_a_separate_well(window):
     _load(window, _parser("WELL-A"))
     window.model.formation_tops = _tops()
-    _load(window, _parser(""))
+    _load(window, _parser(""), name="mystery.las")
+    assert len(window.model.project) == 2
     assert window.model.formation_tops is None
 
 
@@ -212,22 +217,23 @@ def banners(window, monkeypatch):
     return shown
 
 
-def test_e2e_different_well_clears_tops(window, banners, tmp_path):
+def test_e2e_different_well_gets_its_own_tops(window, banners, tmp_path):
     window._load_single_las(_write(tmp_path, "a.las", _las_text("WELL A")))
     window.model.formation_tops = _tops(1002.0, 1008.0)
     window.model.selected_formations = ["Zone A"]
     window._load_single_las(_write(tmp_path, "b.las", _las_text("WELL B")))
+    assert len(window.model.project) == 2
     assert window.model.formation_tops is None
     assert window.model.selected_formations == []
-    assert any("different well" in text for _, text in banners)
 
 
-def test_e2e_same_well_keeps_tops(window, banners, tmp_path):
+def test_e2e_same_well_reload_keeps_tops(window, banners, tmp_path):
     window._load_single_las(_write(tmp_path, "a1.las", _las_text("WELL A")))
     window.model.formation_tops = _tops(1002.0, 1008.0)
     window._load_single_las(_write(tmp_path, "a2.las", _las_text("well_a ")))
+    assert len(window.model.project) == 1
     assert window.model.formation_tops is not None
-    assert not any("different well" in text for _, text in banners)
+    assert any("Reloaded" in text for _, text in banners)
 
 
 def test_e2e_percent_neutron_converted_and_reported(window, banners, tmp_path):
@@ -257,19 +263,22 @@ def test_e2e_merge_refuses_different_wells(tmp_path):
 
 def test_merge_completion_shows_report_and_all_file_unit_warnings(window, banners):
     from modules.las_handler import MergeReport
+    from services.load_service import ParsedFile
 
     first, second = _parser("WELL A"), _parser("WELL A")
     second.unit_warnings = ["NPHI converted to V/V (from PU)."]
-    window._loaded_parsers = [first, second]
-    window._loaded_file_names = ["a.las", "b.las"]
-    window._loaded_row_counts = [11, 11]
+    group = [ParsedFile("a.las", "a.las", first), ParsedFile("b.las", "b.las", second)]
     report = MergeReport(
         curves={}, master_depth={"min": 1000.0, "max": 1100.0, "step": 0.5, "points": 201},
         files_processed=["a.las", "b.las"],
         warnings=["Curve RHOB has different units across files (G/C3, KG/M3)."],
         well_name="WELL A",
     )
+    window._bulk_loading = True
+    window._load_queue, window._load_notes, window._load_added = [], [], []
+    window._load_current = group
     window._on_merge_completed(first.data.copy(), report)
     text = "\n".join(t for _, t in banners)
     assert "different units across files" in text
     assert "NPHI converted to V/V" in text
+    assert window.model.active_well.merged
