@@ -108,7 +108,7 @@
     "value": 4.844974974315079
    },
    "rw": {
-    "source": "auto unavailable (auto)",
+    "source": "auto unavailable (fallback: project)",
     "value": 0.01
    },
    "rw_ref_temp": {

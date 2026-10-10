@@ -41,6 +41,7 @@ class AppModel(QObject):
         # scratch dataset, which becomes a real well once data is assigned.
         self.project = Project(self)
         self._scratch = WellDataset()
+        self.project.active_well_changed.connect(self._on_active_well_changed)
 
         # =====================================================================
         # VSHALE PARAMETERS
@@ -942,6 +943,12 @@ class AppModel(QObject):
     def edit_scope(self) -> str:
         """Scope edited in the Parameters window: "project" or "well"."""
         return self._edit_scope
+
+    def _on_active_well_changed(self, key: str):
+        # Without a well there is nothing to edit at the well scope, and a
+        # zone is only meaningful for the well whose tops define it.
+        if not key and self._edit_scope == SCOPE_WELL:
+            self.set_edit_scope(SCOPE_PROJECT)
 
     @property
     def edit_zone(self) -> Optional[str]:
