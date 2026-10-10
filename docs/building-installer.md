@@ -33,7 +33,7 @@ $env:CONDA_ENV = "mldl"
 
 | Output | Location |
 |---|---|
-| **Installer** | `installer/Output/Petrophyter_Setup_<version>_Build<build>.exe` (for example `Petrophyter_Setup_1.6.0_Build20261009.exe`) |
+| **Installer** | `installer/Output/Petrophyter_Setup_<version>_Build<build>.exe` (for example `Petrophyter_Setup_1.7.0_Build20261010.exe`) |
 | **Portable application** | `dist/Petrophyter/` (can be copied directly) |
 
 ## Release Checklist
@@ -43,11 +43,12 @@ $env:CONDA_ENV = "mldl"
    - `tests/test_version.py`;
    - the version badge and citation in `README.md`.
 2. Add the release section to `docs/changelog.md` and mark it **Current Release**. Write `docs/releases/v<version>.md`.
-3. Run the full test suite in the build environment:
+3. Run the full test suite in the build environment. Use `conda run` so the environment's own DLLs come first on `PATH`; calling `envs\mldl\python.exe` directly can load the base Anaconda MKL instead and crash in scipy:
 
    ```powershell
    $env:QT_QPA_PLATFORM = "offscreen"
-   & "$env:USERPROFILE\anaconda3\envs\mldl\python.exe" -m pytest -q
+   $env:PYTEST_QT_API = "pyqt6"
+   conda run -n mldl --no-capture-output python -m pytest -q
    ```
 
 4. Build with `.\scripts\build-installer.ps1 -SkipInnoSetup`. Launch `dist\Petrophyter\Petrophyter.exe`, confirm the main window opens, and confirm that **Log Display → Interactive** is available.
@@ -68,6 +69,12 @@ $env:CONDA_ENV = "mldl"
      --notes-file docs\releases\v<version>.md `
      installer\Output\Petrophyter_Setup_<version>_Build<build>.exe installer\Output\SHA256SUMS.txt
    ```
+
+## MKL Libraries
+
+numpy and scipy in the Conda environment reach BLAS and LAPACK through `libblas.dll` and `liblapack.dll`, which forward to Intel MKL (`mkl_rt.<N>.dll`). MKL loads its core, threading, and CPU-specific libraries at run time, so PyInstaller cannot find them. `petrophyter_pyqt_2.spec` therefore bundles `mkl_rt`, `mkl_core`, `mkl_sequential`, `mkl_def`, `mkl_mc3`, `mkl_avx2`, and `mkl_avx512`, and the runtime hook `installer/rth_mkl_sequential.py` selects the sequential threading layer. The build stops if `liblapack.dll` is present but no `mkl_rt.*.dll` is found.
+
+To check a build on a PC without Anaconda, start `dist\Petrophyter\Petrophyter.exe` from a shell whose `PATH` has no Anaconda folders.
 
 ## Custom Inno Setup Path
 
