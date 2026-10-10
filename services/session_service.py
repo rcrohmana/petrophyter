@@ -315,6 +315,15 @@ class SessionService(QObject):
             if "_las_filename" in session_data and hasattr(model, "las_filename"):
                 model.las_filename = session_data["_las_filename"]
 
+            # A v1.x session describes one well: values that were manual
+            # there become that well's entries, so they win over the well's
+            # AUTO defaults and the results match what the user saw (§4.9).
+            active = getattr(model, "active_well", None)
+            if active is not None and hasattr(model, "project_params"):
+                from modules.param_scopes import legacy_well_overrides
+
+                active.overrides.update(legacy_well_overrides(model.project_params()))
+
             return True
 
         except Exception as e:

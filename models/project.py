@@ -126,6 +126,8 @@ class Project(QObject):
         super().__init__(parent)
         self._wells: "OrderedDict[str, WellDataset]" = OrderedDict()
         self._active_key: Optional[str] = None
+        # Project · zone parameter entries (spec §4.2): {ZONE: {param: entry}}.
+        self.zone_params: Dict[str, Dict[str, Dict]] = {}
 
     # ---- access ----
     def __len__(self) -> int:
@@ -215,5 +217,6 @@ class Project(QObject):
     def clear(self):
         self._wells.clear()
         self._active_key = None
+        self.zone_params = {}
         self.wells_changed.emit()
         self.active_well_changed.emit("")

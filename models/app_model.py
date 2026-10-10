@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Any
 
 from models.project import Project, WellDataset, default_curve_mapping, make_well_key, display_name_for
 
+SCOPE_PROJECT, SCOPE_WELL = "project", "well"
+
 
 class AppModel(QObject):
     """
@@ -26,6 +28,10 @@ class AppModel(QObject):
     merge_complete = pyqtSignal()
     core_data_loaded = pyqtSignal()
     formation_tops_loaded = pyqtSignal()
+    # Parameter scopes (spec §4): the edited scope changed, or an entry
+    # changed (argument: the affected well key, "" for project scopes).
+    scope_changed = pyqtSignal()
+    scoped_params_changed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -151,6 +157,18 @@ class AppModel(QObject):
         self._gas_correction_enabled: bool = False
         self._gas_nphi_factor: float = 0.30  # Neutron correction (0.2-0.4 typical)
         self._gas_rhob_factor: float = 0.15  # Density correction (0.1-0.2 typical)
+
+        # =====================================================================
+        # FORMATION TEMPERATURE (P3): degF, degF/100 ft; Rw entered at rw_ref_temp
+        # =====================================================================
+        self.temp_correction: bool = False
+        self.surface_temp: float = 80.0
+        self.temp_gradient: float = 1.5
+        self.rw_ref_temp: float = 75.0
+
+        # Scope edited in the Parameters window (spec §4.8).
+        self._edit_scope: str = SCOPE_PROJECT
+        self._edit_zone: Optional[str] = None
 
     # =========================================================================
     # PROPERTIES - DATA
@@ -864,22 +882,230 @@ class AppModel(QObject):
         self._scratch = WellDataset()
         self.project.clear()
 
+    def project_params(self) -> dict:
+        """The project-scope analysis parameters as a detached flat dict."""
+        from modules.pipeline import PARAM_DEFAULTS
+
+        return {
+            key: copy.deepcopy(getattr(self, key, default))
+            for key, default in PARAM_DEFAULTS.items()
+        }
+
+    def params_for_well(self, well: Optional[WellDataset] = None) -> dict:
+        """Effective pipeline parameters for one well (spec §4.4).
+
+        Project values, overridden by the well's entries; plus ``zone_plan``
+        (per-zone parameters for zones with entries), ``param_info`` (the
+        source of every scoped value) and ``curve_mapping``. Detached: safe to
+        hand to a worker thread.
+        """
+        from modules.param_scopes import resolve, zone_plan
+
+        ds = well if well is not None else self._well
+        global_params = self.project_params()
+        header = ds.well_info
+        flat, info = resolve(global_params, ds.overrides, None, None, None, header)
+        flat["analysis_mode"] = ds.analysis_mode
+        flat["selected_formations"] = list(ds.selected_formations)
+        flat["param_info"] = info
+        flat["zone_plan"] = zone_plan(
+            global_params, ds.overrides, self.project.zone_params, ds.zone_overrides,
+            self.zones_for(ds), header,
+        )
+        flat["curve_mapping"] = dict(ds.curve_mapping)
+        return copy.deepcopy(flat)
+
     def to_params(self) -> dict:
-        """Snapshot the analysis parameters as a plain, detached dict.
+        """Snapshot the active well's effective parameters as a plain, detached dict.
 
         Keys follow ``modules.pipeline.PARAM_DEFAULTS``. Workers must call this
         on the GUI thread and read only the returned dict afterwards, so the
         model is never touched from a pool thread. Curve mapping is included
-        under ``"curve_mapping"``.
+        under ``"curve_mapping"``; see :meth:`params_for_well` for the rest.
         """
-        from modules.pipeline import PARAM_DEFAULTS
+        return self.params_for_well(self._well)
 
-        params = {
-            key: copy.deepcopy(getattr(self, key, default))
-            for key, default in PARAM_DEFAULTS.items()
-        }
-        params["curve_mapping"] = dict(self._well.curve_mapping)
-        return params
+    def well_params_hash(self, well: Optional[WellDataset] = None) -> str:
+        """Hash of a well's effective parameters and tops, for stale tracking (§5.5)."""
+        from modules.param_scopes import params_hash
+
+        ds = well if well is not None else self._well
+        params = self.params_for_well(ds)
+        tops = getattr(ds.formation_tops, "formations", None) or []
+        params["_tops"] = [(fm.name, fm.top_depth, fm.bottom_depth) for fm in tops]
+        return params_hash(params)
+
+    # =========================================================================
+    # PARAMETER SCOPES (spec §4)
+    # =========================================================================
+    @property
+    def edit_scope(self) -> str:
+        """Scope edited in the Parameters window: "project" or "well"."""
+        return self._edit_scope
+
+    @property
+    def edit_zone(self) -> Optional[str]:
+        """Zone (normalised formation name) being edited, or None."""
+        return self._edit_zone
+
+    def set_edit_scope(self, scope: str, zone: Optional[str] = None):
+        from modules.param_scopes import normalize_zone
+
+        if scope not in (SCOPE_PROJECT, SCOPE_WELL):
+            raise ValueError(scope)
+        zone = normalize_zone(zone) or None
+        if (scope, zone) != (self._edit_scope, self._edit_zone):
+            self._edit_scope, self._edit_zone = scope, zone
+            self.scope_changed.emit()
+
+    def zones_for(self, well: Optional[WellDataset] = None) -> List[str]:
+        """Normalised formation names of a well's tops, in depth order."""
+        from modules.param_scopes import normalize_zone
+
+        ds = well if well is not None else self._well
+        formations = getattr(ds.formation_tops, "formations", None) or []
+        names = []
+        for fm in sorted(formations, key=lambda f: f.top_depth):
+            name = normalize_zone(fm.name)
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    def _scope_target(self, scope, zone, well):
+        from modules.param_scopes import normalize_zone
+
+        scope = scope or self._edit_scope
+        zone = normalize_zone(zone if zone is not None else self._edit_zone) or None
+        ds = None
+        if scope == SCOPE_WELL:
+            ds = self.project.get(well) if isinstance(well, str) else (well or self.project.active)
+            if ds is None:
+                raise ValueError("No well to edit")
+        return scope, zone, ds
+
+    def _store(self, scope, zone, ds, create=False) -> Optional[dict]:
+        """The entry dict of a non-project scope (None for the flat project scope)."""
+        if scope == SCOPE_PROJECT and zone is None:
+            return None
+        if scope == SCOPE_PROJECT:
+            store = self.project.zone_params
+        elif zone is None:
+            return ds.overrides
+        else:
+            store = ds.zone_overrides
+        if create:
+            return store.setdefault(zone, {})
+        return store.get(zone, {})
+
+    def get_entry(self, name: str, scope: Optional[str] = None,
+                  zone: Optional[str] = None, well=None) -> Optional[dict]:
+        """The entry stored in a scope (project: read from the flat values)."""
+        from modules.param_scopes import project_entry
+
+        scope, zone, ds = self._scope_target(scope, zone, well)
+        store = self._store(scope, zone, ds)
+        if store is None:
+            return project_entry(name, self.project_params())
+        return store.get(name)
+
+    def set_entry(self, name: str, mode: str, value=None, scope: Optional[str] = None,
+                  zone: Optional[str] = None, well=None, **meta):
+        """Set a parameter in a scope (default: the edited scope).
+
+        ``mode`` is "auto" or "manual"; "inherit" removes the entry. Extra
+        keyword arguments (``source="calibrated"``, ``method``, ``date``) are
+        stored on the entry. The project scope without a zone writes the flat
+        project values.
+        """
+        from modules.param_scopes import (
+            AUTO, INHERIT, SPECS, apply_entry, make_entry, project_entry,
+        )
+
+        spec = SPECS.get(name)
+        if spec is None:
+            raise ValueError(f"{name} is a project-only parameter")
+        scope, zone, ds = self._scope_target(scope, zone, well)
+        if zone is not None and not spec.zone:
+            raise ValueError(f"{name} cannot be set per zone")
+        if scope == SCOPE_WELL and not spec.well:
+            raise ValueError(f"{name} cannot be set per well")
+        if mode == AUTO and not spec.auto:
+            raise ValueError(f"{name} has no automatic estimate")
+        store = self._store(scope, zone, ds, create=True)
+        if store is None:
+            if mode == INHERIT:
+                raise ValueError("The project scope cannot inherit")
+            if value is None and mode != AUTO:
+                value = project_entry(name, self.project_params())["value"]
+            flat = {}
+            apply_entry(flat, name, make_entry(mode, value))
+            for key, val in flat.items():
+                setattr(self, key, val)
+        elif mode == INHERIT:
+            store.pop(name, None)
+        else:
+            entry = make_entry(mode, value)
+            entry.update({k: v for k, v in meta.items() if v is not None})
+            store[name] = entry
+        self._prune_zone_stores()
+        self.scoped_params_changed.emit(ds.key if ds is not None else "")
+
+    def clear_entry(self, name: str, scope: Optional[str] = None,
+                    zone: Optional[str] = None, well=None):
+        """Reset an entry to inherit (spec §4.7 rule 4)."""
+        from modules.param_scopes import INHERIT
+
+        self.set_entry(name, INHERIT, scope=scope, zone=zone, well=well)
+
+    def _prune_zone_stores(self):
+        for store in [self.project.zone_params] + [w.zone_overrides for w in self.project]:
+            for zone in [z for z, entries in store.items() if not entries]:
+                del store[zone]
+
+    def effective_params(self, well=None, zone: Optional[str] = None):
+        """``(flat, info)`` as resolved for a well and optional zone (§4.4)."""
+        from modules.param_scopes import resolve
+
+        ds = self.project.get(well) if isinstance(well, str) else (well or self._well)
+        return resolve(self.project_params(), ds.overrides, self.project.zone_params,
+                       ds.zone_overrides, zone, ds.well_info)
+
+    def scope_view(self, scope: Optional[str] = None, zone: Optional[str] = None,
+                   well=None):
+        """What the Parameters window shows for a scope.
+
+        Returns ``(flat, info)``: the values in effect at that scope (for the
+        project · zone scope: the project values with that zone's entries) and,
+        per scoped parameter, ``{"scope", "mode", "source", "here"}`` where
+        ``here`` says whether the value is set in this very scope.
+        """
+        from modules.param_scopes import PROJECT, PROJECT_ZONE, WELL, WELL_ZONE, resolve
+
+        scope, zone, ds = self._scope_target(scope, zone, well)
+        global_params = self.project_params()
+        if scope == SCOPE_PROJECT:
+            zone_params = self.project.zone_params if zone else None
+            flat, info = resolve(global_params, None, zone_params, None, zone)
+            here_scope = PROJECT_ZONE if zone else PROJECT
+        else:
+            flat, info = resolve(global_params, ds.overrides, self.project.zone_params,
+                                 ds.zone_overrides, zone, ds.well_info)
+            here_scope = WELL_ZONE if zone else WELL
+        for item in info.values():
+            item["here"] = item["scope"] == here_scope
+        return flat, info
+
+    def copy_entry(self, name: str, entry: dict, targets: List[tuple]):
+        """Copy an entry to ``[(scope, zone, well_key), ...]`` (spec §4.7 rule 2)."""
+        meta = {k: v for k, v in entry.items() if k not in ("mode", "value")}
+        for scope, zone, well in targets:
+            self.set_entry(name, entry["mode"], entry.get("value"), scope, zone, well, **meta)
+
+    def promote_to_project(self, name: str, value):
+        """Set as project default: write a value to the project scope."""
+        from modules.param_scopes import MANUAL
+
+        self.set_entry(name, MANUAL, value, scope=SCOPE_PROJECT, zone=None)
 
     def get_available_curves(self) -> List[str]:
         """Get list of available curves from loaded LAS data."""
