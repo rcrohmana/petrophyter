@@ -321,6 +321,7 @@ def test_single_las_load_syncs_detected_mapping_before_final_qc_refresh(
         "NPHI": "None",
         "DT": "None",
         "RT": "RES_DEEP",
+        "TVD": "None",
     }
     assert window.model.curve_mapping == expected
     assert refresh_states[-1] == (report, expected)

@@ -161,6 +161,23 @@ class PetrophysicsCalculator:
             raise ValueError("rw array must have one value per data row")
         return values
 
+    def _per_sample(self, value, name: str):
+        """A scalar as a float, or an array aligned to the data rows (one value per row)."""
+        if np.ndim(value) == 0:
+            return float(value)
+        values = np.asarray(value, dtype=float)
+        if values.shape != (len(self.data),):
+            raise ValueError(f"{name} array must have one value per data row")
+        return values
+
+    def _rsh_values(self, rsh):
+        """Rsh as a float, or as a float array aligned to the data rows.
+
+        Twin of :meth:`_rw_values`: an array carries a per-sample Rsh, e.g.
+        shale resistivity corrected to formation temperature (Arps).
+        """
+        return self._per_sample(rsh, "rsh")
+
     @staticmethod
     def _validate_positive_parameter(name: str, value, allow_nan: bool = False):
         """Reject non-physical scalar/array parameters at formula boundaries."""
@@ -908,8 +925,8 @@ class PetrophysicsCalculator:
             rt_curve: Resistivity curve mnemonic
             phie: Effective porosity series
             vsh: Vshale series
-            rw: Formation water resistivity (ohm.m)
-            rsh: Shale resistivity (ohm.m)
+            rw: Formation water resistivity (ohm.m), scalar or one value per row
+            rsh: Shale resistivity (ohm.m), scalar or one value per row
             a, m, n: Archie parameters
 
         Returns:
@@ -922,6 +939,7 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
+        rsh = self._rsh_values(rsh)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
@@ -988,8 +1006,8 @@ class PetrophysicsCalculator:
             rt_curve: Resistivity curve mnemonic
             phie: Effective porosity series
             vsh: Vshale series
-            rw: Formation water resistivity (ohm.m)
-            rsh: Shale resistivity (ohm.m)
+            rw: Formation water resistivity (ohm.m), scalar or one value per row
+            rsh: Shale resistivity (ohm.m), scalar or one value per row
             a, m, n: Archie parameters
 
         Returns:
@@ -1002,6 +1020,7 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
+        rsh = self._rsh_values(rsh)
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
@@ -1109,6 +1128,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("rt", rt, allow_nan=True)
         self._validate_positive_parameter("qv", qv, allow_nan=False)
         self._validate_positive_parameter("B", B, allow_nan=False)
+        if np.ndim(B):
+            B = self._per_sample(B, "B")      # e.g. B from temperature, one value per row
 
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
@@ -1131,6 +1152,7 @@ class PetrophysicsCalculator:
                 f_star = a / np.power(phie_arr[valid], m)
                 ct = 1.0 / rt_arr[valid]
                 cw_v = cw[valid] if np.ndim(cw) else cw
+                b_v = B[valid] if np.ndim(B) else B
 
                 # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
                 # Model_Ct = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
@@ -1138,7 +1160,7 @@ class PetrophysicsCalculator:
                     # Guard against small Sw
                     sw = np.maximum(sw, 1e-6)
                     term1 = cw_v * np.power(sw, n)
-                    term2 = (B * qv) * np.power(sw, n - 1)
+                    term2 = (b_v * qv) * np.power(sw, n - 1)
                     return (1.0 / f_star) * (term1 + term2) - ct
 
                 f_lo = ws_func(np.full(f_star.shape, 0.001))
@@ -1202,6 +1224,7 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rwb", rwb)
+        rwb = self._per_sample(rwb, "rwb")      # array: Rwb corrected to formation temperature
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
@@ -1220,7 +1243,7 @@ class PetrophysicsCalculator:
         fail_count = 0
 
         cw = 1.0 / rw  # validated > 0; an array for per-sample Rw
-        cwb = 1.0 / rwb if rwb > 0 else 0
+        cwb = 1.0 / rwb  # validated > 0; an array for per-sample Rwb
 
         rt_arr = np.asarray(rt, dtype=float)
         phi_arr = np.asarray(phie, dtype=float)
@@ -1236,13 +1259,14 @@ class PetrophysicsCalculator:
                 f_t = a / np.power(phi_arr[valid], m)
                 ct_measured = 1.0 / rt_arr[valid]
                 cw_v = cw[valid] if np.ndim(cw) else cw
+                cwb_v = cwb[valid] if np.ndim(cwb) else cwb
 
                 # f(Swt) = Model_Ct - Measured_Ct
                 def dw_func(swt):
                     # Swt must be >= Swb ideally; allow [Swb, 1] for stability.
                     swt = np.maximum(swt, swb + 1e-4)  # Ensure slightly above Swb
                     # Ct = (Swt^n / Ft) * (Cw + (Cwb - Cw) * Swb / Swt)
-                    term = cw_v + (cwb - cw_v) * (swb / swt)
+                    term = cw_v + (cwb_v - cw_v) * (swb / swt)
                     return (np.power(swt, n) / f_t) * term - ct_measured
 
                 # Root search in [Swb, 1.0]

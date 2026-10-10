@@ -127,7 +127,7 @@ class CurveMappingGroup(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.curve_combos = {}
-        curve_types = ["GR", "RHOB", "NPHI", "DT", "RT"]
+        curve_types = ["GR", "RHOB", "NPHI", "DT", "RT", "TVD"]
 
         for ctype in curve_types:
             combo = QComboBox()
@@ -135,6 +135,11 @@ class CurveMappingGroup(QWidget):
             combo.currentTextChanged.connect(
                 lambda text, ct=ctype: self.mapping_changed.emit(ct, text)
             )
+            if ctype == "TVD":
+                combo.setToolTip(
+                    "Optional true vertical depth curve (feet). Formation temperature "
+                    "uses it instead of measured depth in a deviated well."
+                )
             self.curve_combos[ctype] = combo
             layout.addRow(f"{ctype}:", combo)
 
@@ -1522,9 +1527,10 @@ class TemperatureGroup(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        self.enable_check = QCheckBox("Correct Rw for formation temperature")
+        self.enable_check = QCheckBox("Correct resistivities for formation temperature")
         self.enable_check.setToolTip(
-            "Scale Rw from its reference temperature to formation temperature (Arps)"
+            "Scale Rw, an auto or referenced Rsh and Dual-Water Rwb from their reference "
+            "temperature to formation temperature (Arps)"
         )
         layout.addWidget(self.enable_check)
 
@@ -1555,16 +1561,85 @@ class TemperatureGroup(QWidget):
         self.ref_spin.setSuffix(" °F")
         self.ref_spin.setToolTip("Temperature at which the entered Rw was measured")
 
+        self.datum_spin = QDoubleSpinBox()
+        self.datum_spin.setRange(-1000.0, 20000.0)
+        self.datum_spin.setValue(0.0)
+        self.datum_spin.setDecimals(1)
+        self.datum_spin.setSuffix(" ft")
+        self.datum_spin.setToolTip(
+            "Depth, on the log's depth axis, at which the surface temperature applies "
+            "(0 for logs from ground level; KB height, or water depth plus air gap, offshore)"
+        )
+
+        # Minimum value = "not set": a manual Rsh is then used as entered.
+        self.rsh_ref_spin = QDoubleSpinBox()
+        self.rsh_ref_spin.setRange(31.0, 400.0)
+        self.rsh_ref_spin.setValue(31.0)
+        self.rsh_ref_spin.setDecimals(1)
+        self.rsh_ref_spin.setSuffix(" °F")
+        self.rsh_ref_spin.setSpecialValueText("not set")
+        self.rsh_ref_spin.setToolTip(
+            "Temperature at which a manual Rsh was read. Not set: Rsh is used as entered "
+            "at every depth (not temperature-corrected). An auto Rsh uses the Rw reference "
+            "temperature."
+        )
+
         form.addRow("Surface temp:", self.surface_spin)
         form.addRow("Gradient:", gradient_row)
+        form.addRow("Datum depth:", self.datum_spin)
         form.addRow("Rw ref. temp:", self.ref_spin)
+        form.addRow("Rsh ref. temp:", self.rsh_ref_spin)
         layout.addLayout(form)
 
+        self.rsh_note = QLabel("Rw is corrected, Rsh is not")
+        set_status(self.rsh_note, "muted")
+        self.rsh_note.setVisible(False)
+        layout.addWidget(self.rsh_note)
+
+        self.ws_b_check = QCheckBox("Waxman-Smits B from temperature")
+        self.ws_b_check.setToolTip(
+            "B from formation temperature and Rw at that temperature (Juhasz, 1981) "
+            "instead of the entered B"
+        )
+        layout.addWidget(self.ws_b_check)
+
+        # Live readout of the temperature at the log ends and the header gradient.
+        self.readout = QLabel("")
+        self.readout.setWordWrap(True)
+        set_status(self.readout, "muted")
+        layout.addWidget(self.readout)
+
+        self._rsh_manual = False
         self.enable_check.toggled.connect(lambda: self.params_changed.emit())
+        self.enable_check.toggled.connect(self._update_note)
+        self.rsh_ref_spin.valueChanged.connect(self._update_note)
         self.surface_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.gradient_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.datum_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.ref_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.rsh_ref_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.ws_b_check.toggled.connect(lambda: self.params_changed.emit())
         self.grad_auto_cb.toggled.connect(self._on_auto_toggled)
+
+    def rsh_ref_value(self) -> Optional[float]:
+        """The Rsh reference temperature, or None when not set."""
+        spin = self.rsh_ref_spin
+        return None if spin.value() <= spin.minimum() else spin.value()
+
+    def set_rsh_manual(self, manual: bool):
+        """Tell the group whether Rsh is manual (the note only applies then)."""
+        self._rsh_manual = bool(manual)
+        self._update_note()
+
+    def _update_note(self, *_args):
+        self.rsh_note.setVisible(
+            self.enable_check.isChecked() and self._rsh_manual and self.rsh_ref_value() is None
+        )
+
+    def set_readout(self, lines):
+        """Show the live temperature readout (plain text, one line per entry)."""
+        self.readout.setText("\n".join(lines))
+        self.readout.setVisible(bool(lines))
 
     def _on_auto_toggled(self, checked: bool):
         self.gradient_spin.setEnabled(not checked)
@@ -1576,16 +1651,27 @@ class TemperatureGroup(QWidget):
             "surface_temp": self.surface_spin.value(),
             "temp_gradient": self.gradient_spin.value(),
             "rw_ref_temp": self.ref_spin.value(),
+            "temp_datum_depth": self.datum_spin.value(),
+            "rsh_ref_temp": self.rsh_ref_value(),
+            "ws_b_auto": self.ws_b_check.isChecked(),
         }
 
     def set_params(self, enabled: bool, surface: float, gradient: float,
-                   ref_temp: float, gradient_auto: bool = False):
+                   ref_temp: float, gradient_auto: bool = False,
+                   datum: float = 0.0, rsh_ref_temp: Optional[float] = None,
+                   ws_b_auto: bool = False):
         """Restore the temperature controls."""
         self.enable_check.setChecked(bool(enabled))
         self.surface_spin.setValue(surface)
         self.gradient_spin.setValue(gradient)
         self.ref_spin.setValue(ref_temp)
         self.grad_auto_cb.setChecked(gradient_auto)
+        self.datum_spin.setValue(datum)
+        self.rsh_ref_spin.setValue(
+            self.rsh_ref_spin.minimum() if rsh_ref_temp is None else rsh_ref_temp
+        )
+        self.ws_b_check.setChecked(bool(ws_b_auto))
+        self._update_note()
 
 
 def _find_layout(layout: Optional[QLayout], widget: QWidget) -> Optional[QLayout]:

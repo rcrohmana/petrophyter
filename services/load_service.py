@@ -21,7 +21,7 @@ from modules.qc_module import QCModule
 
 logger = logging.getLogger(__name__)
 
-CURVE_TYPES = ("GR", "RHOB", "NPHI", "DT", "RT")
+CURVE_TYPES = ("GR", "RHOB", "NPHI", "DT", "RT", "TVD")
 
 
 def sanitize_error_detail(detail, max_length: int = 240) -> str:
