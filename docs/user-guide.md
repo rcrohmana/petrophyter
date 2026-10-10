@@ -153,16 +153,16 @@ So a zone value entered at project scope applies to that formation in every well
 
 | Can be set per well and per zone | Per well only | Project only |
 |---|---|---|
-| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction; GR clean/shale baseline; Rw and Rsh; Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings | methods (VShale, porosity, Sw methods, primary Sw), analysis scope, merge settings |
+| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction; GR clean/shale baseline; Rw and Rsh; Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings; curve mapping and analysis scope (whole well or selected formations) | methods (VShale, porosity, Sw methods, primary Sw), merge settings |
 
 At any scope other than flat **Project**, each field has a small mode button beside it:
 
-- **Auto** estimates the value from the data in that scope (available for Rw, Rsh, the GR baseline, and the temperature gradient). An Rw or Rsh set to Auto for a zone is estimated from that zone's samples only; when a zone has too few samples it falls back to the project-zone or well value, and the source says so.
+- **Auto** estimates the value from the data in that scope (available for Rw, Rsh, the GR baseline, the shale point (ρ, Δt, and NPHI shale), and the temperature gradient). A value set to Auto for a zone is estimated from that zone's samples only; when a zone has too few samples it falls back to the project-zone or well value, and the source says so. The shale point uses the shale selection settings of the **Rock Properties** page.
 - **Manual** uses the value you type.
 - **Inherit** removes the entry so the value comes from the next level down; inherited values are shown muted with a tooltip naming where they come from.
 - **Copy to…** copies the entry to other wells or zones, and **Set as project default** moves it to the project.
 
-**Calculate** for Rw and Rsh uses the edited scope: at **Well** scope with a zone selected, only that zone's samples are used. The lithology preset at a well or zone scope writes explicit a, m, and n entries for that scope.
+**Calculate** for Rw and Rsh and for the shale point uses the edited scope: at **Well** scope with a zone selected, only that zone's samples are used. **Apply** writes the calculated values to the edited scope. The lithology preset at a well or zone scope writes explicit a, m, and n entries for that scope.
 
 The **Zones** page shows every zone of the active well (Well scope) or of all wells (Project scope) in one grid. Type a value to override, clear a cell to inherit again, or type `auto` in an Rw or Rsh cell. Values outside the valid range are flagged in the cell. After a run, the **Summary** tab lists the parameters each zone actually used and their source.
 
