@@ -163,6 +163,9 @@ _US_PER_M_UNITS = {"US/M", "USEC/M", "USEC/METER", "MICROSEC/M", "USM"}
 _CONDUCTIVITY_UNITS = {"MMHO/M", "MS/M", "MMHO", "S/M", "MHO/M"}
 
 _M_TO_FT = 0.3048
+_TVD_MNEMONICS = {"TVD", "TVDKB", "TVDRKB", "TVDRT", "TVDBRT"}
+_METRE_UNITS = {"M", "METER", "METERS", "METRE", "METRES"}
+_FT_PER_M = 3.28084
 _NEUTRON_PERCENT_MEDIAN = 1.0
 _DENSITY_KGM3_MEDIAN = 100.0
 _SONIC_US_M_MEDIAN = 300.0
@@ -229,6 +232,15 @@ def normalize_curve_units(df: pd.DataFrame, curve_info: dict) -> tuple:
 
     for col in list(df.columns):
         if col == STANDARD_DEPTH_COL or not pd.api.types.is_numeric_dtype(df[col]):
+            continue
+        if str(col).upper() in _TVD_MNEMONICS:
+            # A TVD curve in metres joins the feet depth axis (declared unit only).
+            entry = info.setdefault(col, {"unit": "", "description": ""})
+            if entry.get("unit_converted_from") is None and _unit_token(entry.get("unit")) in _METRE_UNITS:
+                df[col] = df[col] * _FT_PER_M
+                entry["unit_converted_from"] = entry.get("unit")
+                entry["unit"] = "FT"
+                warnings.append(f"{col} converted to FT (from {entry['unit_converted_from']}).")
             continue
         curve_type = _curve_type_for(col)
         if curve_type is None:

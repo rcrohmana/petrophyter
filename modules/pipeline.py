@@ -12,14 +12,16 @@ Contract:
 - Never imports PyQt6, directly or indirectly.
 """
 
+from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 from modules.param_scopes import (
-    GR_MANUAL, PROJECT, PROJECT_ZONE, SPECS, UNZONED, ZONE_AUTO_MIN_FT,
-    ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature, normalize_zone,
+    GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
+    ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
+    juhasz_b, normalize_zone, resolve_tvd,
 )
 from modules.petrophysics import PetrophysicsCalculator
 from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
@@ -77,6 +79,12 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "surface_temp": 80.0,
     "temp_gradient": 1.5,
     "rw_ref_temp": 75.0,
+    # Datum depth d0 (ft) at which surface_temp applies, on the TVD axis.
+    "temp_datum_depth": 0.0,
+    # Temperature (degF) at which a manual Rsh was read; None = not corrected.
+    "rsh_ref_temp": None,
+    # Waxman-Smits B from temperature (Juhasz 1981) instead of the entered B.
+    "ws_b_auto": False,
 }
 
 # ``summary["param_sources"]`` key for the well-level parameters.
@@ -262,16 +270,56 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
     )
 
 
-def temperature_factor(data: pd.DataFrame, p: Dict) -> Optional[pd.Series]:
-    """Arps multiplier ``Rw(T(depth)) / Rw(T_ref)`` per sample, or None when off.
+@dataclass
+class TemperatureContext:
+    """Formation temperature per sample and what it was computed from."""
 
-    T(depth) uses the well's surface temperature and gradient (degF,
-    degF/100 ft) on the measured ``DEPTH`` in feet.
+    temp: pd.Series                      # degF per sample
+    factor: Optional[pd.Series]          # Arps Rw(T)/Rw(T_ref); None unless temp_correction
+    source: Dict                         # recorded in summary["temperature"]
+
+
+def temperature_context(data: pd.DataFrame, p: Dict,
+                        curve_mapping: Optional[Dict] = None) -> Optional[TemperatureContext]:
+    """Formation temperature of every sample, or None when nothing needs it.
+
+    ``T(z) = Ts + g (TVD(z) - d0) / 100`` (degF, degF/100 ft, ft). TVD comes
+    from a mapped TVD curve, else the depth index when the log is on TVD, else
+    the measured ``DEPTH`` (assumed vertical); see :func:`resolve_tvd`. Needed
+    for the Arps correction (``temp_correction``) and for WS B from
+    temperature (``ws_b_auto``).
     """
-    if not p.get("temp_correction"):
+    if not (p.get("temp_correction") or p.get("ws_b_auto")):
         return None
-    temp = formation_temperature(data["DEPTH"], float(p["surface_temp"]), float(p["temp_gradient"]))
-    return arps_factor(temp, float(p["rw_ref_temp"]))
+    tvd_curve = (curve_mapping or p.get("curve_mapping") or {}).get("TVD")
+    tvd_source = resolve_tvd(data, tvd_curve, p.get("depth_reference"),
+                             bool(p.get("header_deviation")))
+    tvd = pd.Series(tvd_source.at(data["DEPTH"].to_numpy(dtype=float)), index=data.index)
+    datum = float(p.get("temp_datum_depth") or 0.0)
+    temp = formation_temperature(tvd, float(p["surface_temp"]), float(p["temp_gradient"]), datum)
+    factor = arps_factor(temp, float(p["rw_ref_temp"])) if p.get("temp_correction") else None
+    source = {
+        "tvd_source": tvd_source.label,
+        "kind": tvd_source.kind,
+        "extrapolated_fraction": tvd_source.extrapolated,
+        "datum_depth": datum,
+        "surface_temp": float(p["surface_temp"]),
+        "gradient": float(p["temp_gradient"]),
+        "range": [float(temp.min()), float(temp.max())],
+        "notes": list(tvd_source.notes),
+    }
+    return TemperatureContext(temp, factor, source)
+
+
+def temperature_factor(data: pd.DataFrame, p: Dict,
+                       curve_mapping: Optional[Dict] = None) -> Optional[pd.Series]:
+    """Arps multiplier ``Rw(T(z)) / Rw(T_ref)`` per sample, or None when off."""
+    ctx = temperature_context(data, {**p, "ws_b_auto": False}, curve_mapping)
+    return None if ctx is None else ctx.factor
+
+
+def _factor(tctx: Optional[TemperatureContext]) -> Optional[pd.Series]:
+    return None if tctx is None else tctx.factor
 
 
 def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None):
@@ -295,9 +343,35 @@ def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None):
     return rw or None
 
 
-def _auto_rsh(stats_util, vsh, rt_curve):
-    """Median RT of the shale zone (VSH > 0.8), or None when there is none."""
+def _auto_rsh(stats_util, vsh, rt_curve, temp_factor=None):
+    """Median RT of the shale zone (VSH > 0.8), or None when there is none.
+
+    With temperature correction each sample's RT is first brought to the Rw
+    reference temperature (``RT / factor``), so the median is Rsh at that
+    temperature (as for :func:`_auto_rw`).
+    """
+    if temp_factor is not None:
+        frame = stats_util.data.copy()
+        frame[rt_curve] = frame[rt_curve] / temp_factor.loc[frame.index]
+        stats_util = StatisticsUtils(frame)
     return stats_util.estimate_rsh(rt_curve, vsh, unavailable_default=None) or None
+
+
+def _rsh_effective(rsh, rsh_auto, p, tctx, index):
+    """Rsh as used in Sw: a number, or per-sample values at formation temperature.
+
+    Arps form ``R(T2) = R(T1) (T1 + 6.77) / (T2 + 6.77)``. An auto Rsh is at the
+    Rw reference temperature; a manual Rsh is corrected from ``rsh_ref_temp``
+    and left as entered when that is not set. Without correction it is the number.
+    """
+    if tctx is None or tctx.factor is None:
+        return rsh
+    if rsh_auto:
+        return rsh * tctx.factor.loc[index]
+    ref = p.get("rsh_ref_temp")
+    if ref is None:
+        return rsh
+    return rsh * arps_factor(tctx.temp.loc[index], float(ref))
 
 
 def _unavailable_warning(name, entered):
@@ -307,13 +381,14 @@ def _unavailable_warning(name, entered):
     )
 
 
-def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, temp_factor=None):
+def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None):
     """Effective Rw/Rsh per ``rw_mode`` / ``rsh_mode``.
 
     Returns ``(rw, rsh, rw_source, rsh_source)``; a source is ``"manual"``,
-    ``"auto"`` or :data:`AUTO_UNAVAILABLE`. With temperature correction Rw is
-    at the reference temperature.
+    ``"auto"`` or :data:`AUTO_UNAVAILABLE`. With temperature correction an
+    auto Rw and Rsh are at the reference temperature.
     """
+    temp_factor = _factor(tctx)
     rw, rsh = p["rw"], p["rsh"]
     rw_source = rsh_source = "manual"
     if p["rw_mode"] == "auto":
@@ -324,7 +399,7 @@ def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, temp_factor=No
             rw_source = AUTO_UNAVAILABLE
             warnings.append(_unavailable_warning("Rw", rw))
     if p["rsh_mode"] == "auto":
-        estimate = _auto_rsh(stats_util, vsh, rt_curve)
+        estimate = _auto_rsh(stats_util, vsh, rt_curve, temp_factor)
         if estimate is not None:
             rsh, rsh_source = estimate, "auto"
         else:
@@ -373,8 +448,11 @@ def estimate_rw_rsh(
     vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
     _resolve_shale_auto(data, curve_mapping, p, gr_min, gr_max, warnings)
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
+    tctx = temperature_context(data, p, curve_mapping)
+    if tctx is not None:
+        warnings.extend(tctx.source["notes"])
     rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-        stats_util, calc, vsh, rt_curve, p, warnings, temperature_factor(data, p)
+        stats_util, calc, vsh, rt_curve, p, warnings, tctx
     )
     return {
         "rw": rw,
@@ -460,7 +538,7 @@ def _merge_diagnostics(total, diagnostics):
         counts["failed"] += int(diag.get("failed", 0))
 
 
-def _zone_curves(seg, curve_mapping, p, plan_entry, well, temp_factor, warnings):
+def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
     ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
@@ -507,24 +585,31 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, temp_factor, warnings)
     _compute_porosity(calc, vsh, seg, curve_mapping, sp, warnings)
 
     values = {}
+    temp_factor = _factor(tctx)
     estimators = {
         "rw": lambda: _auto_rw(stats_util, calc, vsh, rt_curve, sp, temp_factor),
-        "rsh": lambda: _auto_rsh(stats_util, vsh, rt_curve),
+        "rsh": lambda: _auto_rsh(stats_util, vsh, rt_curve, temp_factor),
     }
+    rsh_auto = well.get("rsh_auto", False)     # is the Rsh used an estimate at T_ref?
     for name, estimator in estimators.items():
         if name in zone_auto:
             estimate = estimator() if _enough_data(seg, rt_curve) else None
+            auto = estimate is not None
             if estimate is None:
                 estimate, sources[name] = _fallback_value(name, plan_entry, well[name])
+                auto = (plan_entry.get("fallback", {}).get(name, {}).get("scope") != PROJECT_ZONE
+                        and well.get(f"{name}_auto", False))
             values[name] = estimate
         elif name in zone_keys:
-            values[name] = sp[name]
+            values[name], auto = sp[name], False
         else:
-            values[name] = well[name]
+            values[name], auto = well[name], well.get(f"{name}_auto", False)
+        if name == "rsh":
+            rsh_auto = auto
     sp["rw"], sp["rsh"] = values["rw"], values["rsh"]
     sp["rw_mode"] = sp["rsh_mode"] = "manual"
     pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
-                             temp_factor, warnings)
+                             tctx, warnings, rsh_auto)
     resolved = {"gr_baseline": [sp["gr_min_manual"], sp["gr_max_manual"]],
                 "rw": values["rw"], "rsh": values["rsh"]}
     return calc, pay, _sources_table(sp, sources, resolved)
@@ -535,6 +620,8 @@ def _sources_table(p, sources, resolved):
     table = {}
     for name in SPECS:
         value = resolved[name] if name in resolved else flat_value(name, p)
+        if name in OPTIONAL_SOURCE_PARAMS and value in OPTIONAL_SOURCE_PARAMS[name]:
+            continue        # inactive optional parameter: nothing to report
         table[name] = {"value": value, "source": sources.get(name, PROJECT)}
     return table
 
@@ -562,17 +649,27 @@ def _well_sources(p, rw_source, rsh_source, shale_failed=()):
 # ---------------------------------------------------------------------------
 # Saturation, Swirr, permeability, pay flags
 # ---------------------------------------------------------------------------
-def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, temp_factor, warnings):
+def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
+                       rsh_auto=False):
     """Sw, Swirr, permeability and pay flags on ``calc``.
 
-    ``rw`` is a number (at the reference temperature when ``temp_factor`` is
-    given). Returns the ``vsh``/``phie``/``sw``/``swirr`` series used and the
-    net-pay summary of this calculator's samples.
+    ``rw`` is a number (at the reference temperature when the Arps correction is
+    on, ``tctx.factor``); ``rsh`` is an auto estimate at that temperature when
+    ``rsh_auto`` or a manual value (see :func:`_rsh_effective`). Returns the
+    ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
+    this calculator's samples.
     """
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
     a, m, n = p["a"], p["m"], p["n"]
+    temp_factor = _factor(tctx)
     rw_eff = rw if temp_factor is None else rw * temp_factor.loc[data.index]
+    rsh_eff = _rsh_effective(rsh, rsh_auto, p, tctx, data.index)
+    rwb_eff = p["dw_rwb"] if temp_factor is None else p["dw_rwb"] * temp_factor.loc[data.index]
+    ws_b = p["ws_b"]
+    if p.get("ws_b_auto") and tctx is not None:
+        # Juhasz B at each sample's formation temperature with Rw AT that temperature.
+        ws_b = juhasz_b(tctx.temp.loc[data.index], rw_eff)
 
     phie = calc.results.get("PHIE")
     if phie is None:
@@ -584,13 +681,13 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, temp_factor, 
         if "Archie" in selected:
             calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n)
         if "Indonesian" in selected:
-            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh, a, m, n)
+            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n)
         if "Simandoux" in selected:
-            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh, a, m, n)
+            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n)
         if "Waxman-Smits" in selected:
-            calc.calculate_sw_waxman_smits(rt_curve, phie, rw_eff, a, m, n, p["ws_qv"], p["ws_b"])
+            calc.calculate_sw_waxman_smits(rt_curve, phie, rw_eff, a, m, n, p["ws_qv"], ws_b)
         if "Dual-Water" in selected:
-            calc.calculate_sw_dual_water(rt_curve, phie, rw_eff, a, m, n, p["dw_swb"], p["dw_rwb"])
+            calc.calculate_sw_dual_water(rt_curve, phie, rw_eff, a, m, n, p["dw_swb"], rwb_eff)
 
         primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
         if primary_col in calc.results.columns:
@@ -850,7 +947,13 @@ def run_pipeline(
     stats_util = StatisticsUtils(data)
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
-    temp_factor = temperature_factor(data, p)
+    tctx = temperature_context(data, p, curve_mapping)
+    if tctx is not None:
+        warnings.extend(tctx.source["notes"])
+        if p.get("ws_b_auto") and tctx.factor is None:
+            warnings.append(
+                "WS B from temperature uses Rw as entered (the Rw temperature correction is off)."
+            )
 
     # ---- Shale volume -------------------------------------------------------
     emit("Calculating VShale...", 20)
@@ -867,8 +970,9 @@ def run_pipeline(
     rw, rsh, rw_source, rsh_source = p["rw"], p["rsh"], "manual", "manual"
     if has_rt:
         rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-            stats_util, calc, vsh, rt_curve, p, warnings, temp_factor
+            stats_util, calc, vsh, rt_curve, p, warnings, tctx
         )
+    rsh_auto = rsh_source == "auto"
     well_sources = _well_sources(p, rw_source, rsh_source, shale_failed)
     well_table = _sources_table(
         p, well_sources, {"gr_baseline": [gr_min, gr_max], "rw": rw, "rsh": rsh}
@@ -878,7 +982,8 @@ def run_pipeline(
 
     if not plan:
         emit("Calculating Swirr...", 65)
-        pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, temp_factor, warnings)
+        pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
+                                 rsh_auto)
         emit("Calculating permeability...", 75)
         emit("Calculating net pay...", 85)
         summary = dict(pay["summary"])
@@ -886,13 +991,14 @@ def run_pipeline(
     else:
         # Planned zones run as their own segments; every other sample runs
         # together with the well's parameters.
-        well = {"gr": (gr_min, gr_max), "rw": rw, "rsh": rsh, "sources": well_sources}
+        well = {"gr": (gr_min, gr_max), "rw": rw, "rsh": rsh, "rsh_auto": rsh_auto,
+                "sources": well_sources}
         zones = [z for z in _segment_order(labels, data["DEPTH"]) if z in plan]
         parts, pays = [], []
         for i, zone in enumerate(zones):
             emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
             seg_calc, seg_pay, table = _zone_curves(
-                data[labels == zone], curve_mapping, p, plan[zone], well, temp_factor, warnings
+                data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings
             )
             parts.append(seg_calc.results)
             pays.append(seg_pay)
@@ -909,7 +1015,7 @@ def run_pipeline(
             )
             _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
             pays.append(_saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
-                                           rw, rsh, temp_factor, warnings))
+                                           rw, rsh, tctx, warnings, rsh_auto))
             parts.append(rest_calc.results)
             _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
         emit("Calculating net pay...", 85)
@@ -944,12 +1050,25 @@ def run_pipeline(
     summary["analysis_mode"] = analysis_mode
     summary["selected_formations"] = selected_formations
     summary["data_points"] = len(data)
-    if temp_factor is not None:
-        rw_at_depth = rw * temp_factor
+    if tctx is not None and tctx.factor is not None:
+        rw_at_depth = rw * tctx.factor
         summary["rw_ref_temp"] = float(p["rw_ref_temp"])
         summary["rw_at_depth_range"] = [float(rw_at_depth.min()), float(rw_at_depth.max())]
+        # Rsh: auto estimates are at the Rw reference temperature; a manual one
+        # is corrected only from rsh_ref_temp.
+        rsh_ref = float(p["rw_ref_temp"]) if rsh_auto else p.get("rsh_ref_temp")
+        rsh_at_depth = _rsh_effective(rsh, rsh_auto, p, tctx, data.index)
+        summary["rsh_temperature"] = {
+            "corrected": rsh_ref is not None,
+            "ref_temp": None if rsh_ref is None else float(rsh_ref),
+            "range": [float(np.min(rsh_at_depth)), float(np.max(rsh_at_depth))],
+        }
+    if tctx is not None:
+        summary["temperature"] = tctx.source
 
     param_sources = {WELL_SOURCES_KEY: well_table}
+    if tctx is not None:
+        param_sources["temperature"] = tctx.source
     if labels is not None:
         for zone in _segment_order(labels, data["DEPTH"]):
             param_sources[zone] = sources_by_zone.get(zone, well_table)

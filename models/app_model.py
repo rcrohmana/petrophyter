@@ -166,6 +166,9 @@ class AppModel(QObject):
         self.surface_temp: float = 80.0
         self.temp_gradient: float = 1.5
         self.rw_ref_temp: float = 75.0
+        self.temp_datum_depth: float = 0.0          # ft, depth where surface_temp applies
+        self.rsh_ref_temp: Optional[float] = None   # degF a manual Rsh was read at; None = uncorrected
+        self.ws_b_auto: bool = False                # Waxman-Smits B from temperature
 
         # Scope edited in the Parameters window (spec §4.8).
         self._edit_scope: str = SCOPE_PROJECT
@@ -900,13 +903,18 @@ class AppModel(QObject):
         source of every scoped value) and ``curve_mapping``. Detached: safe to
         hand to a worker thread.
         """
-        from modules.param_scopes import resolve, zone_plan
+        from modules.param_scopes import header_deviation_hint, resolve, zone_plan
         from modules.shale_estimation import SHALE_SETTING_DEFAULTS
 
         ds = well if well is not None else self._well
         global_params = self.project_params()
-        header = ds.well_info
+        header = self._temperature_header(ds)
         flat, info = resolve(global_params, ds.overrides, None, None, None, header)
+        # What formation temperature needs beyond the numbers (only carried when set).
+        if str(ds.well_info.get("depth_reference", "")).upper() == "TVD":
+            flat["depth_reference"] = "TVD"
+        if header_deviation_hint(ds.well_info):
+            flat["header_deviation"] = True
         flat["analysis_mode"] = ds.analysis_mode
         flat["selected_formations"] = list(ds.selected_formations)
         flat["param_info"] = info
@@ -923,6 +931,15 @@ class AppModel(QObject):
             for key in SHALE_SETTING_DEFAULTS:
                 flat[key] = getattr(self, key, SHALE_SETTING_DEFAULTS[key])
         return copy.deepcopy(flat)
+
+    @staticmethod
+    def _temperature_header(ds: WellDataset) -> dict:
+        """The well's header, plus TD on its TVD curve when one is mapped (C)."""
+        from modules.param_scopes import header_with_tvd_td
+
+        header = ds.well_info
+        return header_with_tvd_td(header, ds.las_data, ds.curve_mapping.get("TVD"),
+                                  header.get("depth_reference"))
 
     def to_params(self) -> dict:
         """Snapshot the active well's effective parameters as a plain, detached dict.
@@ -1083,7 +1100,7 @@ class AppModel(QObject):
 
         ds = self.project.get(well) if isinstance(well, str) else (well or self._well)
         return resolve(self.project_params(), ds.overrides, self.project.zone_params,
-                       ds.zone_overrides, zone, ds.well_info)
+                       ds.zone_overrides, zone, self._temperature_header(ds))
 
     def scope_view(self, scope: Optional[str] = None, zone: Optional[str] = None,
                    well=None):
@@ -1104,7 +1121,7 @@ class AppModel(QObject):
             here_scope = PROJECT_ZONE if zone else PROJECT
         else:
             flat, info = resolve(global_params, ds.overrides, self.project.zone_params,
-                                 ds.zone_overrides, zone, ds.well_info)
+                                 ds.zone_overrides, zone, self._temperature_header(ds))
             here_scope = WELL_ZONE if zone else WELL
         for item in info.values():
             item["here"] = item["scope"] == here_scope

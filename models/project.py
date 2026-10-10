@@ -18,7 +18,8 @@ from modules.las_utils import normalize_well_name, well_key
 
 
 def default_curve_mapping() -> Dict[str, str]:
-    return {"GR": "None", "RHOB": "None", "NPHI": "None", "DT": "None", "RT": "None"}
+    return {"GR": "None", "RHOB": "None", "NPHI": "None", "DT": "None", "RT": "None",
+            "TVD": "None"}
 
 
 # Process-wide counter: every data replacement gets a version no other dataset

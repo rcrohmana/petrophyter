@@ -319,3 +319,32 @@ def test_zone_grid_refresh_creates_no_entries(win, model):
         model.set_edit_scope(scope)
     model.set_active_well("WELL:B")
     assert _stores(model) == before
+
+
+# ---- calibrated Rsh keeps its temperature (B) -----------------------------
+def test_apply_rsh_with_correction_stores_its_reference_temperature(win, model):
+    model.temp_correction = True
+    model.rw_ref_temp = 75.0
+    model.set_edit_scope("well", "LOWER")
+    win.show_calculated_rw_rsh(0.031, 4.2)
+    win.res_params_widget.apply_btn.click()
+    entry = model.get_entry("rsh_ref_temp")
+    assert entry["value"] == 75.0 and entry["source"] == "calibrated"
+    flat, _info = model.effective_params("WELL:A", "LOWER")
+    assert flat["rsh_ref_temp"] == 75.0
+    assert model.effective_params("WELL:A", "UPPER")[0].get("rsh_ref_temp") is None
+
+
+def test_apply_rsh_without_correction_leaves_it_uncorrected(win, model):
+    model.set_edit_scope("well")
+    win.show_calculated_rw_rsh(0.031, 4.2)
+    win.res_params_widget.apply_btn.click()
+    assert model.get_entry("rsh_ref_temp") is None
+
+
+def test_apply_rsh_at_project_scope_sets_the_reference_field(win, model):
+    model.temp_correction = True
+    model.rw_ref_temp = 80.0
+    win.show_calculated_rw_rsh(0.031, 4.2)
+    win.res_params_widget.apply_btn.click()
+    assert win.temperature_widget.rsh_ref_value() == 80.0

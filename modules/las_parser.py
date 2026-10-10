@@ -47,6 +47,8 @@ class LASParser:
         # Shallow resistivity
         'RS':    ['RS', 'LLS', 'ILS', 'RESS', 'RXOZ', 'RSHALLOW'],
         'DEPTH': ['DEPTH', 'DEPT', 'MD', 'TVD', 'TDEP'],
+        # True vertical depth curve (formation temperature on TVD); never the depth index
+        'TVD':   ['TVD', 'TVDKB', 'TVDRKB', 'TVDRT', 'TVDBRT'],
         'SP':    ['SP', 'SSP', 'SPONT'],
         'CALI':  ['CALI', 'CAL', 'CALIPER', 'HCAL'],
         # Density correction: ZCOR umum dipakai sebagai bulk density correction

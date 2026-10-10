@@ -9,6 +9,7 @@ field's mode menu) — never by comparing a widget value with the inherited one.
 """
 import datetime
 from contextlib import contextmanager
+from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -20,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from modules.param_scopes import (
     ARCHIE_KEYS, AUTO, AUTO_PARAMS, GR_MANUAL, INHERIT, LITHOLOGY_CUSTOM, LITHOLOGY_PRESETS,
-    MANUAL, SPECS, flat_value, validate_entry,
+    MANUAL, SPECS, flat_value, temperature_readout, validate_entry,
 )
 from .widgets.parameter_groups import (
     AnalysisModeGroup, ArchieParamsGroup, CurveMappingGroup, CutoffParamsGroup,
@@ -277,6 +278,7 @@ class ParametersWindow(QDialog):
             return
         self.update_model_from_ui()
         self.parameters_updated.emit()
+        self._update_temperature_readout()
 
     def update_available_curves(self, curves: list, detected: dict = None):
         """Update curve mapping combos."""
@@ -345,6 +347,9 @@ class ParametersWindow(QDialog):
                            lambda k=key: self.cutoff_params_widget.get_params()[k])
         field["temp_correction"] = (tmp.enable_check, [tmp.enable_check], tmp.enable_check.isChecked)
         spin("surface_temp", tmp.surface_spin), spin("rw_ref_temp", tmp.ref_spin)
+        spin("temp_datum_depth", tmp.datum_spin)
+        field["rsh_ref_temp"] = (tmp.rsh_ref_spin, [tmp.rsh_ref_spin], tmp.rsh_ref_value)
+        field["ws_b_auto"] = (tmp.ws_b_check, [tmp.ws_b_check], tmp.ws_b_check.isChecked)
         field["temp_gradient"] = (tmp.grad_auto_cb, [tmp.gradient_spin, tmp.grad_auto_cb],
                                   tmp.gradient_spin.value)
         return field
@@ -377,12 +382,13 @@ class ParametersWindow(QDialog):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name, arch)
         for name in ("rho_matrix", "dt_matrix", "rho_fluid", "dt_fluid", "rho_shale",
                      "dt_shale", "nphi_shale", "ws_qv", "ws_b", "dw_swb", "dw_rwb",
-                     "perm_C", "perm_P", "perm_Q", "surface_temp", "rw_ref_temp"):
+                     "perm_C", "perm_P", "perm_Q", "surface_temp", "rw_ref_temp",
+                     "temp_datum_depth", "rsh_ref_temp"):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
         self._on_edit(swir.k_buckles_spin.valueChanged, "k_buckles", swir)
         for name in ("vsh_cutoff", "phi_cutoff", "sw_cutoff"):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
-        for name in ("gas_correction_enabled", "temp_correction"):
+        for name in ("gas_correction_enabled", "temp_correction", "ws_b_auto"):
             self._on_edit(self._fields[name]["anchor"].toggled, name)
         # Fields with an Auto mode.
         self._on_edit(res.rw_spin.valueChanged, "rw")
@@ -390,6 +396,7 @@ class ParametersWindow(QDialog):
         self._on_edit(tmp.gradient_spin.valueChanged, "temp_gradient")
         res.rw_auto_cb.toggled.connect(lambda checked: self._on_auto_toggled("rw", checked))
         res.rsh_auto_cb.toggled.connect(lambda checked: self._on_auto_toggled("rsh", checked))
+        res.rsh_auto_cb.toggled.connect(lambda checked: tmp.set_rsh_manual(not checked))
         tmp.grad_auto_cb.toggled.connect(lambda checked: self._on_auto_toggled("temp_gradient", checked))
         vsh.baseline_combo.currentTextChanged.connect(self._on_gr_mode_edit)
         self._on_edit(vsh.gr_min_spin.valueChanged, "gr_baseline")
@@ -505,18 +512,41 @@ class ParametersWindow(QDialog):
     def _today(self) -> str:
         return datetime.date.today().isoformat()
 
+    def _calculated_rsh_ref(self) -> Optional[float]:
+        """Temperature the calculated Rsh is at: the Rw reference with correction on.
+
+        The estimate normalises shale RT to the Rw reference temperature, so an
+        applied Rsh keeps that temperature and stays corrected per sample.
+        """
+        try:
+            p = self.model.params_for_well()
+        except Exception:
+            return None
+        return float(p["rw_ref_temp"]) if p.get("temp_correction") else None
+
     def _on_rw_rsh_apply(self):
-        if self.is_flat_scope():
-            self.res_params_widget.apply_calculated()
-            return
         calculated = self.res_params_widget.calculated()
         if calculated is None:
+            return
+        ref = self._calculated_rsh_ref()
+        if self.is_flat_scope():
+            self.res_params_widget.apply_calculated()
+            spin = self.temperature_widget.rsh_ref_spin
+            spin.setValue(spin.minimum() if ref is None else ref)
             return
         date = self._today()
         with self._writing():
             for name, value in zip(("rw", "rsh"), calculated):
                 self._set_entry(name, MANUAL, value, source="calibrated",
                                 method="Rwa", date=date)
+            if ref is not None:
+                self._set_entry("rsh_ref_temp", MANUAL, ref, source="calibrated",
+                                method="Rwa", date=date)
+            else:
+                try:
+                    self.model.clear_entry("rsh_ref_temp")
+                except ValueError:
+                    pass
         self.res_params_widget.discard_calculated()
 
     def _on_shale_apply(self):
@@ -658,7 +688,24 @@ class ParametersWindow(QDialog):
                        num("temp_gradient", tmp.gradient_spin.value()),
                        num("rw_ref_temp", tmp.ref_spin.value()),
                        gradient_auto=info["temp_gradient"]["mode"] == AUTO
-                       and not self.is_flat_scope())
+                       and not self.is_flat_scope(),
+                       datum=num("temp_datum_depth", 0.0),
+                       rsh_ref_temp=flat.get("rsh_ref_temp"),
+                       ws_b_auto=bool(flat.get("ws_b_auto", False)))
+        tmp.set_rsh_manual(flat.get("rsh_mode", "manual") != "auto")
+        self._update_temperature_readout()
+
+    def _update_temperature_readout(self):
+        """Temperature at the log ends and the header gradient, for the active well."""
+        tmp, ds = self.temperature_widget, self.model.active_well
+        if ds is None or ds.las_data is None:
+            tmp.set_readout([])
+            return
+        header = ds.well_info
+        flat, _info = self.model.effective_params()
+        tmp.set_readout(temperature_readout(
+            ds.las_data, ds.curve_mapping.get("TVD"), header.get("depth_reference"), header, flat
+        ))
 
     @staticmethod
     def _source_tip(source: str, here: bool, mode: str) -> str:
@@ -820,6 +867,9 @@ class ParametersWindow(QDialog):
             self.model.surface_temp = temp["surface_temp"]
             self.model.temp_gradient = temp["temp_gradient"]
             self.model.rw_ref_temp = temp["rw_ref_temp"]
+            self.model.temp_datum_depth = temp["temp_datum_depth"]
+            self.model.rsh_ref_temp = temp["rsh_ref_temp"]
+            self.model.ws_b_auto = temp["ws_b_auto"]
 
             # Perm params
             perm = self.perm_params_widget.get_params()

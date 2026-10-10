@@ -28,6 +28,9 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import numpy as np
+import pandas as pd
+
 AUTO, MANUAL, INHERIT = "auto", "manual", "inherit"
 
 # Shale-point parameters, estimated together from one shale selection. Flat
@@ -105,7 +108,19 @@ SPECS: Dict[str, ParamSpec] = {s.name: s for s in (
     _spec("surface_temp", "Surface temperature", zone=False),
     _spec("temp_gradient", "Temperature gradient", zone=False, auto=True),
     _spec("rw_ref_temp", "Rw reference temperature", zone=False),
+    _spec("temp_datum_depth", "Temperature datum depth", zone=False),
+    # Zone-capable like Rsh itself: a zone's calibrated Rsh keeps its temperature.
+    _spec("rsh_ref_temp", "Rsh reference temperature"),
+    _spec("ws_b_auto", "WS B from temperature", zone=False),
 )}
+
+# Well-only parameters that are left out of the sources tables while they hold
+# their inactive value, so a run without them reports exactly what it did before.
+OPTIONAL_SOURCE_PARAMS: Dict[str, tuple] = {
+    "temp_datum_depth": (None, 0, 0.0),
+    "rsh_ref_temp": (None,),
+    "ws_b_auto": (None, False),
+}
 
 ZONE_PARAMS: Tuple[str, ...] = tuple(n for n, s in SPECS.items() if s.zone)
 WELL_PARAMS: Tuple[str, ...] = tuple(n for n, s in SPECS.items() if s.well)
@@ -241,7 +256,8 @@ def resolve(global_params: Dict, overrides: Optional[Dict] = None,
 
     Returns ``(flat, info)``. ``info[name] = {"scope", "mode", "source"}`` for
     every scoped parameter. ``header`` (the well's LAS header) feeds the
-    temperature-gradient AUTO estimate.
+    temperature-gradient AUTO estimate; it may carry ``_td_tvd_ft`` (TD on the
+    well's TVD source, see :func:`header_with_tvd_td`).
     """
     flat = dict(global_params)
     info: Dict[str, Dict] = {}
@@ -254,7 +270,8 @@ def resolve(global_params: Dict, overrides: Optional[Dict] = None,
     _apply_preset_supply(flat, info, global_params, overrides, zone_params,
                          zone_overrides, zone)
     if info["temp_gradient"]["mode"] == AUTO:
-        gradient = gradient_from_header(header, flat.get("surface_temp"))
+        gradient = gradient_from_header(header, flat.get("surface_temp"),
+                                        flat.get("temp_datum_depth"))
         if gradient is None:
             info["temp_gradient"]["source"] = "auto unavailable (project)"
         else:
@@ -420,9 +437,13 @@ def _to_ft(value, unit: str) -> float:
     return value * 3.28084 if unit in ("M", "METER", "METERS", "METRE", "METRES") else value
 
 
-def gradient_from_header(header: Optional[Dict], surface_temp_f) -> Optional[float]:
+def gradient_from_header(header: Optional[Dict], surface_temp_f,
+                         datum_ft=None) -> Optional[float]:
     """Geothermal gradient (°F/100 ft) from BHT at TD, or None.
 
+    ``g = (BHT - Ts) / (TVD_TD - d0) * 100`` on the temperature datum ``d0``
+    (``datum_ft``, default 0). ``TVD_TD`` is ``header["_td_tvd_ft"]`` when the
+    well has a TVD curve, else the header TD itself (MD, assumed vertical).
     Units: BHT in °C/°F (``bht_unit``), TD in m/ft (``td_unit``); unitless
     values are taken as °F and ft.
     """
@@ -433,23 +454,212 @@ def gradient_from_header(header: Optional[Dict], surface_temp_f) -> Optional[flo
     if surface_temp_f is None:
         return None
     bht_f = _to_degf(float(bht), header.get("bht_unit"))
-    td_ft = _to_ft(float(td), header.get("td_unit"))
-    if td_ft <= 0 or bht_f <= float(surface_temp_f):
+    td_ft = header.get("_td_tvd_ft")
+    td_ft = _to_ft(float(td), header.get("td_unit")) if td_ft is None else float(td_ft)
+    height = td_ft - float(datum_ft or 0.0)
+    if height <= 0 or bht_f <= float(surface_temp_f):
         return None
-    return round((bht_f - float(surface_temp_f)) / td_ft * 100.0, 4)
+    return round((bht_f - float(surface_temp_f)) / height * 100.0, 4)
 
 
 ARPS_OFFSET_F = 6.77
 
 
-def formation_temperature(depth_ft, surface_temp_f: float, gradient_f_per_100ft: float):
-    """T(depth) in °F for a linear gradient (works on scalars and arrays)."""
-    return surface_temp_f + gradient_f_per_100ft * depth_ft / 100.0
+def formation_temperature(depth_ft, surface_temp_f: float, gradient_f_per_100ft: float,
+                          datum_ft: float = 0.0):
+    """T(z) = Ts + g (z - d0) / 100 in °F (scalars and arrays).
+
+    ``depth_ft`` is TVD on the same datum as ``datum_ft`` (the depth at which
+    ``surface_temp_f`` applies); with the default datum 0 and MD it is the
+    vertical-well form.
+    """
+    return surface_temp_f + gradient_f_per_100ft * (depth_ft - datum_ft) / 100.0
 
 
 def arps_factor(temp_f, ref_temp_f: float):
     """Multiplier taking a resistivity at ``ref_temp_f`` to ``temp_f`` (Arps, °F)."""
     return (ref_temp_f + ARPS_OFFSET_F) / (temp_f + ARPS_OFFSET_F)
+
+
+# Floor of the Juhasz correlation's temperature (°C): it is a fit to roughly
+# 25-200 °C data and its numerator turns negative below about 6 °C.
+JUHASZ_MIN_TEMP_C = 25.0
+
+
+def juhasz_b(temp_f, rw_at_temp):
+    """Waxman-Smits B (mho cm²/meq) from temperature and Rw (Juhasz, 1981).
+
+    ``B = (-1.28 + 0.225 T - 0.0004059 T²) / (1 + Rw^1.23 (0.045 T - 0.27))``
+    with ``T`` in °C and ``Rw`` the brine resistivity AT that temperature. ``T``
+    is floored at :data:`JUHASZ_MIN_TEMP_C`. Works on scalars and arrays.
+    """
+    t_c = np.maximum((np.asarray(temp_f, dtype=float) - 32.0) * 5.0 / 9.0, JUHASZ_MIN_TEMP_C)
+    rw = np.asarray(rw_at_temp, dtype=float)
+    return (-1.28 + 0.225 * t_c - 0.0004059 * t_c ** 2) / (
+        1.0 + np.power(rw, 1.23) * (0.045 * t_c - 0.27)
+    )
+
+
+# ---------------------------------------------------------------------------
+# True vertical depth for formation temperature (C)
+# ---------------------------------------------------------------------------
+TVD_MNEMONICS = ("TVD", "TVDKB", "TVDRKB", "TVDRT", "TVDBRT")
+TVD_MONOTONIC_TOL_FT = 0.01     # numerical noise allowed when checking dTVD/dMD >= 0
+TVD_OVER_MD_TOL_FT = 1.0        # TVD may exceed MD by at most this much
+
+
+def is_tvd_like(name) -> bool:
+    """True for the mnemonics auto-mapped to the TVD curve type."""
+    return str(name or "").upper() in TVD_MNEMONICS
+
+
+@dataclass
+class TvdSource:
+    """TVD (ft) as a function of MD (ft) for one well, with its provenance.
+
+    ``kind`` is ``"curve"`` (a mapped TVD curve), ``"index"`` (the depth index
+    is TVD) or ``"md"`` (measured depth, assumed vertical). ``label`` is the
+    text recorded as the source of the temperatures; ``notes`` are warnings
+    (a rejected curve, an unmapped TVD-like curve, header deviation).
+    """
+
+    kind: str
+    label: str
+    notes: List[str]
+    extrapolated: float = 0.0
+    _md: Optional[np.ndarray] = None
+    _tvd: Optional[np.ndarray] = None
+    _slope_lo: float = 1.0
+    _slope_hi: float = 1.0
+
+    def at(self, md):
+        """TVD at measured depth(s); outside a curve's coverage the edge slope applies."""
+        md = np.asarray(md, dtype=float)
+        if self.kind != "curve":
+            return md
+        out = np.interp(md, self._md, self._tvd)
+        out = np.where(md < self._md[0], self._tvd[0] + self._slope_lo * (md - self._md[0]), out)
+        return np.where(md > self._md[-1], self._tvd[-1] + self._slope_hi * (md - self._md[-1]), out)
+
+
+def _curve_tvd_source(md, tvd, name, notes) -> Optional[TvdSource]:
+    """A :class:`TvdSource` from a mapped curve, or None (reason appended to ``notes``)."""
+    ok = np.isfinite(md) & np.isfinite(tvd)
+    order = np.argsort(md[ok], kind="stable")
+    m, t = md[ok][order], tvd[ok][order]
+    m, first = np.unique(m, return_index=True)
+    t = t[first]
+    if len(m) < 2:
+        notes.append(f"TVD curve {name} has fewer than two valid samples; MD was used.")
+        return None
+    if np.any(np.diff(t) < -TVD_MONOTONIC_TOL_FT):
+        notes.append(f"TVD curve {name} is not non-decreasing with MD (wrong curve or TVDSS?); "
+                     "MD was used.")
+        return None
+    if np.any(t > m + TVD_OVER_MD_TOL_FT):
+        notes.append(f"TVD curve {name} exceeds MD by more than {TVD_OVER_MD_TOL_FT:g} ft "
+                     "(wrong curve or units?); MD was used.")
+        return None
+
+    def edge_slope(dm, dt):
+        # dTVD/dMD cannot lie outside [0, 1] for a real wellbore.
+        return float(np.clip(dt / dm, 0.0, 1.0))
+
+    finite_md = md[np.isfinite(md)]
+    outside = float(np.mean((finite_md < m[0]) | (finite_md > m[-1]))) if len(finite_md) else 0.0
+    label = f"TVD curve {name}"
+    if outside > 0:
+        label += f", {outside * 100:.0f}% of samples extrapolated"
+    return TvdSource("curve", label, notes, outside, m, t,
+                     edge_slope(m[1] - m[0], t[1] - t[0]),
+                     edge_slope(m[-1] - m[-2], t[-1] - t[-2]))
+
+
+def header_deviation_hint(header: Optional[Dict]) -> bool:
+    """True when the header has an inclination / deviation entry."""
+    return any(("incl" in str(k).lower() or "devi" in str(k).lower()) for k in (header or {}))
+
+
+def resolve_tvd(data, tvd_curve=None, depth_reference=None,
+                deviation_hint: bool = False) -> TvdSource:
+    """TVD source for a well: mapped curve, then TVD depth index, then MD (§5.1).
+
+    ``data`` has the ``DEPTH`` column (MD, or TVD when ``depth_reference`` is
+    ``"TVD"``). A mapped curve that is not monotonic with MD, or that exceeds
+    MD by more than 1 ft, is rejected with a note and the next source is used.
+    Gaps inside a curve are interpolated linearly. The depth index itself is
+    never taken as a TVD curve.
+    """
+    md = np.asarray(data["DEPTH"], dtype=float)
+    notes: List[str] = []
+    name = tvd_curve if tvd_curve and tvd_curve not in ("None", "DEPTH") else None
+    if name is not None:
+        if name not in data.columns:
+            notes.append(f"TVD curve {name} is not in the data; MD was used.")
+        else:
+            tvd = pd.to_numeric(data[name], errors="coerce").to_numpy(dtype=float)
+            source = _curve_tvd_source(md, tvd, name, notes)
+            if source is not None:
+                return source
+    if str(depth_reference or "").upper() == "TVD":
+        return TvdSource("index", "depth index (TVD)", notes)
+    like = [c for c in data.columns if c != "DEPTH" and is_tvd_like(c)]
+    if name is None and like:
+        notes.append(f"Curve {like[0]} looks like TVD but is not mapped; temperatures "
+                     "assume a vertical well. Map it in Curve Mapping.")
+    elif name is None and deviation_hint:
+        notes.append("The header has an inclination/deviation entry but no TVD curve is "
+                     "mapped; temperatures assume a vertical well.")
+    return TvdSource("md", "MD (assumed vertical)", notes)
+
+
+def header_with_tvd_td(header: Optional[Dict], data, tvd_curve, depth_reference) -> Dict:
+    """Copy of the header carrying ``_td_tvd_ft`` when a TVD curve maps TD to TVD.
+
+    Only a mapped, valid TVD curve changes anything: with the depth index in TVD
+    the header TD is taken as given, and without a TVD source TD stays MD.
+    """
+    header = dict(header or {})
+    td = header.get("td")
+    if data is None or "DEPTH" not in getattr(data, "columns", ()) or not isinstance(td, (int, float)):
+        return header
+    if not tvd_curve or tvd_curve == "None":
+        return header
+    source = resolve_tvd(data, tvd_curve, depth_reference)
+    if source.kind == "curve":
+        header["_td_tvd_ft"] = float(source.at(_to_ft(float(td), header.get("td_unit"))))
+    return header
+
+
+def temperature_readout(data, tvd_curve, depth_reference, header, flat) -> List[str]:
+    """Lines for the Temperature section: T at log top/bottom and the header gradient.
+
+    ``flat`` supplies ``surface_temp``, ``temp_gradient`` and ``temp_datum_depth``.
+    """
+    lines: List[str] = []
+    header = dict(header or {})
+    surface = float(flat.get("surface_temp") or 0.0)
+    gradient_now = float(flat.get("temp_gradient") or 0.0)
+    datum = float(flat.get("temp_datum_depth") or 0.0)
+    if data is not None and "DEPTH" in getattr(data, "columns", ()) and len(data):
+        source = resolve_tvd(data, tvd_curve, depth_reference, header_deviation_hint(header))
+        t_top, t_bottom = (
+            float(formation_temperature(source.at(d), surface, gradient_now, datum))
+            for d in (float(data["DEPTH"].min()), float(data["DEPTH"].max()))
+        )
+        lines.append(f"T at log top / bottom: {t_top:.0f} / {t_bottom:.0f} °F ({source.label})")
+    bht, td = header.get("bht"), header.get("td")
+    if isinstance(bht, (int, float)) and isinstance(td, (int, float)):
+        header = header_with_tvd_td(header, data, tvd_curve, depth_reference)
+        gradient = gradient_from_header(header, surface, datum)
+        if gradient is not None:
+            td_ft = _to_ft(float(td), header.get("td_unit"))
+            where = "MD" if "_td_tvd_ft" not in header else f"MD, TVD {header['_td_tvd_ft']:,.0f} ft"
+            lines.append(
+                f"header: {_to_degf(float(bht), header.get('bht_unit')):.0f} °F at TD "
+                f"{td_ft:,.0f} ft ({where}) → gradient {gradient:.2f} °F/100 ft"
+            )
+    return lines
 
 
 # ---------------------------------------------------------------------------

@@ -78,6 +78,9 @@ _SESSION_DEFAULTS = {
     "surface_temp": 80.0,
     "temp_gradient": 1.5,
     "rw_ref_temp": 75.0,
+    "temp_datum_depth": 0.0,
+    "rsh_ref_temp": None,
+    "ws_b_auto": False,
 }
 
 # Per-well settings that live in each ``wells`` entry in v2.0 sessions, not in
@@ -440,6 +443,9 @@ class SessionService(QObject):
             "surface_temp",
             "temp_gradient",
             "rw_ref_temp",
+            "temp_datum_depth",
+            "rsh_ref_temp",
+            "ws_b_auto",
         ):
             if field in session_data:
                 setattr(model, field, session_data[field])
