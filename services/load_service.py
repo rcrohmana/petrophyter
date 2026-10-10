@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 from models.project import WellDataset, display_name_for, make_well_key
 from modules.las_parser import LASParser
 from modules.las_utils import same_well, well_key
+from modules.param_scopes import default_well_overrides
 from modules.qc_module import QCModule
 
 logger = logging.getLogger(__name__)
@@ -192,4 +193,7 @@ def build_well(files: List[ParsedFile], merge_result=None) -> WellDataset:
     ds.merge_report = merge_report
     ds.curve_mapping = _detect_mapping(parser)
     ds.qc_report = QCModule(data, ds.display_name).run_qc()
+    # New wells estimate Rw, Rsh and the GR baseline from their own data
+    # (spec §4.3), so no value calibrated on another well leaks in.
+    ds.overrides = default_well_overrides(ds.well_info)
     return ds
