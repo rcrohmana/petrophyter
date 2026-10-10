@@ -74,9 +74,10 @@ from .tabs.diagnostics_tab import DiagnosticsTab
 from .tabs.summary_tab import SummaryTab
 from .tabs.export_tab import ExportTab
 
-from modules.formation_tops import FormationTops
+from modules.formation_tops import FormationTops, extend_last_bottom
 from modules.core_handler import CoreDataHandler
-from modules.well_matching import assign_to_wells, depth_coverage_warning
+from modules.well_import import ImportOptions, build_parts, import_record, parse_import_file, well_refs
+from .widgets.well_import_dialog import MultiWellImportDialog
 
 
 logger = logging.getLogger(__name__)
@@ -477,6 +478,10 @@ class MainWindow(QMainWindow):
         act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
         act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
+        act("open_tops_multi", "Open Formation Tops (Multi-Well)…", "layers", None,
+            self._open_tops_multi_dialog)
+        act("open_core_multi", "Open Core Data (Multi-Well)…", "database", None,
+            self._open_core_multi_dialog)
         act("merge_las", "Merge LAS Files…", "merge", None, self._open_las_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
         act("exit", "Exit", "log-out", None, self.close)
@@ -498,6 +503,8 @@ class MainWindow(QMainWindow):
         for key in ("run_analysis", "run_all", "toggle_browser", "params_window"):
             self.actions_[key].setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actions_["page_core"].setEnabled(False)
+        self.actions_["open_tops_multi"].setEnabled(False)
+        self.actions_["open_core_multi"].setEnabled(False)
         group = QActionGroup(self)
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
@@ -514,7 +521,7 @@ class MainWindow(QMainWindow):
         file_menu = bar.addMenu("&File")
         self._menus["file"] = file_menu
         for key in ("new_project", None, "open_las", "open_tops", "open_core",
-                    "merge_las", None, "save_merged", None, "exit"):
+                    "open_tops_multi", "open_core_multi", "merge_las", None, "save_merged", None, "exit"):
             file_menu.addSeparator() if key is None else file_menu.addAction(self.actions_[key])
         session = bar.addMenu("&Session")
         session.addAction(self.actions_["save_session"])
@@ -711,6 +718,23 @@ class MainWindow(QMainWindow):
                 )
         return out
 
+    @staticmethod
+    def _parser_diagnostics(parser) -> list:
+        """Notes a tops / core parser collected: rows left out, TVD and porosity warnings."""
+        lines = list(getattr(parser, "notes", None) or [])
+        excluded = list(getattr(parser, "excluded_rows", None) or [])
+        if excluded:
+            first = ", ".join(str(line) for line, _ in excluded[:3] if line is not None)
+            lines.append(
+                f"{len(excluded)} row(s) excluded (line {first}"
+                f"{'...' if len(excluded) > 3 else ''}): {excluded[0][1]}"
+            )
+        for name in ("tvd_warning", "porosity_warning"):
+            text = getattr(parser, name, None)
+            if text:
+                lines.append(text)
+        return lines
+
     def _show_load_notes(self, parser=None, extra=()):
         """One banner for load-time notes so none hides another."""
         lines = list(extra)
@@ -718,6 +742,7 @@ class MainWindow(QMainWindow):
             if getattr(parser, "depth_unit_warning", None):
                 lines.append(parser.depth_unit_warning)
             lines.extend(getattr(parser, "unit_warnings", None) or [])
+            lines.extend(self._parser_diagnostics(parser))
         lines.extend(self._depth_overlap_warnings())
         if lines:
             only_info = all(l.startswith("Reloaded ") for l in lines)
@@ -1000,6 +1025,7 @@ class MainWindow(QMainWindow):
 
     def _on_wells_changed(self):
         self._refresh_window_title()
+        self._refresh_import_actions()
         self._refresh_run_action()
         run_all = getattr(self, "_run_all_action", None)
         if run_all is not None:
@@ -1134,77 +1160,11 @@ class MainWindow(QMainWindow):
         )
         return False
 
-    def _assign_per_well(self, parsed, file_path: str, kind: str, apply):
-        """Hand a tops/core file to its wells; returns ``(active_part, notes)``.
-
-        Without a well column the whole file belongs to the active well. With
-        one, each part goes to the loaded well it matches (UWI/API or name);
-        ``apply(ds, part)`` attaches a part to a non-active well. Unmatched
-        names and parts whose depths miss a well's logs are reported.
-        """
-        project = self.model.project
-        active = project.active
-        if not parsed.well_names():
-            return parsed, []
-        matches, unmatched = assign_to_wells(
-            parsed.split_by_well(),
-            [(ds.key, ds.well_info) for ds in project.wells],
-            parsed.well_kind,
-        )
-        notes = []
-        name = os.path.basename(file_path)
-        others = [key for key in matches if key != active.key]
-        for key in others:
-            ds = project.get(key)
-            apply(ds, matches[key])
-            note = self._coverage_note(ds, matches[key], kind)
-            if note:
-                notes.append(note)
-            project.well_updated.emit(key)
-        if others:
-            self._recompute_stale(others)
-        assigned = [project.get(key).display_name for key in matches]
-        if assigned:
-            notes.append(f"{name}: {kind} assigned to {', '.join(assigned)}.")
-        if unmatched:
-            notes.append(
-                f"{name}: no loaded well matches {', '.join(unmatched)}; "
-                "those rows were not used."
-            )
-        if active.key not in matches:
-            notes.append(f"{name} has no {kind} for the active well {active.display_name}.")
-        return matches.get(active.key), notes
-
-    @staticmethod
-    def _coverage_note(ds, part, kind: str):
-        """Depth-coverage warning for a part attached to a non-active well."""
-        data = ds.las_data
-        if data is None or "DEPTH" not in data.columns or data["DEPTH"].dropna().empty:
-            return None
-        depth = data["DEPTH"].dropna()
-        if kind == "formation tops":
-            formations = getattr(part, "formations", None) or []
-            if not formations:
-                return None
-            top = min(fm.top_depth for fm in formations)
-            bottom = max(fm.bottom_depth for fm in formations)
-        else:
-            frame = getattr(part, "data", None)
-            col = getattr(part, "depth_col", None)
-            if frame is None or col not in getattr(frame, "columns", []):
-                return None
-            depths = frame[col].dropna()
-            if depths.empty:
-                return None
-            top, bottom = float(depths.min()), float(depths.max())
-        label = f"{ds.display_name}: {kind}"
-        return depth_coverage_warning(label, top, bottom, depth.min(), depth.max())
-
     def _on_tops_file_selected(self, file_path: str):
         """Handle formation tops file selection.
 
         Tops belong to the active well, unless the file has a well column: then
-        every loaded well gets its own rows.
+        the multi-well dialog decides which loaded well gets which rows.
         """
         if not self._require_active_well("formation tops"):
             return
@@ -1212,21 +1172,18 @@ class MainWindow(QMainWindow):
             tops = FormationTops()
             with open(file_path, "rb") as f:
                 if tops.read_tops_from_buffer(f):
+                    if tops.well_column:
+                        self._import_multi_well("tops", file_path)
+                        return
                     # convert_to_feet() only converts when the unit was detected
                     # as meters; feet/undetected files are left unchanged.
                     tops.convert_to_feet()
-
-                    def attach(ds, part):
-                        ds.formation_tops = part
-                        ds.tops_path = file_path
-
-                    tops, notes = self._assign_per_well(
-                        tops, file_path, "formation tops", attach
-                    )
-                    if tops is None:
-                        self._show_load_notes(None, notes)
-                        return
-                    self.model.active_well.tops_path = file_path
+                    bounds = self._log_depth_range()
+                    if bounds is not None:
+                        extend_last_bottom(tops, bounds[1])
+                    active = self.model.active_well
+                    active.tops_path = file_path
+                    active.tops_import = None
                     self.model.formation_tops = tops
 
                     self.params_window.update_formations_list(tops.get_formation_list())
@@ -1235,7 +1192,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {len(tops.formations)} formations"
                     )
 
-                    self._show_load_notes(tops, notes)
+                    self._show_load_notes(tops)
 
                     # Update QC tab
                     self.qc_tab.update_display()
@@ -1261,8 +1218,8 @@ class MainWindow(QMainWindow):
     def _on_core_file_selected(self, file_path: str):
         """Handle core data file selection.
 
-        Core belongs to the active well, unless the file has a well column:
-        then every loaded well gets its own samples.
+        Core belongs to the active well, unless the file has a well column: then
+        the multi-well dialog decides which loaded well gets which samples.
         """
         if not self._require_active_well("core data"):
             return
@@ -1273,19 +1230,13 @@ class MainWindow(QMainWindow):
             depth_unit = self.model.core_depth_unit
             with open(file_path, "rb") as f:
                 if handler.read_core_from_buffer(f, depth_unit=depth_unit):
-
-                    def attach(ds, part):
-                        ds.core_data = part
-                        ds.core_path = file_path
-                        ds.core_depth_unit = depth_unit
-
-                    handler, notes = self._assign_per_well(
-                        handler, file_path, "core data", attach
-                    )
-                    if handler is None:
-                        self._show_load_notes(None, notes)
+                    if handler.well_col:
+                        self._import_multi_well("core", file_path)
                         return
-                    self.model.active_well.core_path = file_path
+                    active = self.model.active_well
+                    active.core_path = file_path
+                    active.core_depth_unit = depth_unit
+                    active.core_import = None
                     self.model.core_data = handler
                     self.params_window.set_core_available(True)
                     self._refresh_core_actions()
@@ -1296,7 +1247,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {summary['n_samples']} core samples"
                     )
 
-                    self._show_load_notes(handler, notes)
+                    self._show_load_notes(handler)
                 else:
                     QMessageBox.warning(
                         self, "Warning", "Failed to parse core data file"
@@ -1304,6 +1255,159 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load core data:\n{str(e)}")
+
+    # ---- multi-well import (one file, many wells) ----
+
+    def _open_tops_multi_dialog(self):
+        """Pick a tops file holding the tops of several wells."""
+        self._open_multi_dialog("tops", "Open Formation Tops (Multi-Well)")
+
+    def _open_core_multi_dialog(self):
+        """Pick a core file holding the samples of several wells."""
+        self._open_multi_dialog("core", "Open Core Data (Multi-Well)")
+
+    def _open_multi_dialog(self, kind: str, title: str):
+        from PyQt6.QtWidgets import QFileDialog
+
+        file, _ = QFileDialog.getOpenFileName(
+            self, title, "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
+        )
+        if file:
+            self._import_multi_well(kind, file)
+
+    def _refresh_import_actions(self, *_):
+        enabled = len(self.model.project) > 0
+        for key in ("open_tops_multi", "open_core_multi"):
+            self.actions_[key].setEnabled(enabled)
+
+    def _import_multi_well(self, kind: str, file_path: str):
+        """Show the import dialog for a tops / core file with a well column; apply on OK."""
+        what = "Formation tops" if kind == "tops" else "Core data"
+        if len(self.model.project) == 0:
+            self.show_banner("warning", f"Load a LAS file first. {what} are assigned to loaded wells.")
+            return
+        try:
+            if kind == "core":
+                self._sync_model_from_ui()
+            options = ImportOptions(kind=kind)
+            parsed = parse_import_file(file_path, options)
+            if (kind == "core" and not parsed.depth_unit_detected
+                    and self.model.core_depth_unit in ("M", "FT")):
+                options.depth_unit = self.model.core_depth_unit   # the Core Matching setting
+            dialog = MultiWellImportDialog(
+                kind, file_path, well_refs(self.model.project, kind),
+                parsed=parsed, options=options, parent=self,
+            )
+        except ValueError as exc:
+            name = os.path.basename(file_path)
+            if str(exc) == "no well column":
+                self.show_banner(
+                    "warning",
+                    f"{name} has no well column. Use Open {what}… to attach it to the active well.",
+                )
+            else:
+                logger.error("Failed to read %s: %s", file_path, exc)
+                QMessageBox.warning(
+                    self, "Warning", _failure_message(f"Failed to parse {what.lower()} file", exc)
+                )
+            return
+        except Exception as exc:
+            logger.exception("Unexpected failure reading %s", file_path)
+            QMessageBox.critical(
+                self, "Error", _failure_message(f"Failed to load {what.lower()}", exc)
+            )
+            return
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_import_plan(dialog.plan)
+
+    @_restoring_guard
+    def _apply_import_plan(self, plan) -> None:
+        """Write a confirmed import plan to the project (GUI thread, all or nothing).
+
+        Every part is built first (``build_parts``, in feet); if that fails one banner
+        reports it and nothing changes. Then, for each Assign / Replace row, the well's
+        tops or core, file path and import record are set; the active well goes through
+        the model setters so ``formation_tops_loaded`` / ``core_data_loaded`` fire.
+
+        ``ds.core_depth_unit`` is the plan's effective unit ("M" or "FT"), not "FT": the
+        stored core is already in feet, but a session written by 2.0-style code (or the
+        fallback when the import record no longer matches) re-reads the file with this
+        value, and "FT" on a metres file would skip the conversion.
+        """
+        project = self.model.project
+        try:
+            parts = build_parts(plan, plan.wells)
+        except ValueError as exc:
+            self.show_banner("warning", f"Nothing was changed: {exc}")
+            return
+        kind = plan.kind
+        active_key = project.active_key
+        changed, details = [], []
+        for row in plan.rows:
+            key = row.target_key
+            if row.action not in ("assign", "replace") or key not in parts:
+                continue
+            ds = project.get(key)
+            part, record = parts[key], import_record(plan, row)
+            if kind == "tops":
+                ds.tops_path, ds.tops_import = plan.path, record
+                if key == active_key:
+                    self.model.formation_tops = part
+                else:
+                    ds.formation_tops = part
+                details.extend(self._tops_scope_notes(ds, part, row))
+            else:
+                ds.core_path, ds.core_import = plan.path, record
+                ds.core_depth_unit = plan.effective_unit
+                if key == active_key:
+                    self.model.core_data = part
+                else:
+                    ds.core_data = part
+            changed.append(key)
+            if row.coverage_note:
+                details.append(row.coverage_note)
+            details.extend(f"{ds.display_name}: {n}" for n in row.notes)
+        for key in changed:
+            project.well_updated.emit(key)
+        if kind == "tops":
+            project.tops_changed.emit(list(changed))
+        self._recompute_stale(changed)
+        if active_key in changed:
+            self._refresh_active_well_ui()
+        else:
+            self._refresh_core_actions()
+
+        kept = sum(1 for r in plan.rows if r.action == "keep" and r.target_key)
+        skipped = len(plan.rows) - len(changed) - kept
+        head = f"{'Formation tops' if kind == 'tops' else 'Core data'} assigned to " \
+               f"{len(changed)} well{'' if len(changed) == 1 else 's'}"
+        extra = ([f"{kept} kept existing"] if kept else []) + \
+                ([f"{skipped} skipped"] if skipped else [])
+        head += f" ({', '.join(extra)})." if extra else "."
+        if plan.no_well_rows:
+            n = len(plan.no_well_rows)
+            head += f" {n} row{'' if n == 1 else 's'} without a well " \
+                    f"{'was' if n == 1 else 'were'} excluded."
+        details.extend(n for n in plan.notes if "without a well" not in n)
+        self.statusBar.showMessage(head)
+        self.show_banner("warning" if details else "success", "\n".join([head] + details))
+
+    @staticmethod
+    def _tops_scope_notes(ds, part, row) -> list:
+        """Drop analysis-scope formations the new tops lack; note orphaned zone parameters."""
+        from modules.param_scopes import normalize_zone
+
+        notes = []
+        known = {normalize_zone(name) for name in part.get_formation_list()}
+        gone = [z for z in ds.selected_formations if normalize_zone(z) not in known]
+        if gone:
+            ds.selected_formations = [z for z in ds.selected_formations if z not in gone]
+            notes.append(f"{ds.display_name}: {', '.join(gone)} removed from the analysis scope.")
+        for text in row.zone_impact:
+            if text.startswith("zone parameters for"):
+                notes.append(f"{ds.display_name}: "
+                             + text.replace("will no longer apply", "match no zone now (kept)") + ".")
+        return notes
 
     # =========================================================================
     # ANALYSIS

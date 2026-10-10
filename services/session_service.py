@@ -117,7 +117,7 @@ def attach_tops(well, path: str) -> List[str]:
     A file with a well column contributes only the rows that match ``well``.
     Sets ``well.formation_tops`` and ``well.tops_path`` on success.
     """
-    from modules.formation_tops import FormationTops
+    from modules.formation_tops import FormationTops, extend_last_bottom
     from modules.well_matching import assign_to_wells
 
     tops = FormationTops()
@@ -137,8 +137,12 @@ def attach_tops(well, path: str) -> List[str]:
         if well.key not in matches:
             return [f"{os.path.basename(path)} has no tops for well {well.display_name}"]
         tops = matches[well.key]
+    bounds = _log_bounds(well)
+    if bounds is not None:
+        extend_last_bottom(tops, bounds[1])      # decision D4
     well.formation_tops = tops
     well.tops_path = path
+    well.tops_import = None
     return notes
 
 
@@ -169,7 +173,93 @@ def attach_core(well, path: str, depth_unit: str = "Auto") -> List[str]:
     well.core_data = handler
     well.core_path = path
     well.core_depth_unit = depth_unit
+    well.core_import = None
     return []
+
+
+def _log_bounds(well):
+    """``(top, bottom)`` of the well's DEPTH column in feet, or None."""
+    try:
+        depth = well.las_data["DEPTH"].dropna()
+        return (float(depth.min()), float(depth.max())) if len(depth) else None
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict] = None) -> bool:
+    """Re-run a stored multi-well import for ``well`` exactly as it was made (session 2.1).
+
+    Uses the record's columns, depth unit, sheet, fill-down and porosity scale, and forces
+    the file well whose spelling is in ``record["spellings"]`` onto ``well`` (a manual
+    mapping such as "BKS-1" to "BKS-01" survives). ``cache`` holds parsed files for one
+    restore. Returns False, changing nothing, when the file no longer holds any stored
+    spelling or the replay fails; the caller then falls back to identity matching.
+    """
+    import types
+
+    from modules.well_import import (
+        ImportOptions, build_import_plan, build_parts, import_record, parse_import_file,
+        well_refs,
+    )
+    from modules.well_matching import group_key
+
+    try:
+        scales = {}
+        if kind == "core" and record.get("porosity_scale") and record.get("file_well"):
+            scales = {record["file_well"]: record["porosity_scale"]}
+        options = ImportOptions(
+            kind=kind, depth_unit=record.get("depth_unit"), fill_down=bool(record.get("fill_down")),
+            last_bottom=record.get("last_bottom") or "log_bottom",
+            sheet=record.get("sheet") or 0, columns=dict(record.get("columns") or {}) or None,
+            porosity_scales=scales, tvd_confirmed=True)
+        cache_key = (os.path.normcase(os.path.abspath(path)), kind, str(options.sheet),
+                     options.fill_down, json.dumps(options.columns, sort_keys=True),
+                     json.dumps(scales, sort_keys=True))
+        parsed = cache.get(cache_key) if cache is not None else None
+        if parsed is None:
+            parsed = parse_import_file(path, options)
+            if cache is not None:
+                cache[cache_key] = parsed
+        wells = well_refs(types.SimpleNamespace(wells=[well], zone_params={}), kind)
+        plan = build_import_plan(parsed, path, wells, options)
+        wanted = {group_key(s, parsed.well_kind) for s in record.get("spellings") or []}
+        target = next((i for i, r in enumerate(plan.rows) if r.group_key in wanted), None)
+        if target is None:
+            return False
+        for index, row in enumerate(plan.rows):
+            if index != target:
+                plan.set_action(index, "skip")
+        plan.set_target(target, well.key)
+        part = build_parts(plan, plan.wells)[well.key]
+        row = plan.rows[target]
+        stored = import_record(plan, row)
+    except Exception:
+        logger.exception("Could not replay the %s import record of %s", kind, well.key)
+        return False
+    if kind == "tops":
+        well.formation_tops, well.tops_path, well.tops_import = part, path, stored
+    else:
+        well.core_data, well.core_path, well.core_import = part, path, stored
+        well.core_depth_unit = plan.effective_unit
+    return True
+
+
+def _restore_tops(ds, path: str, record: Optional[dict], cache: dict) -> List[str]:
+    if record and replay_import(ds, "tops", path, record, cache):
+        return []
+    notes = []
+    if record:
+        notes.append("the stored import no longer matches the tops file; matched by well name instead.")
+    return notes + attach_tops(ds, path)
+
+
+def _restore_core(ds, path: str, record: Optional[dict], depth_unit: str, cache: dict) -> List[str]:
+    if record and replay_import(ds, "core", path, record, cache):
+        return []
+    notes = []
+    if record:
+        notes.append("the stored import no longer matches the core file; matched by well name instead.")
+    return notes + attach_core(ds, path, depth_unit)
 
 
 class SessionService(QObject):
@@ -185,7 +275,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.0"
+    SESSION_VERSION = "2.1"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
@@ -488,13 +578,14 @@ class SessionService(QObject):
         gap = session_data.get("merge_gap_limit", getattr(model, "merge_gap_limit", 5.0))
         restored = 0
         collapsed = False
+        parse_cache: dict = {}      # parsed tops / core files, shared by the wells of one restore
         for index, entry in enumerate(entries):
             label = entry.get("display_name") or entry.get("key") or f"well {index + 1}"
             if progress:
                 progress(f"Restoring {label}...", int(100 * index / max(len(entries), 1)))
             try:
                 well = self._restore_one_well(entry, step, gap, notes, parse_file,
-                                              build_well, LASHandler)
+                                              build_well, LASHandler, parse_cache)
             except Exception as exc:
                 logger.exception("Could not restore well %s", label)
                 notes.append(f"{label}: could not be restored ({exc}); skipped.")
@@ -523,7 +614,10 @@ class SessionService(QObject):
         return notes
 
     @staticmethod
-    def _restore_one_well(entry, step, gap, notes, parse_file, build_well, LASHandler):
+    def _restore_one_well(entry, step, gap, notes, parse_file, build_well, LASHandler,
+                          parse_cache=None):
+        if parse_cache is None:
+            parse_cache = {}
         label = entry.get("display_name") or entry.get("key") or "well"
         paths = [str(p) for p in entry.get("sources") or []]
         if not paths:
@@ -569,14 +663,16 @@ class SessionService(QObject):
         if entry.get("tops_path"):
             path = entry["tops_path"]
             if os.path.isfile(path):
-                notes.extend(f"{label}: {n}" for n in attach_tops(ds, path))
+                notes.extend(f"{label}: {n}" for n in _restore_tops(
+                    ds, path, entry.get("tops_import"), parse_cache))
             else:
                 notes.append(f"{label}: formation tops file not found ({os.path.basename(path)}).")
         if entry.get("core_path"):
             path = entry["core_path"]
             if os.path.isfile(path):
-                notes.extend(f"{label}: {n}" for n in attach_core(
-                    ds, path, entry.get("core_depth_unit") or "Auto"))
+                notes.extend(f"{label}: {n}" for n in _restore_core(
+                    ds, path, entry.get("core_import"), entry.get("core_depth_unit") or "Auto",
+                    parse_cache))
             else:
                 notes.append(f"{label}: core file not found ({os.path.basename(path)}).")
         ds.calculated = False
@@ -632,6 +728,8 @@ class SessionService(QObject):
                 "zone_overrides": ds.zone_overrides,
                 "tops_path": getattr(ds, "tops_path", None),
                 "core_path": getattr(ds, "core_path", None),
+                "tops_import": getattr(ds, "tops_import", None),
+                "core_import": getattr(ds, "core_import", None),
                 "core_depth_unit": getattr(ds, "core_depth_unit", None)
                 or getattr(model, "core_depth_unit", "Auto"),
             })

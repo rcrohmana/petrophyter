@@ -95,7 +95,7 @@ def test_round_trip_three_wells(three_wells, tmp_path):
     assert svc.save_session(model, path)
 
     saved = json.loads(open(path, encoding="utf-8").read())
-    assert saved["_session_version"] == "2.0"
+    assert saved["_session_version"] == "2.1"
     assert [w["key"] for w in saved["wells"]] == keys
     assert saved["active_key"] == keys[1]
     assert len(saved["wells"][1]["sources"]) == 2 and saved["wells"][1]["merged"]

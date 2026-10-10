@@ -61,6 +61,7 @@ class ScopeBar(QWidget):
         model.project.active_well_changed.connect(self.refresh)
         model.project.wells_changed.connect(self.refresh)
         model.formation_tops_loaded.connect(self.refresh)
+        model.project.tops_changed.connect(self.refresh)
         model.scoped_params_changed.connect(self.refresh)
         self.refresh()
 

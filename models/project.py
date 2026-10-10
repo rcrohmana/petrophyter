@@ -145,6 +145,7 @@ class Project(QObject):
     wells_changed = pyqtSignal()
     active_well_changed = pyqtSignal(str)
     well_updated = pyqtSignal(str)
+    tops_changed = pyqtSignal(list)   # keys of wells whose formation tops were replaced
 
     def __init__(self, parent=None):
         super().__init__(parent)

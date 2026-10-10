@@ -22,6 +22,15 @@ def no_modal_dialogs(monkeypatch):
         monkeypatch.setattr(QMessageBox, name, staticmethod(refuse))
 
 
+@pytest.fixture(autouse=True)
+def accept_import_dialog(monkeypatch):
+    """Files with a well column open the multi-well dialog; accept its default plan."""
+    from PyQt6.QtWidgets import QDialog
+    from ui.widgets.well_import_dialog import MultiWellImportDialog
+
+    monkeypatch.setattr(MultiWellImportDialog, "exec", lambda self: QDialog.DialogCode.Accepted)
+
+
 @pytest.fixture
 def window(qtbot):
     widget = MainWindow()
@@ -64,18 +73,19 @@ def test_tops_with_well_column_feed_every_loaded_well(two_wells, tmp_path):
     assert [fm.name for fm in active.formation_tops.formations] == ["Upper"]
     assert [fm.name for fm in first.formation_tops.formations] == ["Upper", "Lower"]
     assert first.tops_path == path and active.tops_path == path
+    assert first.tops_import["file_well"] == "BKS-01" and active.tops_import["depth_unit"] == "FT"
     text = window.banner.message_label.text()
-    assert "XYZ-9" in text and "BKS-01" in text
+    assert text.startswith("Formation tops assigned to 2 wells (1 skipped).")
 
 
-def test_tops_without_a_match_for_the_active_well_leave_it_alone(two_wells, tmp_path):
+def test_tops_without_a_row_for_the_active_well_leave_it_alone(two_wells, tmp_path):
     window = two_wells
     path = tmp_path / "tops.csv"
     path.write_text("Well\tFormation\tTop (ft)\tBottom (ft)\nBKS-01\tUpper\t1005\t1030\n")
     window._on_tops_file_selected(str(path))
     assert window.model.active_well.formation_tops is None
     assert window.model.project.get(_key(window, "BKS-01")).formation_tops is not None
-    assert "active well" in window.banner.message_label.text()
+    assert window.banner.message_label.text().startswith("Formation tops assigned to 1 well.")
 
 
 def test_core_with_well_column_feeds_every_loaded_well(two_wells, tmp_path):
@@ -89,6 +99,8 @@ def test_core_with_well_column_feeds_every_loaded_well(two_wells, tmp_path):
     first = window.model.project.get(_key(window, "BKS-01"))
     assert len(first.core_data.data) == 2 and first.core_path == str(path)
     assert len(window.model.core_data.data) == 1
+    assert first.core_depth_unit == "FT" and first.core_import["file_well"] == "BKS-01"
+    assert window.banner.message_label.text().startswith("Core data assigned to 2 wells.")
 
 
 def test_summary_row_activates_the_well(two_wells):
