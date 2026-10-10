@@ -14,6 +14,266 @@
  "net_reservoir": 25.252525252523128,
  "ng_pay": 1.0,
  "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     38.36282133753379,
+     88.46178696080887
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "LOWER": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     38.36282133753379,
+     88.46178696080887
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
  "rsh": 50.0,
  "rsh_source": "auto",
  "rw": 0.05,
@@ -24,5 +284,56 @@
  "solver_diagnostics": {},
  "swirr_mean": 0.2802931180708407,
  "swirr_method": "Hierarchical (Recommended)",
- "warnings": []
+ "warnings": [],
+ "zones": [
+  {
+   "avg_phie_pay": 0.180856871065075,
+   "avg_sw_pay": 0.17496210818605668,
+   "avg_vsh_pay": 0.193292947628788,
+   "bottom": 1100.0,
+   "gross_sand": 25.252525252523128,
+   "hcpv_net_pay": 3.7823643681080865,
+   "net_pay": 25.252525252523128,
+   "net_reservoir": 25.252525252523128,
+   "ng_pay": 1.0,
+   "ng_reservoir": 1.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 0.62
+    },
+    "m": {
+     "source": "project",
+     "value": 2.15
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "auto",
+     "value": 50.0
+    },
+    "rw": {
+     "source": "project",
+     "value": 0.05
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "samples": 60,
+   "top": 1040.4040404040404,
+   "zone": "LOWER"
+  }
+ ]
 }
