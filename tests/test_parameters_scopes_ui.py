@@ -144,12 +144,16 @@ def test_project_zone_edit_lands_in_project_zone_params(win, model):
     assert all(w.zone_overrides == {} for w in model.project)
 
 
-def test_lithology_preset_writes_explicit_a_m_n_entries(win, model):
+def test_lithology_preset_writes_only_the_preset_entry(win, model):
+    # Changed intentionally (spec D10): a/m/n now follow the preset at resolve time.
     model.set_edit_scope("well")
     win.archie_params_widget.lithology_combo.setCurrentText("Carbonate")
     entries = model.project.get("WELL:A").overrides
     assert entries["lithology_preset"]["value"] == "Carbonate"
-    assert (entries["a"]["value"], entries["m"]["value"], entries["n"]["value"]) == (1.0, 2.0, 2.0)
+    assert not {"a", "m", "n"} & set(entries)
+    flat, info = model.effective_params("WELL:A")
+    assert (flat["a"], flat["m"], flat["n"]) == (1.0, 2.0, 2.0)
+    assert info["a"]["source"] == "well (lithology preset)"
 
 
 # ---- enabled / muted state ---------------------------------------------

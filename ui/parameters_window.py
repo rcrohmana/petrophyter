@@ -19,7 +19,8 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.param_scopes import (
-    AUTO, AUTO_PARAMS, GR_MANUAL, INHERIT, MANUAL, SPECS, flat_value, validate_entry,
+    ARCHIE_KEYS, AUTO, AUTO_PARAMS, GR_MANUAL, INHERIT, LITHOLOGY_CUSTOM, LITHOLOGY_PRESETS,
+    MANUAL, SPECS, flat_value, validate_entry,
 )
 from .widgets.parameter_groups import (
     AnalysisModeGroup, ArchieParamsGroup, CurveMappingGroup, CutoffParamsGroup,
@@ -424,6 +425,13 @@ class ParametersWindow(QDialog):
     def _on_scoped_edit(self, name, guard_group=None):
         if not self._can_write() or getattr(guard_group, "updating", False):
             return
+        if name in ARCHIE_KEYS and self._preset_here():
+            # Typing a/m/n over a preset: explicit intent, the preset becomes Custom.
+            with self._writing():
+                self._set_entry("lithology_preset", MANUAL, LITHOLOGY_CUSTOM)
+                for key in ARCHIE_KEYS:
+                    self._set_entry(key, MANUAL, self._fields[key]["get"]())
+            return
         self._set_entry(name, MANUAL, self._fields[name]["get"]())
 
     def _on_auto_toggled(self, name, checked):
@@ -443,14 +451,32 @@ class ParametersWindow(QDialog):
             self._set_entry("gr_baseline", AUTO)
 
     def _on_lithology_edit(self, text):
-        """A lithology preset also defines a/m/n: those become explicit entries too."""
+        """Write the preset entry only: a, m, n follow it (spec D, section 6).
+
+        A named preset removes explicit a/m/n at this scope (they would win over
+        it). "Custom" keeps the values on screen as explicit a/m/n.
+        """
         if not self._can_write():
             return
         with self._writing():
             self._set_entry("lithology_preset", MANUAL, text)
-            if text != "Custom":
-                for key in ("a", "m", "n"):
+            for key in ARCHIE_KEYS:
+                if text == LITHOLOGY_CUSTOM:
                     self._set_entry(key, MANUAL, self._fields[key]["get"]())
+                else:
+                    try:
+                        self.model.clear_entry(key)
+                    except ValueError:
+                        pass
+
+    def _preset_here(self) -> bool:
+        """True when a named lithology preset is set in the edited scope itself."""
+        try:
+            flat, info = self.model.scope_view()
+        except ValueError:
+            return False
+        return (info["lithology_preset"]["here"]
+                and flat.get("lithology_preset") in LITHOLOGY_PRESETS)
 
     def _on_mode_chosen(self, name, mode):
         if self.is_flat_scope():
@@ -674,7 +700,7 @@ class ParametersWindow(QDialog):
                     self._tip_for(widget, WELL_ONLY_TIP)
                 continue
             entry = info[name]
-            here, mode = entry["here"], entry["mode"]
+            here, mode = entry["here"] and not entry.get("preset"), entry["mode"]
             tip = self._source_tip(entry["source"], here, mode)
             warning = None
             if here and mode != AUTO:
