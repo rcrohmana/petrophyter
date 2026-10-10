@@ -144,8 +144,10 @@ def test_params_page_headers_not_selectable(window):
     assert all(not (h.flags() & Qt.ItemFlag.ItemIsSelectable) for h in headers)
 
 
-def test_merge_action_disabled_without_pending_files(window):
-    assert not window.actions_["merge_las"].isEnabled()
+def test_merge_action_always_opens_multi_file_dialog(window):
+    # Merging is decided per group in the Load Summary, so the action is
+    # never tied to pending files; it opens the same multi-file open dialog.
+    assert window.actions_["merge_las"].isEnabled()
     assert window._action_icons["merge_las"] == "merge"
 
 
@@ -155,29 +157,6 @@ def test_merge_dialog_values_reach_model(window):
     window._sync_model_from_ui()
     assert window.model.merge_step == 1.0
     assert window.model.merge_gap_limit == 8.0
-
-
-def test_prepare_merge_populates_dialog_and_enables_action(window, monkeypatch):
-    import pandas as pd
-    from PyQt6.QtWidgets import QDialog
-    import ui.main_window as mw
-
-    class FakeParser:
-        data = pd.DataFrame({"DEPTH": [100.0, 200.0]})
-
-        def read_las_from_buffer(self, f):
-            return True
-
-        def get_depth_range(self):
-            return (100.0, 200.0)
-
-    monkeypatch.setattr(mw, "LASParser", FakeParser)
-    monkeypatch.setattr(mw, "open", lambda *a, **k: __import__("io").StringIO(""), raising=False)
-    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
-    window._prepare_merge(["a.las", "b.las"])
-    assert window.actions_["merge_las"].isEnabled()
-    assert window.merge_dialog.file_model.rowCount() == 2
-    assert "2 LAS files" in window.merge_dialog.summary_label.text()
 
 
 # Tree tests use a standalone panel: setting model data on the window would fire
@@ -397,19 +376,21 @@ def _write_las(path, top, bottom):
 
 def test_merge_keeps_per_source_row_counts(window, qtbot, tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QDialog
+    from ui.widgets.load_summary_dialog import LoadSummaryDialog
 
     n1 = _write_las(tmp_path / "a.las", 1000, 1100)
     n2 = _write_las(tmp_path / "b.las", 1090, 1300)
     monkeypatch.setattr(
-        window.merge_dialog, "exec", lambda *a, **k: QDialog.DialogCode.Accepted
+        LoadSummaryDialog, "exec", lambda self: QDialog.DialogCode.Accepted
     )
     window._on_las_files_selected([str(tmp_path / "a.las"), str(tmp_path / "b.las")])
-    qtbot.waitUntil(lambda: window.model.las_data is not None, timeout=20000)
-    assert window.data_browser._sources == [("a.las", n1), ("b.las", n2)]
+    qtbot.waitUntil(lambda: window.model.las_data is not None and not window._bulk_loading,
+                    timeout=20000)
+    well = window.model.active_well
+    assert well.merged
+    assert [(s["name"], s["rows"]) for s in well.sources] == [("a.las", n1), ("b.las", n2)]
     assert len(window.model.las_data) > n1
-    assert len(window._loaded_parsers[0].data) == n1      # source parser not mutated
-    assert window.model.las_parser is not window._loaded_parsers[0]
-    assert len(window.model.las_parser.data) == len(window.model.las_data)
+    assert len(well.las_parser.data) == len(window.model.las_data)
 
 
 def test_load_session_marks_results_stale(window, monkeypatch, tmp_path):
@@ -442,12 +423,11 @@ def test_fresh_load_clears_stale(window, tmp_path):
     assert not window.stale_label.isVisibleTo(window)
 
 
-def test_browser_names_have_tooltips(window, tmp_path):
+def test_loaded_well_records_its_source_files(window, tmp_path):
     _write_las(tmp_path / "d.las", 1000, 1050)
     window._load_single_las(str(tmp_path / "d.las"))
-    # The browser reads sources from the well dataset, not from set_las_sources.
-    window.model.active_well.sources = [{"name": "d.las", "path": "", "rows": 50}]
-    window.data_browser.rebuild()
+    # The loader records the source file on the well; the browser shows it.
+    assert window.model.active_well.sources[0]["name"] == "d.las"
     root = window.data_browser.tree_model.item(0)
     las_group = root.child(0, 0)
     assert las_group.toolTip() == "LAS files"
@@ -510,75 +490,6 @@ def test_table_model_aligns_numeric_strings_right():
     assert align(0) == Qt.AlignmentFlag.AlignCenter
     assert align(1) == right and align(2) == right
     assert align(3) == Qt.AlignmentFlag.AlignCenter
-
-
-def _fake_parser_class(valid=True, depth=(100.0, 200.0)):
-    import pandas as pd
-
-    class FakeParser:
-        data = pd.DataFrame({"DEPTH": [100.0, 200.0], "GR": [50.0, 60.0]})
-        well_info = {"well_name": "TEST"}
-
-        def read_las_from_buffer(self, f):
-            return valid
-
-        def get_depth_range(self):
-            return depth
-
-        def get_available_curves(self):
-            return ["DEPTH", "GR"]
-
-        def find_curve_by_type(self, ctype):
-            return "GR" if ctype == "GR" else None
-
-    return FakeParser
-
-
-def _patch_open(monkeypatch):
-    import io
-    import ui.main_window as mw
-    monkeypatch.setattr(mw, "open", lambda *a, **k: io.StringIO(""), raising=False)
-
-
-def test_single_load_clears_pending_merge(window, monkeypatch):
-    from PyQt6.QtWidgets import QDialog
-    import ui.main_window as mw
-
-    _patch_open(monkeypatch)
-    monkeypatch.setattr(mw, "LASParser", _fake_parser_class())
-    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
-    monkeypatch.setattr(window, "_on_data_loaded", lambda: None)
-    monkeypatch.setattr(mw, "QCModule", lambda *a, **k: type("Q", (), {"run_qc": lambda self: None})())
-    window._prepare_merge(["a.las", "b.las"])
-    assert window.actions_["merge_las"].isEnabled()
-    assert len(window._loaded_parsers) == 2
-
-    window._load_single_las("c.las")
-    assert not window.actions_["merge_las"].isEnabled()
-    assert window._loaded_parsers == []
-    assert window._loaded_file_names == []
-    assert window._loaded_row_counts == []
-
-
-def test_failed_prepare_keeps_previous_pending_merge(window, monkeypatch):
-    from PyQt6.QtWidgets import QDialog, QMessageBox
-    import ui.main_window as mw
-
-    _patch_open(monkeypatch)
-    monkeypatch.setattr(window.merge_dialog, "exec", lambda: QDialog.DialogCode.Rejected)
-    monkeypatch.setattr(mw, "LASParser", _fake_parser_class())
-    window._prepare_merge(["a.las", "b.las"])
-    names = list(window._loaded_file_names)
-    assert len(names) == 2
-
-    warned = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warned.append(a))
-    monkeypatch.setattr(mw, "LASParser", _fake_parser_class(valid=False))
-    window._prepare_merge(["x.las", "y.las"])
-    assert warned
-    assert window._loaded_file_names == names
-    assert len(window._loaded_parsers) == 2
-    assert window.actions_["merge_las"].isEnabled()
 
 
 def test_theme_change_recolors_cached_icons(window):

@@ -33,7 +33,6 @@ from .tabs import (
 
 from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QIcon
-import copy
 import functools
 import traceback
 import threading
@@ -48,6 +47,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.app_model import AppModel
 from services.analysis_service import AnalysisService
 from services.merge_service import MergeService
+from services.load_service import (
+    LoadWorker,
+    build_well,
+    parse_file,
+    sanitize_error_detail,
+)
 from services.export_service import ExportService
 from services.session_service import SessionService
 from .widgets.about_dialog import AboutDialog
@@ -56,6 +61,12 @@ from .parameters_window import PAGES, ParametersWindow
 from .data_browser import DataBrowserPanel
 from themes.tokens import METRICS
 from .widgets.merge_dialog import MergeDialog
+from .widgets.load_summary_dialog import LoadSummaryDialog
+
+try:  # provided by the multi-well data-browser work
+    from .widgets.well_selector import WellSelector
+except ImportError:  # pragma: no cover - until that module lands
+    WellSelector = None
 from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
@@ -63,8 +74,6 @@ from .tabs.diagnostics_tab import DiagnosticsTab
 from .tabs.summary_tab import SummaryTab
 from .tabs.export_tab import ExportTab
 
-from modules.las_parser import LASParser
-from modules.qc_module import QCModule
 from modules.formation_tops import FormationTops
 from modules.core_handler import CoreDataHandler
 
@@ -87,20 +96,7 @@ def _restoring_guard(method):
     return wrapper
 
 
-def _sanitize_error_detail(detail, max_length: int = 240) -> str:
-    """Keep actionable first-line errors while removing secrets and paths."""
-    if detail is None:
-        return ""
-    first_line = next(
-        (line.strip() for line in str(detail).splitlines() if line.strip()), ""
-    )
-    first_line = re.sub(
-        r"(?i)\b(password|token|secret|api[_ -]?key)\b\s*[:=]\s*\S+",
-        r"\1=[redacted]",
-        first_line,
-    )
-    first_line = re.sub(r"(?i)(?:[A-Za-z]:[\\/]|/)[^\s)]+", "<path>", first_line)
-    return first_line[:max_length]
+_sanitize_error_detail = sanitize_error_detail
 
 
 def _failure_message(generic: str, detail=None) -> str:
@@ -154,10 +150,19 @@ class MainWindow(QMainWindow):
         self.export_service = ExportService()
         self.session_service = SessionService()
 
-        # Store loaded LAS parsers for merge
-        self._loaded_parsers = []
-        self._loaded_file_names = []
-        self._loaded_row_counts = []  # per-source rows, captured before any merge
+        # Multi-file load state (see _begin_load)
+        self._load_queue = []
+        self._load_current = None
+        self._load_notes = []
+        self._load_added = []
+        self._load_multi_file = False
+        self._load_step = 0.5
+        self._load_gap = 5.0
+        self._bulk_loading = False
+        self._load_worker = None
+        # Analysis delivery: the well that started the running analysis.
+        self._analysis_key = None
+        self._analysis_busy = False
 
         # Setup UI
         self._build_actions()
@@ -314,6 +319,15 @@ class MainWindow(QMainWindow):
         self.export_service.export_complete.connect(self.export_tab.show_export_success)
         self.export_service.export_error.connect(self.export_tab.show_export_error)
 
+        # Wells
+        project = self.model.project
+        project.active_well_changed.connect(self._on_active_well_changed)
+        project.wells_changed.connect(self._on_wells_changed)
+        if hasattr(self.data_browser, "well_selected"):
+            self.data_browser.well_selected.connect(self._on_well_selected)
+        if hasattr(self.data_browser, "remove_well_requested"):
+            self.data_browser.remove_well_requested.connect(self._on_remove_well_requested)
+
         # Model signals
         self.model.data_loaded.connect(self._on_data_loaded)
         self.model.analysis_complete.connect(self._on_results_updated)
@@ -415,8 +429,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_window_title(self):
         name = None
-        if self.model.las_filename:
+        active = self.model.active_well
+        if active is not None:
+            name = active.display_name or os.path.basename(str(active.las_filename))
+        elif self.model.las_filename:
             name = os.path.basename(str(self.model.las_filename))
+        if name and len(self.model.project) > 1:
+            name = f"{name} · {len(self.model.project)} wells"
         self.setWindowTitle(f"{name} — Petrophyter" if name else "Petrophyter")
 
     def _build_actions(self):
@@ -442,7 +461,7 @@ class MainWindow(QMainWindow):
         act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
         act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
-        act("merge_las", "Merge LAS Files…", "merge", None, self._open_merge_dialog)
+        act("merge_las", "Merge LAS Files…", "merge", None, self._open_las_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
         act("exit", "Exit", "log-out", None, self.close)
         act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
@@ -466,7 +485,6 @@ class MainWindow(QMainWindow):
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
         self.actions_["run_analysis"].setEnabled(False)
-        self.actions_["merge_las"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -538,6 +556,14 @@ class MainWindow(QMainWindow):
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
+        self.well_selector = None
+        self._well_selector_action = None
+        if WellSelector is not None:
+            self.well_selector = WellSelector()
+            self.well_selector.set_project(self.model.project)
+            self.well_selector.well_selected.connect(self._on_well_selected)
+            self._well_selector_action = toolbar.addWidget(self.well_selector)
+            self._well_selector_action.setVisible(False)
         self.well_indicator = _WellIndicator()
         toolbar.addWidget(self.well_indicator)
         self.addToolBar(toolbar)
@@ -575,48 +601,25 @@ class MainWindow(QMainWindow):
             return
         from themes.helpers import set_status
 
+        active = self.model.active_well
+        if active is not None:
+            active.stale = True
         set_status(self.stale_label, "warning")
         self.stale_label.setVisible(True)
         self.data_browser.set_results_stale(True)
 
+    def _sync_stale_label(self):
+        """Show the stale label for the active well's flag."""
+        from themes.helpers import set_status
+
+        active = self.model.active_well
+        stale = bool(active is not None and active.calculated and active.stale)
+        if stale:
+            set_status(self.stale_label, "warning")
+        self.stale_label.setVisible(stale)
+        self.data_browser.set_results_stale(stale)
+
     # ---- well identity / depth sanity helpers ---------------------------
-
-    def _current_well_info(self):
-        """well_info of the loaded LAS parser, or None when no LAS is loaded."""
-        parser = self.model.las_parser
-        if parser is None:
-            return None
-        return dict(getattr(parser, "well_info", None) or {})
-
-    def _drop_other_well_context(self, prev_info, new_info) -> list:
-        """Clear tops/core/formation selection when a different well is loaded.
-
-        Keeps them only when ``same_well`` is True; an undecidable comparison
-        counts as different. Returns info lines for the load banner.
-        """
-        from modules.las_utils import same_well
-
-        if prev_info is None:
-            return []  # nothing loaded before: tops/core cannot belong elsewhere
-        has_context = (
-            self.model.formation_tops is not None
-            or self.model.core_data is not None
-            or bool(self.model.selected_formations)
-        )
-        if not has_context or same_well(prev_info, new_info) is True:
-            return []
-        self.model.formation_tops = None
-        self.model.core_data = None
-        self.model.selected_formations = []
-        self.model.analysis_mode = "Whole Well"
-        self.params_window.update_formations_list([])
-        self.params_window.analysis_mode_widget.whole_well_radio.setChecked(True)
-        self.params_window.set_core_available(False)
-        self._refresh_core_actions()
-        return [
-            "Formation tops and core data were cleared because a different "
-            "well was loaded."
-        ]
 
     @staticmethod
     def _fmt_depth(value: float) -> str:
@@ -675,10 +678,13 @@ class MainWindow(QMainWindow):
             lines.extend(getattr(parser, "unit_warnings", None) or [])
         lines.extend(self._depth_overlap_warnings())
         if lines:
-            only_info = all(l.startswith("Formation tops and core data were cleared") for l in lines)
+            only_info = all(l.startswith("Reloaded ") for l in lines)
             self.show_banner("info" if only_info else "warning", "\n".join(lines))
 
     def _clear_results_stale(self):
+        active = self.model.active_well
+        if active is not None:
+            active.stale = False
         self.stale_label.setVisible(False)
         self.data_browser.set_results_stale(False)
 
@@ -719,274 +725,228 @@ class MainWindow(QMainWindow):
     # =========================================================================
 
     def _on_las_files_selected(self, file_paths: list):
-        """Handle LAS file selection."""
-        if len(file_paths) == 1:
-            # Single file - load directly
-            self._load_single_las(file_paths[0])
+        """Open one or more LAS files (several files go through the Load Summary)."""
+        paths = [p for p in file_paths if p]
+        if not paths:
+            return
+        if self._bulk_loading:
+            self.statusBar.showMessage("Another load is still running")
+            return
+        if len(paths) == 1:
+            self._load_single_las(paths[0])
         else:
-            # Multiple files - prepare for merge
-            self._prepare_merge(file_paths)
+            self._start_multi_load(paths)
 
     @_restoring_guard
     def _load_single_las(self, file_path: str):
-        """Load a single LAS file."""
+        """Load a single LAS file as one well."""
         try:
             self.statusBar.showMessage(f"Loading {os.path.basename(file_path)}...")
-
-            parser = LASParser()
-            with open(file_path, "r") as f:
-                success = parser.read_las_from_buffer(f)
-
-            if success and parser.data is not None:
-                notes = self._drop_other_well_context(
-                    self._current_well_info(), parser.well_info
-                )
-                self.model.las_parser = parser
-                self.model.las_data = parser.data
-                self.model.las_filename = file_path
-                self.model.calculated = False
-                self._clear_results_stale()
-                self.model.merge_report = None
-
-                # A single file supersedes any pending multi-file selection.
-                self._loaded_parsers = []
-                self._loaded_file_names = []
-                self._loaded_row_counts = []
-                self.actions_["merge_las"].setEnabled(False)
-
-                # Run QC
-                well_name = parser.well_info.get("well_name", "Unknown")
-                qc = QCModule(parser.data, well_name)
-                self.model.qc_report = qc.run_qc()
-                self._refresh_qc_chip()
-
-                self.data_browser.set_las_sources(
-                    [(os.path.basename(file_path), len(parser.data))],
-                    merged=False,
-                    pending=False,
-                )
-
-                # Update curve mapping
-                curves = parser.get_available_curves()
-                detected = {}
-                for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]:
-                    found = parser.find_curve_by_type(ctype)
-                    if found:
-                        detected[ctype] = found
-                self.params_window.update_available_curves(curves, detected)
-                self.model.curve_mapping = {
-                    ctype: detected.get(ctype, "None")
-                    for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
-                }
-
-                self.actions_["run_analysis"].setEnabled(True)
-                self.actions_["save_merged"].setEnabled(False)
-                self.well_indicator.set_well(
-                    well_name, len(parser.data), len(parser.data.columns)
-                )
-                self._refresh_window_title()
-
-                self.statusBar.showMessage(
-                    f"Loaded: {os.path.basename(file_path)} ({len(parser.data)} rows)"
-                )
-
-                # Refresh once more after QC and mapping are ready. The model's
-                # data_loaded signal fires earlier to clear stale result content.
-                self._on_data_loaded()
-
-                # Surface depth/curve-unit warnings and well-change notes.
-                self._show_load_notes(parser, notes)
-            else:
-                detail = getattr(parser, "last_error", None)
-                logger.error("Failed to load LAS file %s: %s", file_path, detail)
+            item = parse_file(file_path)
+            if not item.ok:
                 QMessageBox.critical(
                     self,
                     "Error",
-                    _failure_message("Failed to load LAS file", detail),
+                    _failure_message("Failed to load LAS file", item.error),
                 )
                 self.statusBar.showMessage("Failed to load LAS file")
-
+                return
+            self._begin_load([[item]])
         except Exception as e:
+            self._abort_load()
             logger.exception("Unexpected failure loading LAS file %s", file_path)
             QMessageBox.critical(
                 self, "Error", _failure_message("Failed to load LAS file", e)
             )
             self.statusBar.showMessage("Error loading file")
 
-    def _prepare_merge(self, file_paths: list):
-        """Prepare multiple LAS files for merge."""
-        try:
-            parsers = []
-            names = []
-            row_counts = []
-            parse_details = []
+    def _start_multi_load(self, paths: list):
+        """Parse several files off the GUI thread, then show the Load Summary."""
+        from PyQt6.QtCore import QThreadPool
 
-            for path in file_paths:
-                parser = LASParser()
-                with open(path, "r") as f:
-                    if parser.read_las_from_buffer(f):
-                        parsers.append(parser)
-                        names.append(os.path.basename(path))
-                        row_counts.append(len(parser.data))
-                    else:
-                        detail = getattr(parser, "last_error", None)
-                        logger.error("Failed to parse LAS file %s: %s", path, detail)
-                        safe_detail = _sanitize_error_detail(detail)
-                        if safe_detail:
-                            parse_details.append(
-                                f"{os.path.basename(path)}: {safe_detail}"
-                            )
+        self._bulk_loading = True
+        self._set_load_actions_enabled(False)
+        self.statusBar.showMessage(f"Reading {len(paths)} LAS files...")
+        self._set_progress(1, None)
+        worker = LoadWorker(paths)
+        worker.signals.progress.connect(self._on_load_progress)
+        worker.signals.completed.connect(self._on_files_parsed)
+        worker.signals.error.connect(self._on_load_error)
+        self._load_worker = worker  # keep the signal object alive
+        if not hasattr(self, "_load_pool"):
+            self._load_pool = QThreadPool()
+        self._load_pool.start(worker)
 
-            if len(parsers) >= 2:
-                self._loaded_parsers = parsers
-                self._loaded_file_names = names
-                self._loaded_row_counts = row_counts
-                self.merge_dialog.set_files(
-                    [
-                        (name, len(parser.data), *parser.get_depth_range())
-                        for name, parser in zip(
-                            self._loaded_file_names, self._loaded_parsers
-                        )
-                    ]
-                )
-                self.actions_["merge_las"].setEnabled(True)
-                self.data_browser.set_las_sources(
-                    [
-                        (name, len(parser.data))
-                        for name, parser in zip(
-                            self._loaded_file_names, self._loaded_parsers
-                        )
-                    ],
-                    merged=False,
-                    pending=True,
-                )
-                self.data_browser.rebuild()
-                self.statusBar.showMessage(
-                    f"{len(self._loaded_parsers)} LAS files ready for merge"
-                )
-                self._open_merge_dialog()
-            else:
-                message = "Need at least 2 valid LAS files to merge"
-                if parse_details:
-                    message += "\n" + "\n".join(parse_details)
-                QMessageBox.warning(self, "Warning", message)
+    def _on_load_progress(self, message: str, percent: int):
+        self._set_progress(max(percent, 1), message)
 
-        except Exception as e:
-            logger.exception("Unexpected failure preparing LAS files")
-            QMessageBox.critical(
-                self, "Error", _failure_message("Failed to prepare files", e)
+    def _on_load_error(self, error: str):
+        self._abort_load()
+        QMessageBox.critical(self, "Error", error)
+        self.statusBar.showMessage("Failed to read LAS files")
+
+    def _on_files_parsed(self, parsed: list):
+        """Show the Load Summary for parsed files, then load the chosen groups."""
+        self._load_worker = None
+        self._set_progress(0, "")
+        if not any(item.ok for item in parsed):
+            details = "\n".join(f"{p.name}: {p.error}" for p in parsed if p.error)
+            self._abort_load()
+            QMessageBox.warning(
+                self, "Warning", "None of the selected files could be read." + (
+                    f"\n{details}" if details else ""
+                ),
             )
-
-    def _open_merge_dialog(self):
-        """Show the Merge LAS Files dialog; merge on accept."""
-        if self.merge_dialog.exec() == QDialog.DialogCode.Accepted:
-            self._on_merge_requested()
-
-    def _on_merge_requested(self):
-        """Handle merge request."""
-        if len(self._loaded_parsers) < 2:
-            QMessageBox.warning(self, "Warning", "Need at least 2 LAS files to merge")
+            self.statusBar.showMessage("Failed to load LAS files")
             return
-
-        self._sync_model_from_ui()
-        self.actions_["merge_las"].setEnabled(False)
-
-        self.merge_service.merge_files(
-            self._loaded_parsers,
-            self._loaded_file_names,
-            self.model.merge_step,
-            self.model.merge_gap_limit,
+        dialog = LoadSummaryDialog(
+            parsed, self.model.merge_step, self.model.merge_gap_limit, self
         )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self._abort_load()
+            self.statusBar.showMessage("Load cancelled")
+            return
+        step, gap = dialog.merge_settings()
+        notes = [f"{p.name}: {p.error}" for p in parsed if not p.ok]
+        self._begin_load(dialog.groups(), step, gap, multi_file=True, notes=notes)
 
+    def _set_load_actions_enabled(self, enabled: bool):
+        self.actions_["open_las"].setEnabled(enabled)
+        self.actions_["merge_las"].setEnabled(enabled)
+
+    def _abort_load(self):
+        self._bulk_loading = False
+        self._load_queue = []
+        self._load_current = None
+        self._load_worker = None
+        self._set_load_actions_enabled(True)
+        self._set_progress(0, "")
+
+    def _begin_load(self, groups, step=None, gap=None, multi_file=False, notes=()):
+        """Build one well per group (merging multi-file groups), then activate the last."""
+        self._bulk_loading = True
+        self._set_load_actions_enabled(False)
+        self._load_queue = [list(group) for group in groups if group]
+        self._load_notes = list(notes)
+        self._load_added = []
+        self._load_multi_file = multi_file
+        self._load_current = None
+        if step is not None:
+            self._load_step, self._load_gap = float(step), float(gap)
+            self.model.merge_step, self.model.merge_gap_limit = self._load_step, self._load_gap
+            self.merge_dialog.step_spin.setValue(self._load_step)
+            self.merge_dialog.gap_spin.setValue(self._load_gap)
+        self._advance_load()
+
+    def _advance_load(self):
+        """Build singles immediately; start the next merge and wait for it."""
+        while self._load_queue:
+            group = self._load_queue.pop(0)
+            if len(group) == 1:
+                self._add_built_well(group, None)
+                continue
+            self._load_current = group
+            self.merge_service.merge_files(
+                [item.parser for item in group],
+                [item.name for item in group],
+                self._load_step,
+                self._load_gap,
+            )
+            return
+        self._finish_load()
+
+    def _add_built_well(self, files, merge_result, extra_notes=()):
+        names = ", ".join(item.name for item in files)
+        try:
+            ds = build_well(files, merge_result)
+        except Exception as exc:
+            logger.exception("Failed to build a well from %s", names)
+            self._load_notes.append(
+                _failure_message(f"Could not load {names}", exc).replace("\n", " ")
+            )
+            return
+        previous = self.model.project.get(ds.key)
+        if previous is not None:
+            # Same well key: a reload. The well's own tops/core/scope carry over.
+            for field in ("formation_tops", "core_data", "analysis_mode",
+                          "selected_formations", "overrides", "zone_overrides"):
+                setattr(ds, field, getattr(previous, field))
+            ds.display_name = previous.display_name or ds.display_name
+            self._load_notes.append(f"Reloaded {ds.display_name}")
+        prefix = f"{ds.display_name}: " if self._load_multi_file else ""
+        for item in files:
+            parser = item.parser
+            if getattr(parser, "depth_unit_warning", None):
+                self._load_notes.append(prefix + parser.depth_unit_warning)
+            self._load_notes.extend(
+                prefix + line for line in (getattr(parser, "unit_warnings", None) or [])
+            )
+        self._load_notes.extend(prefix + line for line in extra_notes)
+        key = self.model.add_well(ds, activate=False)
+        self._load_added.append(key)
+
+    def _finish_load(self):
+        self._bulk_loading = False
+        self._load_current = None
+        self._set_load_actions_enabled(True)
+        self._set_progress(0, "")
+        added = self._load_added
+        notes = list(dict.fromkeys(self._load_notes))
+        if added:
+            # Always refresh, even when the last well was already active (reload).
+            self.model.project.set_active(added[-1], force=True)
+            active = self.model.active_well
+            if len(added) == 1 and not self._load_multi_file and active is not None:
+                self.statusBar.showMessage(
+                    f"Loaded: {active.display_name} ({len(active.las_data)} rows)"
+                )
+            else:
+                self.statusBar.showMessage(f"Loaded {len(added)} well(s)")
+        elif notes:
+            self.statusBar.showMessage("No wells were loaded")
+        self._show_load_notes(None, notes)
+
+    # ---- merge of one group ----
     def _on_merge_started(self):
         """Handle merge started."""
-        self._set_progress(0, "Merging...")
+        self._set_progress(1, "Merging...")
         self.statusBar.showMessage("Merging LAS files...")
 
     def _on_merge_progress(self, message: str, percent: int):
         """Handle merge progress."""
         self._set_progress(percent, message)
 
-    @_restoring_guard
     def _on_merge_completed(self, merged_df, merge_report):
-        """Handle merge completion."""
-        self.actions_["merge_las"].setEnabled(False)  # nothing pending any more
+        """One group finished merging: build its well, then continue the queue."""
+        group = self._load_current
+        if group is None:
+            return
+        self._load_current = None
         self._set_progress(100, "Complete")
-
-        # Store merged data
-        # A shallow copy keeps the first source parser's own data intact.
-        notes = self._drop_other_well_context(
-            self._current_well_info(), self._loaded_parsers[0].well_info
+        extra = list(getattr(merge_report, "warnings", None) or [])
+        self._add_built_well(
+            group, {"merged_df": merged_df, "merge_report": merge_report}, extra
         )
-        merged_parser = copy.copy(self._loaded_parsers[0])
-        merged_parser.data = merged_df
-        well_info = getattr(merge_report, "well_info", None)
-        if well_info:
-            merged_parser.well_info = dict(well_info)
-        curve_info = getattr(merge_report, "curve_info", None)
-        if curve_info:
-            merged_parser.curve_info = dict(curve_info)
-        self.model.las_parser = merged_parser
-        self.model.las_data = merged_df
-        self.model.las_filename = f"MERGED_{len(self._loaded_parsers)}_files"
-        self.model.merge_report = merge_report
-        self.model.calculated = False
-        self._clear_results_stale()
-
-        # Run QC on merged data
-        qc = QCModule(merged_df, merge_report.well_name)
-        self.model.qc_report = qc.run_qc()
-        self._refresh_qc_chip()
-
-        self.data_browser.set_las_sources(
-            list(zip(self._loaded_file_names, self._loaded_row_counts)),
-            merged=True,
-            pending=False,
-        )
-
-        # Update curve mapping
-        curves = self.model.las_parser.get_available_curves()
-        detected = {}
-        for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]:
-            found = self.model.las_parser.find_curve_by_type(ctype)
-            if found:
-                detected[ctype] = found
-        self.params_window.update_available_curves(curves, detected)
-        self.model.curve_mapping = {
-            ctype: detected.get(ctype, "None")
-            for ctype in ["GR", "RHOB", "NPHI", "DT", "RT"]
-        }
-
-        self.actions_["run_analysis"].setEnabled(True)
-        self.actions_["save_merged"].setEnabled(True)
-        self.well_indicator.set_well(
-            merge_report.well_name, len(merged_df), len(merged_df.columns)
-        )
-        self._refresh_window_title()
-
-        self.statusBar.showMessage(
-            f"Merged {len(self._loaded_parsers)} files ({len(merged_df)} rows)"
-        )
-
-        self._on_data_loaded()
-        # Merge warnings (unit mismatches, name variants) and the unit notes of
-        # every source file, not only the first.
-        extra = list(notes) + list(getattr(merge_report, "warnings", None) or [])
-        for source in self._loaded_parsers[1:]:
-            extra.extend(getattr(source, "unit_warnings", None) or [])
-        self._show_load_notes(self._loaded_parsers[0], extra)
+        self._advance_load()
 
     def _on_merge_error(self, error: str):
-        """Handle merge error."""
-        self.actions_["merge_las"].setEnabled(True)
+        """A group could not be merged: report it and carry on with the rest."""
+        group = self._load_current or []
+        self._load_current = None
         self._set_progress(0, "")
-        QMessageBox.critical(self, "Merge Error", error)
+        names = ", ".join(item.name for item in group)
+        self._load_notes.append(f"Could not merge {names}: {error}")
         self.statusBar.showMessage("Merge failed")
+        self._advance_load()
 
     def _on_download_merged(self):
-        """Handle merged LAS download."""
+        """Handle merged LAS download for the active well."""
         from PyQt6.QtWidgets import QFileDialog
 
+        active = self.model.active_well
+        if active is None or not active.merged:
+            QMessageBox.warning(self, "Warning", "The active well is not a merged well.")
+            return
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Merged LAS",
@@ -995,16 +955,139 @@ class MainWindow(QMainWindow):
         )
 
         if file_path:
-            success = self.export_service.export_las(
-                self.model.las_data, self.model.las_parser.well_info, file_path
+            self.export_service.export_las(
+                active.las_data, active.las_parser.well_info, file_path
             )
+
+    # =========================================================================
+    # ACTIVE WELL
+    # =========================================================================
+
+    def _on_wells_changed(self):
+        self._refresh_window_title()
+        action = getattr(self, "_well_selector_action", None)
+        if action is not None:
+            action.setVisible(len(self.model.project) > 1)
+
+    def _on_well_selected(self, key: str):
+        if key and key in self.model.project:
+            self.model.set_active_well(key)
+
+    def _on_remove_well_requested(self, key: str):
+        ds = self.model.project.get(key)
+        if ds is None:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Remove Well",
+            f"Remove {ds.display_name} from the project?\n\n"
+            "Its tops, core data and results will be discarded.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.model.project.remove_well(key)
+
+    def _on_active_well_changed(self, key: str):
+        if self._bulk_loading:
+            return  # _finish_load refreshes once at the end
+        self._refresh_active_well_ui()
+
+    def _refresh_run_action(self):
+        self.actions_["run_analysis"].setEnabled(
+            self.model.active_well is not None and not self._analysis_busy
+        )
+
+    @_restoring_guard
+    def _refresh_active_well_ui(self):
+        """Point every control and tab at the active well."""
+        ds = self.model.active_well
+        if ds is None:
+            self._reset_ui()
+            return
+        pw = self.params_window
+        data = ds.las_data
+        if ds.las_parser is not None:
+            curves = list(ds.las_parser.get_available_curves())
+        else:
+            curves = list(data.columns) if data is not None else []
+        detected = {k: v for k, v in ds.curve_mapping.items() if v and v != "None"}
+        pw.update_available_curves(curves, detected)
+        for ctype, combo in pw.curve_mapping_widget.curve_combos.items():
+            wanted = ds.curve_mapping.get(ctype, "None") or "None"
+            if wanted != "None" and combo.findText(wanted) < 0:
+                combo.addItem(wanted)
+            combo.blockSignals(True)
+            combo.setCurrentText(wanted)
+            combo.blockSignals(False)
+
+        mode_widget = pw.analysis_mode_widget
+        formations = (
+            ds.formation_tops.get_formation_list() if ds.formation_tops is not None else []
+        )
+        mode_widget.formation_list.blockSignals(True)
+        pw.update_formations_list(formations)
+        for index in range(mode_widget.formation_list.count()):
+            item = mode_widget.formation_list.item(index)
+            item.setSelected(item.text() in ds.selected_formations)
+        mode_widget.formation_list.blockSignals(False)
+        per_formation = ds.analysis_mode == "Per-Formation"
+        (mode_widget.per_formation_radio if per_formation
+         else mode_widget.whole_well_radio).setChecked(True)
+        mode_widget.formation_label.setVisible(per_formation)
+        mode_widget.formation_list.setVisible(per_formation)
+
+        pw.set_core_available(ds.core_data is not None)
+        self._refresh_core_actions()
+
+        if data is not None:
+            self.well_indicator.set_well(ds.display_name, len(data), len(data.columns))
+        else:
+            self.well_indicator.set_empty()
+        self.actions_["save_merged"].setEnabled(bool(ds.merged))
+        self._refresh_run_action()
+        self._refresh_qc_chip()
+        self._sync_stale_label()
+        self._refresh_window_title()
+        self._update_all_tabs()
+
+    def _reset_ui(self):
+        """Fresh-state UI: no well is active."""
+        self.banner.clear()
+        self.update_qc_chip(None)
+        self.stale_label.setVisible(False)
+        self.data_browser.set_results_stale(False)
+        self.data_browser.rebuild()
+        self.params_window.reset_ui()
+        self._refresh_core_actions()
+        self.actions_["save_merged"].setEnabled(False)
+        self.well_indicator.set_empty()
+        self._refresh_run_action()
+        self._refresh_window_title()
+        self.qc_tab.reset_ui()
+        self.petro_tab.reset_ui()
+        self.log_tab.reset_ui()
+        self.diag_tab.reset_ui()
+        self.summary_tab.reset_ui()
+        self.export_tab.reset_ui()
 
     # =========================================================================
     # FORMATION TOPS & CORE DATA
     # =========================================================================
 
+    def _require_active_well(self, what: str) -> bool:
+        if self.model.active_well is not None:
+            return True
+        QMessageBox.warning(
+            self, "Warning",
+            f"Load a LAS file first. The {what} are attached to the active well.",
+        )
+        return False
+
     def _on_tops_file_selected(self, file_path: str):
-        """Handle formation tops file selection."""
+        """Handle formation tops file selection (tops belong to the active well)."""
+        if not self._require_active_well("formation tops"):
+            return
         try:
             tops = FormationTops()
             with open(file_path, "r") as f:
@@ -1044,7 +1127,9 @@ class MainWindow(QMainWindow):
             )
 
     def _on_core_file_selected(self, file_path: str):
-        """Handle core data file selection."""
+        """Handle core data file selection (core belongs to the active well)."""
+        if not self._require_active_well("core data"):
+            return
         try:
             self._sync_model_from_ui()
 
@@ -1089,11 +1174,15 @@ class MainWindow(QMainWindow):
         self._sync_model_from_ui()
         self.actions_["run_analysis"].setEnabled(False)
 
-        # Start analysis
+        # Results belong to the well that started the run, even if the user
+        # switches wells while it is running.
+        self._analysis_key = self.model.project.active_key
+        self._analysis_busy = True
         self.analysis_service.run_analysis(self.model)
 
     def _on_analysis_started(self):
         """Handle analysis started."""
+        self._analysis_busy = True
         self.actions_["run_analysis"].setEnabled(False)
         self._set_progress(0, "Analyzing...")
         self.statusBar.showMessage("Running petrophysics analysis...")
@@ -1106,39 +1195,48 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage(message)
 
     def _on_analysis_completed(self, results, summary):
-        """Handle analysis completion."""
-        # print(
-        #     f"[DEBUG MainWindow] _on_analysis_completed called on Thread: {threading.current_thread().name}"
-        # )
-        # print(f"[DEBUG MainWindow] results.shape = {results.shape}")
-        # print(f"[DEBUG MainWindow] results.columns = {list(results.columns)[:10]}...")
-
+        """Store the results in the well that started the run."""
+        key, self._analysis_key = self._analysis_key, None
+        self._analysis_busy = False
         self._set_progress(100, "Complete")
-        self.actions_["run_analysis"].setEnabled(True)
+        self._refresh_run_action()
 
-        # Store both pieces of the analysis result atomically so observers see
-        # a matching results/summary pair and only one completion refresh.
-        self.model.set_analysis_results(results, summary)
-
-        # print(
-        #     f"[DEBUG MainWindow] After storing: model.calculated = {self.model.calculated}"
-        # )
-        # print(
-        #     f"[DEBUG MainWindow] After storing: model.results is None = {self.model.results is None}"
-        # )
-
-        self.statusBar.showMessage("Analysis complete")
-        self.show_banner(
-            "success",
-            f"Analysis complete — Net Pay {summary.get('net_pay', 0):.1f} ft · "
+        message = (
+            f"Net Pay {summary.get('net_pay', 0):.1f} ft · "
             f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
-            f"N/G {summary.get('ng_pay', 0) * 100:.1f}%",
+            f"N/G {summary.get('ng_pay', 0) * 100:.1f}%"
         )
+        if key is None or key == self.model.project.active_key:
+            # Store both pieces atomically so observers see a matching
+            # results/summary pair and only one completion refresh.
+            self.model.set_analysis_results(results, summary)
+            active = self.model.active_well
+            if active is not None:
+                active.error = None
+                active.stale = False
+            self.statusBar.showMessage("Analysis complete")
+            self.show_banner("success", f"Analysis complete — {message}")
+            return
+
+        ds = self.model.project.get(key)
+        if ds is None:
+            self.statusBar.showMessage("Analysis finished for a well that was removed")
+            return
+        ds.results, ds.summary = results, summary
+        ds.calculated, ds.stale, ds.error = True, False, None
+        self.model.project.well_updated.emit(key)
+        self.statusBar.showMessage(f"Analysis complete for {ds.display_name}")
+        self.show_banner("success", f"Analysis complete for {ds.display_name} — {message}")
 
     def _on_analysis_error(self, error: str):
-        """Handle analysis error."""
+        """Handle analysis error (recorded on the well that started the run)."""
+        key, self._analysis_key = self._analysis_key, None
+        self._analysis_busy = False
         self._set_progress(0, "")
-        self.actions_["run_analysis"].setEnabled(True)
+        self._refresh_run_action()
+        ds = self.model.project.get(key) if key is not None else None
+        if ds is not None:
+            ds.error = _sanitize_error_detail(error) or "Analysis failed"
         QMessageBox.critical(self, "Analysis Error", error)
         self.statusBar.showMessage("Analysis failed")
 
@@ -1401,35 +1499,10 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        # Reset model data
+        # Removing every well also resets the UI through active_well_changed.
+        self._analysis_key = None
+        self._analysis_busy = False
         self.model.reset()
-
-        # Clear loaded parsers for merge
-        self._loaded_parsers = []
-        self._loaded_file_names = []
-        self._loaded_row_counts = []  # per-source rows, captured before any merge
-
-        self._clear_results_stale()
-        self.banner.clear()
-        self.update_qc_chip(None)
-        # Reset data browser
-        self.data_browser.set_las_sources([], merged=False, pending=False)
-        self.data_browser.rebuild()
-        self.params_window.reset_ui()
-        self._refresh_core_actions()
-        self.actions_["run_analysis"].setEnabled(False)
-        self.actions_["merge_las"].setEnabled(False)
-        self.actions_["save_merged"].setEnabled(False)
-        self.well_indicator.set_empty()
-        self._refresh_window_title()
-
-        # Reset all tabs UI to fresh state
-        self.qc_tab.reset_ui()
-        self.petro_tab.reset_ui()
-        self.log_tab.reset_ui()
-        self.diag_tab.reset_ui()
-        self.summary_tab.reset_ui()
-        self.export_tab.reset_ui()
 
         # Reset status bar
         self.statusBar.showMessage("Ready. Load a LAS file to begin.")

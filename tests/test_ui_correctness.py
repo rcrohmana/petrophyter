@@ -191,21 +191,24 @@ def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypat
     assert states == [False]
 
 
-def test_merge_button_is_disabled_before_merge_service_starts(window, monkeypatch):
-    window._loaded_parsers = [object(), object()]
-    window._loaded_file_names = ["a.las", "b.las"]
-    window.actions_["merge_las"].setEnabled(True)
+def test_load_actions_are_disabled_before_merge_service_starts(window, monkeypatch):
+    from services.load_service import ParsedFile
+
+    group = [ParsedFile("a.las", "a.las", object()), ParsedFile("b.las", "b.las", object())]
     states = []
-    monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
     monkeypatch.setattr(
         window.merge_service,
         "merge_files",
-        lambda *args: states.append(window.actions_["merge_las"].isEnabled()),
+        lambda *args: states.append(
+            (window.actions_["merge_las"].isEnabled(), window.actions_["open_las"].isEnabled())
+        ),
     )
 
-    window._on_merge_requested()
+    window._begin_load([group], 0.5, 5.0, multi_file=True)
 
-    assert states == [False]
+    assert states == [(False, False)]
+    window._abort_load()
+    assert window.actions_["merge_las"].isEnabled()
 
 
 def test_params_window_reset_restores_whole_well_analysis_mode(window):
@@ -255,7 +258,7 @@ def test_analysis_completion_refreshes_each_tab_once_with_matching_summary(
 def test_single_las_load_syncs_detected_mapping_before_final_qc_refresh(
     window, monkeypatch, tmp_path
 ):
-    import ui.main_window as main_window_module
+    import services.load_service as main_window_module
 
     class Parser:
         def __init__(self):

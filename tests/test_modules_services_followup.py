@@ -79,6 +79,7 @@ def test_analysis_worker_uses_configured_nphi_matrix_value():
 def test_las_failure_dialog_uses_sanitized_last_error_and_logs_detail(
     main_window, monkeypatch, caplog, tmp_path
 ):
+    import services.load_service as load_module
     import ui.main_window as main_module
 
     class BrokenParser:
@@ -89,7 +90,7 @@ def test_las_failure_dialog_uses_sanitized_last_error_and_logs_detail(
             return False
 
     messages = []
-    monkeypatch.setattr(main_module, "LASParser", BrokenParser)
+    monkeypatch.setattr(load_module, "LASParser", BrokenParser)
     monkeypatch.setattr(
         main_module.QMessageBox,
         "critical",
@@ -120,6 +121,9 @@ def test_tops_failure_dialog_uses_actionable_last_error_and_logs_detail(
             return False
 
     messages = []
+    from models.project import WellDataset
+
+    main_window.model.add_well(WellDataset(key="WELL:T"))  # tops need an active well
     monkeypatch.setattr(main_module, "FormationTops", BrokenTops)
     monkeypatch.setattr(
         main_module.QMessageBox,
