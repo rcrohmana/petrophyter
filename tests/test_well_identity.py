@@ -293,3 +293,19 @@ def test_canonical_unit_folds_spellings(a, b):
 
 def test_canonical_unit_keeps_real_differences():
     assert canonical_unit("G/CC") != canonical_unit("KG/M3")
+
+
+@pytest.mark.parametrize("variant", ["BKS-01", "bks_01", " BKS 01 ", "Bks - 01"])
+def test_well_name_separator_variants_match(variant):
+    from modules.las_utils import normalize_well_name, same_well
+
+    assert normalize_well_name(variant) == "BKS-01"
+    assert same_well({"well_name": variant}, {"well_name": "BKS-01"}) is True
+
+
+@pytest.mark.parametrize("placeholder", ["", "Unknown", "N/A", None])
+def test_placeholder_names_are_unidentified(placeholder):
+    from modules.las_utils import same_well, well_key
+
+    assert well_key({"well_name": placeholder}) == ("", False)
+    assert same_well({"well_name": placeholder}, {"well_name": "BKS-01"}) is None
