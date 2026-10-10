@@ -2,6 +2,7 @@
 # Petrophyter PyQt - Optimized PyInstaller spec file
 # Reduced size by excluding unused Qt modules (Qt3D, QML, WebEngine, SQL, etc.)
 
+import glob
 import os
 import sys
 
@@ -28,10 +29,25 @@ try:
 except Exception:
     lasio_datas, lasio_binaries, lasio_hiddenimports = [], [], []
 
-# Conda's BLAS/LAPACK forwarding DLLs resolve exports through mkl_rt.3.dll,
-# which PyInstaller cannot discover as a regular PE import.
-mkl_runtime = os.path.join(sys.prefix, "Library", "bin", "mkl_rt.3.dll")
-mkl_binaries = [(mkl_runtime, ".")] if os.path.exists(mkl_runtime) else []
+# Conda's libblas/liblapack DLLs forward every export to mkl_rt.<N>.dll, which
+# loads the MKL core, threading and CPU-dispatch libraries at run time with
+# LoadLibrary. PyInstaller sees none of them, and without them the first
+# scipy LAPACK call (curve_fit, least_squares, L-BFGS-B, svd, ...) aborts the
+# app on a PC without Anaconda. The sequential threading layer is selected by
+# installer/rth_mkl_sequential.py, so mkl_intel_thread/libiomp5md are not needed.
+_MKL_PATTERNS = (
+    "mkl_rt.*.dll", "mkl_core.*.dll", "mkl_sequential.*.dll",
+    "mkl_def.*.dll", "mkl_mc3.*.dll", "mkl_avx2.*.dll", "mkl_avx512.*.dll",
+)
+_mkl_dir = os.path.join(sys.prefix, "Library", "bin")
+mkl_binaries = [
+    (path, ".") for pattern in _MKL_PATTERNS
+    for path in glob.glob(os.path.join(_mkl_dir, pattern))
+]
+if os.path.exists(os.path.join(_mkl_dir, "liblapack.dll")) and not any(
+    os.path.basename(p).startswith("mkl_rt.") for p, _ in mkl_binaries
+):
+    raise SystemExit("liblapack.dll forwards to MKL, but no mkl_rt.*.dll was found")
 
 # =============================================================================
 # ANALYSIS
@@ -90,7 +106,7 @@ a = Analysis(
     ] + mpl_hiddenimports + pg_hiddenimports + lasio_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['installer/rth_mkl_sequential.py'],
     excludes=[
         # =========================================================
         # EXCLUDE UNUSED PYTHON FRAMEWORKS

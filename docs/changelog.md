@@ -2,38 +2,62 @@
 
 # Version History
 
-## Unreleased
+## v1.7.0 (Build 20261010) — Current Release
+
+### Multi-well projects
+
+- A project holds any number of wells. **Open LAS File(s)…** reads several files in the background and shows a **Load Summary** that groups them by well identity (UWI, API, or name). Files of one well are merged; files of different wells are never merged. Reloading a well with the same key replaces its data and keeps its tops, core data, and parameters.
+- The Data Browser has one root per well, and a well selector appears in the toolbar. Tops, core data, analysis scope, and results belong to each well; a new well never inherits another well's tops or core data.
+- **Run All Wells** (`Ctrl+Shift+R`) analyses every well in the background and skips wells whose parameters have not changed since their last run. **Run Analysis** (`F5`) always reruns the active well. Run is disabled only while the active well is running, so other wells can run meanwhile.
+- The Summary tab adds a Zones pay table for the active well and, with two or more wells, a Wells table with a field total. Export writes the active well or all wells: Excel with Summary, Zones, and one sheet per well; CSV with a WELL column; one LAS file per well. The log can shade zones.
+
+### Parameter scopes and zones
+
+- Parameters can be set for the project, a well, a zone (formation), or a well · zone; the most specific entry wins. The Parameters window has a scope bar, a mode menu per field (Auto, Manual, Inherit, Copy to…, Set as project default), and a **Zones** grid.
+- Zones run as their own segments with their own a, m, n, matrix and shale points, Rw, Rsh, and cutoffs. Auto estimates (Rw, Rsh, shale point) use only that scope's samples and fall back to the next scope when a zone is too thin; the source of every value is shown.
+- The shale point accepts **Auto** per well and per zone. Calculate and Apply work on the edited scope.
+- A lithology preset at a well or zone scope supplies a, m, and n there and stays linked; typing a value switches it to Custom. Older sessions with explicit values equal to the preset are collapsed on load.
+- Permeability **Calculate** fits Wyllie-Rose coefficients to the edited scope. A zone with fewer than five core pairs reports it instead of widening the fit.
+- Zones with no gross, no net reservoir, or no net pay are marked in the Summary Zones table, and the limiting cutoff is marked in the Zones grid, with a tooltip that explains the likely cause. Results are stored in `summary["zone_diagnostics"]`.
+
+### Rw, Rsh, and formation temperature
+
+- Rw and Rsh each have an **Auto** checkbox. Manual values are used as entered, and **Apply Calculated Values** switches both to manual.
+- Auto Rw uses the Rwa method on clean (Vsh < 0.3), porous samples.
+- **Correct resistivities for formation temperature** corrects Rw with Arps' equation at every sample, and also an auto Rsh, a manual Rsh with a new **Rsh ref. temp**, and the Dual-Water Rwb. **Waxman-Smits B from temperature** (Juhasz, 1981) is optional. Applying a calculated Rsh stores its reference temperature. All options are off by default.
+- Formation temperature follows true vertical depth: a mapped **TVD** curve in Curve Mapping, then a TVD depth index, then measured depth. A **Datum depth** sets where the surface temperature applies, the gradient can come from the LAS header (BHT and TD), and a live readout shows the temperature at the log ends.
 
 ### Multi-well tops and core import
 
 - Added **File → Open Formation Tops (Multi-Well)…** and **Open Core Data (Multi-Well)…**, also in the Data Browser well menu. One file with a well column is assigned to the loaded wells in a preview dialog: detected delimiter and encoding, column mapping, depth unit, fill-down for merged cells, sheet, a raw preview, and one row per file well with its match, existing data, Keep or Replace action, porosity scale, and notes. Nothing changes until you confirm, and a failed assignment changes nothing.
-- **Open Formation Tops…** and **Open Core Data…** now send a file with a well column to the same dialog instead of distributing it silently. The last formation of a tops file without bottom depths runs to the bottom of the log.
+- **Open Formation Tops…** and **Open Core Data…** send a file with a well column to the same dialog. The last formation of a tops file without bottom depths runs to the bottom of the log.
 - Tops and core files can be `.xlsx`, and can be delimited by tab, comma, semicolon, or pipe, with UTF-8 or Windows-1252 text, comment and preamble lines, a unit row, and decimal commas. Commas that all read as thousands groups (`1,250`) are thousands separators.
 - Every excluded row is counted with its file line number and reason. Core porosity is read as percent or fraction per well from its median, with an override in the dialog. A TVD core depth column raises a warning. Petrel `Surface` and `MD` columns and `wellbore` or `borehole` well columns are recognised.
 
-### Temperature, scopes and diagnostics
+### LAS loading
 
-- **Correct resistivities for formation temperature** now also corrects an auto Rsh, a manual Rsh with a new **Rsh ref. temp**, and the Dual-Water Rwb. **Waxman-Smits B from temperature** (Juhasz, 1981) is optional. Applying a calculated Rsh stores its reference temperature. All options are off by default.
-- Formation temperature follows true vertical depth: a mapped **TVD** curve in Curve Mapping, then a TVD depth index, then measured depth. A new **Datum depth** sets where the surface temperature applies, and a live readout shows the temperature at the log ends and the header gradient.
-- A lithology preset at a well or zone scope now supplies a, m, and n there and stays linked; typing a value switches it to Custom. Older sessions with explicit values equal to the preset are collapsed on load.
-- Permeability **Calculate** fits Wyllie-Rose coefficients to the edited scope. A zone with fewer than five core pairs reports it instead of widening the fit.
-- Zones with no gross, no net reservoir, or no net pay are marked in the Summary Zones table, and the limiting cutoff is marked in the Zones grid, with a tooltip that explains the likely cause. Results are stored in `summary["zone_diagnostics"]`.
+- The LAS parser reads UWI, API, location, service company, date, KB/GL/DF elevations, BHT, and TD. The depth unit falls back to the depth curve's unit.
+- Neutron in percent, density in kg/m³, and sonic in µs/m are converted to V/V, g/cm³, and µs/ft at load (inferred from the value range when the unit is missing), with a note.
+- Merging refuses files from different wells and reports per-curve units and sources. Merge warnings and every file's unit notes appear in one banner.
 
-### Responsiveness and sessions
+### Sessions
 
-- Loading a LAS file refreshes the result tabs once instead of twice.
-- The status bar shows the stage of the running well, or the combined progress and the current well and stage when several wells run.
+- Session format 2.0 stores the whole project: project and zone parameters, and for each well its LAS paths, merge settings, curve mapping, analysis scope, parameters, and tops and core files. Loading it re-reads the files; results are not stored, so restored wells need a run.
+- Format 2.1 adds an import record for each well's tops and core data and replays it exactly on load, with a fallback to name matching and a note.
 - Loading a session rebuilds its wells in the background. The window stays responsive, the status bar shows `Restoring 3 of 10: BKS-03`, and New Project or Load Session cancels the restore.
-- Session format 2.1 stores an import record for each well's tops and core data and replays it exactly on load, with a fall back to name matching and a note. Format 2.0 and 1.x sessions still load.
+- Format 1.x sessions still load: their parameters are applied to the project. Sessions saved by v1.7.0 cannot be opened by v1.6.0 or older.
 
-### Interface
+### Interface and responsiveness
 
-- Every menu action now has an icon, and menus use a fixed icon column.
+- Every menu action has an icon, and menus use a fixed icon column.
 - The Parameters pages no longer show background bands behind sliders and forms. The Cutoffs page is a single label, slider, and value grid.
 - The Diagnostics porosity table marks the selected method with bold text, a check icon, and a tooltip instead of a "(selected)" suffix.
 - Chart titles and labels use normal weight consistently.
 - Without pyqtgraph, the log engine combo disables the Interactive item, labels it "Interactive (requires pyqtgraph)", and selects Classic.
 - Interactive log track titles, formation-top lines, and the depth region follow the theme.
+- Loading a LAS file refreshes the result tabs once instead of twice, and hidden plot tabs redraw only when shown.
+- The status bar shows the stage of the running well, or the combined progress and the current well and stage when several wells run.
+- Merge interpolation and the Waxman-Smits and Dual-Water solvers are vectorised; both models on 10,000 samples take about 10 ms instead of 0.7 s.
 
 ### Fixes
 
@@ -41,8 +65,20 @@
 - Quitting during an analysis, a load, or a session restore asks for confirmation.
 - Numbers use the English (US) format (decimal point) regardless of the Windows regional setting.
 - The Diagnostics method name is no longer truncated.
+- Loading a LAS file of a different well no longer keeps the previous well's tops, core data, and formation selection.
+- The installer bundles the Intel MKL libraries that scipy needs. Without Anaconda on the PC, v1.6.0 could close with "Intel oneMKL FATAL ERROR: Cannot load mkl_intel_thread.2.dll" when a feature used scipy's linear algebra, for example permeability calibration from core.
 
-## v1.6.0 (Build 20261009) — Current Release
+### Calculation changes from v1.6.0
+
+- A manual Rsh is used as entered; v1.6.0 replaced it with the estimate from the data.
+- Auto Rw uses the Rwa method on clean, porous samples instead of raw NPHI and the lowest RT quartile. When no estimate exists (for example, shale-only data), the entered Rw is used with a warning.
+- Calculate Rw/Rsh and VShale use the same GR baseline rule as the analysis (P5/P95 with at least 20 API separation).
+- With several VShale methods selected, the VSH column holds the series used downstream.
+- Curves in non-standard units (see LAS loading) are converted before the analysis.
+
+On the reference test cases, results with default settings are unchanged from v1.6.0 except for shale-only data with auto Rw. Session files from v1.6.0 or older that store Rw ≤ 0.01 load with Rw in Auto mode.
+
+## v1.6.0 (Build 20261009)
 
 ### New interface
 

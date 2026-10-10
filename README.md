@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.6.0_(Build_20261009)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.7.0_(Build_20261010)-orange.svg)
 
 ![Petrophyter main window with the interactive log display](docs/images/petrophyter-main-window.png)
 
@@ -84,7 +84,7 @@ See [Licensing](docs/licensing.md) for the detailed scope, commercial PyQt6 opti
 
 ## Citation
 
-Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.6.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
+Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.7.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 
