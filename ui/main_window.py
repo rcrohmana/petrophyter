@@ -55,6 +55,7 @@ from services.load_service import (
 )
 from services.export_service import ExportService
 from services.session_service import SessionService, is_v2_session
+from services.restore_service import RestoreWorker
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
 from .parameters_window import PAGES, ParametersWindow
@@ -163,6 +164,14 @@ class MainWindow(QMainWindow):
         self._load_gap = 5.0
         self._bulk_loading = False
         self._load_worker = None
+        # Session restore on a worker thread (see _start_restore): the current
+        # worker, its generation token and workers still winding down.
+        self._restore_worker = None
+        self._restore_generation = 0
+        self._restore_retired = []
+        self._restore_active_key = None
+        self._restore_path = ""
+        self._restore_pool = None
         # Batch analysis: number of wells in the current run, wells finished,
         # the stage percent of every running well and the throttled status text.
         self._batch_total = 0
@@ -405,6 +414,7 @@ class MainWindow(QMainWindow):
             self.merge_service.thread_pool.clear()
             if hasattr(self, "_load_pool"):
                 self._load_pool.clear()
+        self._cancel_restore()
         settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
         settings.setValue("ui/geometry", self.saveGeometry())
         settings.setValue("ui/windowState", self.saveState())
@@ -778,7 +788,8 @@ class MainWindow(QMainWindow):
     _BUSY_ACTIONS = {
         "load": ("new_project", "load_session") + _LOAD_ACTIONS,
         # New Project and Load Session stay available: they cancel the restore.
-        "restore": _LOAD_ACTIONS,
+        # Save Session would save a half-restored project.
+        "restore": _LOAD_ACTIONS + ("save_session",),
     }
     _BUSY_TIPS = {
         "load": "Unavailable while files are loading",
@@ -812,7 +823,7 @@ class MainWindow(QMainWindow):
         """Normal gating of the data and run actions; busy actions stay disabled."""
         busy = set(self._BUSY_ACTIONS.get(self._busy, ()))
         for key in ("new_project", "open_las", "open_tops", "open_core",
-                    "load_session", "merge_las"):
+                    "load_session", "save_session", "merge_las"):
             if key not in busy:
                 self.actions_[key].setEnabled(True)
         self._refresh_import_actions()
@@ -1900,17 +1911,14 @@ class MainWindow(QMainWindow):
         self.model.set_edit_scope("project")
         if is_v2_session(session_data):
             # A v2.0 session is a whole project: it replaces the loaded wells.
+            # The wells are rebuilt on a worker thread; _on_restore_completed
+            # installs them and shows the one banner.
+            self._cancel_restore()
             self.batch_runner.cancel()
             self.model.reset()
             self.session_service.apply_session_to_model(self.model, session_data)
-            notes = self.session_service.restore_wells(
-                self.model, session_data,
-                progress=lambda message, percent: self._set_progress(
-                    min(max(percent, 1), 99), message),
-            )
-            self._set_progress(100)
-            self._update_ui_from_model()
-            self._refresh_active_well_ui()
+            self._start_restore(session_data, file_path)
+            return
         else:
             self.session_service.apply_session_to_model(self.model, session_data)
             notes = self.session_service.restore_wells(self.model, session_data)
@@ -1920,6 +1928,83 @@ class MainWindow(QMainWindow):
         self._recompute_stale()
         self._show_load_notes(None, notes)
         self.statusBar.showMessage(f"Session loaded from {file_path}")
+
+    # ---- session restore on a worker thread ----
+
+    def _start_restore(self, session_data: dict, file_path: str):
+        from PyQt6.QtCore import QThreadPool
+
+        self._restore_generation += 1
+        worker = RestoreWorker(session_data, self._restore_generation)
+        self._restore_worker = worker
+        self._restore_active_key = session_data.get("active_key")
+        self._restore_path = file_path
+        self._set_busy("restore")
+        self._set_progress(1, "Restoring session...")
+        worker.signals.progress.connect(
+            lambda message, percent, w=worker: self._on_restore_progress(w, message, percent))
+        worker.signals.completed.connect(
+            lambda datasets, notes, w=worker: self._on_restore_completed(w, datasets, notes))
+        worker.signals.error.connect(
+            lambda message, w=worker: self._on_restore_error(w, message))
+        worker.signals.finished.connect(
+            lambda w=worker: self._on_restore_finished(w))
+        self._restore_retired.append(worker)    # keeps the signal object alive until finished
+        if self._restore_pool is None:
+            self._restore_pool = QThreadPool()
+        self._restore_pool.start(worker)
+
+    def _is_current_restore(self, worker) -> bool:
+        return worker is self._restore_worker and worker.generation == self._restore_generation
+
+    def _on_restore_progress(self, worker, message: str, percent: int):
+        if self._is_current_restore(worker):
+            self._set_progress(min(max(percent, 1), 99), message)
+
+    def _on_restore_finished(self, worker):
+        if worker in self._restore_retired:
+            self._restore_retired.remove(worker)
+
+    def _end_restore(self):
+        self._restore_worker = None
+        self._set_busy(None)
+        self._set_progress(0, "")
+
+    def _cancel_restore(self):
+        """Drop the running restore (if any); its wells never reach the model."""
+        worker = self._restore_worker
+        if worker is None:
+            return
+        worker.cancel()
+        self._restore_generation += 1
+        self._end_restore()
+
+    def _on_restore_error(self, worker, message: str):
+        if not self._is_current_restore(worker):
+            return
+        self._end_restore()
+        self.model.reset()
+        self.show_banner("warning", message)    # banners are never "error" kind
+        self.statusBar.showMessage("Failed to load session")
+
+    def _on_restore_completed(self, worker, datasets, notes):
+        if not self._is_current_restore(worker):
+            return
+        self._restore_worker = None
+        self._bulk_loading = True
+        try:
+            notes = self.session_service.install_wells(
+                self.model, datasets, self._restore_active_key, notes)
+        finally:
+            self._bulk_loading = False
+        self._set_busy(None)
+        self._set_progress(0, "")
+        self._update_ui_from_model()
+        self._refresh_active_well_ui()
+        # Restored wells have no results and need a run.
+        self._recompute_stale()
+        self._show_load_notes(None, notes)
+        self.statusBar.showMessage(f"Session loaded from {self._restore_path}")
 
     def _on_new_project(self):
         """Handle new project button click - clear all data and reset to fresh state."""
@@ -1936,6 +2021,7 @@ class MainWindow(QMainWindow):
                 return
 
         # Removing every well also resets the UI through active_well_changed.
+        self._cancel_restore()
         self.batch_runner.cancel()
         self.model.reset()
 

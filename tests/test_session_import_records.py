@@ -59,6 +59,18 @@ def import_with_manual_mapping(window, path, file_well="BKS-1", target="BKS-01",
     window._import_multi_well("tops", path)
 
 
+def wait_for_restore(window, timeout_ms=15000):
+    """Wait for the session-restore worker to finish and its wells to be installed."""
+    from PyQt6.QtCore import QElapsedTimer
+    from PyQt6.QtTest import QTest
+
+    clock = QElapsedTimer()
+    clock.start()
+    while window._restore_worker is not None and clock.elapsed() < timeout_ms:
+        QTest.qWait(10)
+    assert window._restore_worker is None, "session restore did not finish"
+
+
 def save_and_reload(window, tmp_path, monkeypatch, mutate=None):
     session = tmp_path / "s.json"
     assert window.session_service.save_session(window.model, str(session))
@@ -71,6 +83,7 @@ def save_and_reload(window, tmp_path, monkeypatch, mutate=None):
     monkeypatch.setattr(QFileDialog, "getOpenFileName",
                         staticmethod(lambda *a, **k: (str(session), "")))
     window._on_load_session()
+    wait_for_restore(window)
     return json.loads(session.read_text(encoding="utf-8"))
 
 

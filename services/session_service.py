@@ -15,6 +15,10 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
+
+class RestoreCancelled(Exception):
+    """Raised by ``build_wells_from_session`` when ``cancelled()`` turns true."""
+
 _SESSION_DEFAULTS = {
     "analysis_mode": "Whole Well",
     "selected_formations": [],
@@ -542,23 +546,20 @@ class SessionService(QObject):
 
     def restore_wells(self, model, session_data: Dict,
                       progress: Optional[Callable[[str, int], None]] = None) -> List[str]:
-        """Re-open the wells of a v2.0 session (synchronously); returns notes.
+        """Re-open the wells of a v2.0 session synchronously; returns notes.
 
-        For each well entry the source LAS files are parsed again (merged with
-        the saved step/gap when there are several), then key, name, curve
-        mapping, mode, zones, overrides, tops and core are restored. Results are
-        not stored, so every restored well needs a run. Wells whose files are
-        missing or unreadable are skipped with a note. Finally the saved active
-        well is activated. Existing wells with the same key are replaced; call
-        ``model.reset()`` first to start from an empty project. Call
+        A thin wrapper: :meth:`build_wells_from_session` then :meth:`install_wells`.
+        The main window runs the builder on a worker thread instead
+        (``services.restore_service.RestoreWorker``). Call
         ``apply_session_to_model`` first (it sets the project parameters and
-        project zone parameters). ``progress(message, percent)`` is optional.
+        project zone parameters); existing wells with the same key are replaced,
+        call ``model.reset()`` first to start from an empty project.
 
         A v1.x session has no LAS paths: nothing is restored and, when no well
         is loaded, the note says the LAS file must be opened manually.
         """
-        notes: List[str] = []
         if not _is_v2(session_data):
+            notes: List[str] = []
             if getattr(model, "active_well", None) is None:
                 name = session_data.get("_las_filename") or ""
                 name = os.path.basename(str(name)) if name else ""
@@ -568,21 +569,51 @@ class SessionService(QObject):
                     + (f" ({name})" if name else "") + " to apply the saved parameters."
                 )
             return notes
+        step = getattr(model, "merge_step", 0.5)
+        gap = getattr(model, "merge_gap_limit", 5.0)
+        datasets, notes = self.build_wells_from_session(
+            session_data, progress=progress, default_merge=(step, gap))
+        notes = self.install_wells(model, datasets, session_data.get("active_key"), notes)
+        if progress:
+            progress("Session restored", 100)
+        return notes
 
+    def build_wells_from_session(self, session_data: Dict,
+                                 progress: Optional[Callable[[str, int], None]] = None,
+                                 cancelled: Optional[Callable[[], bool]] = None,
+                                 default_merge=(0.5, 5.0)):
+        """Build the wells of a v2.0 session; returns ``(datasets, notes)``.
+
+        Pure: no Qt objects and no model access, so it can run on any thread.
+        For each well entry the source LAS files are parsed again (merged with
+        the saved step/gap when there are several), then key, name, curve
+        mapping, mode, zones, overrides, tops and core are restored. Results are
+        not stored, so every restored well needs a run. Wells whose files are
+        missing or unreadable are skipped with a note. ``progress(message,
+        percent)`` is optional. ``cancelled()`` is polled before each well; when
+        it returns True the build stops and :class:`RestoreCancelled` is raised
+        (the partial result is discarded). Preset collapse and activation are
+        done by :meth:`install_wells`.
+        """
         from modules.las_handler import LASHandler
-        from modules.param_scopes import collapse_preset_stores
         from services.load_service import build_well, parse_file
 
+        notes: List[str] = []
+        datasets: List[Any] = []
+        if not _is_v2(session_data):
+            return datasets, notes
         entries = session_data.get("wells") or []
-        step = session_data.get("merge_step", getattr(model, "merge_step", 0.5))
-        gap = session_data.get("merge_gap_limit", getattr(model, "merge_gap_limit", 5.0))
-        restored = 0
-        collapsed = False
+        step = session_data.get("merge_step", default_merge[0])
+        gap = session_data.get("merge_gap_limit", default_merge[1])
         parse_cache: dict = {}      # parsed tops / core files, shared by the wells of one restore
+        total = len(entries)
         for index, entry in enumerate(entries):
+            if cancelled is not None and cancelled():
+                raise RestoreCancelled()
             label = entry.get("display_name") or entry.get("key") or f"well {index + 1}"
             if progress:
-                progress(f"Restoring {label}...", int(100 * index / max(len(entries), 1)))
+                progress(f"Restoring {index + 1} of {total}: {label}",
+                         int(100 * index / max(total, 1)))
             try:
                 well = self._restore_one_well(entry, step, gap, notes, parse_file,
                                               build_well, LASHandler, parse_cache)
@@ -590,10 +621,25 @@ class SessionService(QObject):
                 logger.exception("Could not restore well %s", label)
                 notes.append(f"{label}: could not be restored ({exc}); skipped.")
                 continue
-            if well is None:
-                continue
+            if well is not None:
+                datasets.append(well)
+        if cancelled is not None and cancelled():
+            raise RestoreCancelled()
+        return datasets, notes
+
+    def install_wells(self, model, datasets, active_key, notes=()) -> List[str]:
+        """Put built wells into ``model`` (GUI thread); returns the notes.
+
+        Adds every well without activating it, collapses lithology-preset
+        entries (wells and project zone parameters), then activates the saved
+        well.
+        """
+        from modules.param_scopes import collapse_preset_stores
+
+        notes = list(notes)
+        collapsed = False
+        for well in datasets:
             model.add_well(well, activate=False)
-            restored += 1
             collapsed |= collapse_preset_stores(well.overrides, well.zone_overrides)
         project = getattr(model, "project", None)
         if project is not None:
@@ -603,14 +649,10 @@ class SessionService(QObject):
                 "Lithology presets now supply a, m and n where the saved values equal the "
                 "preset; those explicit entries were removed so later preset changes flow down."
             )
-
-        active_key = session_data.get("active_key")
         if active_key and active_key in model.project:
             model.set_active_well(active_key)
-        elif restored and active_key:
+        elif datasets and active_key:
             notes.append("The previously active well could not be restored; showing the first well.")
-        if progress:
-            progress("Session restored", 100)
         return notes
 
     @staticmethod

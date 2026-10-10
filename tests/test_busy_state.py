@@ -94,11 +94,14 @@ def test_restore_keeps_new_project_and_load_session(window):
     _load_well(window)
     window._set_busy("restore")
     keys = tuple(k for k in LOAD_KEYS if k not in ("new_project", "load_session"))
-    _assert_busy(window, keys, "Unavailable while a session is loading")
+    for key in keys + ("save_session",):
+        assert not window.actions_[key].isEnabled(), key
+        assert window.actions_[key].statusTip() == "Unavailable while a session is loading", key
     assert window.actions_["new_project"].isEnabled()
     assert window.actions_["load_session"].isEnabled()
     window._set_busy(None)
     assert window.actions_["run_analysis"].isEnabled()
+    assert window.actions_["save_session"].isEnabled()
 
 
 def test_switching_busy_kind_restores_the_original_tips(window):
