@@ -13,7 +13,13 @@ from dataclasses import dataclass
 from scipy import stats
 from scipy.interpolate import interp1d
 
-from modules.well_matching import find_well_column
+from dataclasses import replace
+
+from modules.table_reader import read_table
+from modules.well_matching import (
+    find_well_column, fill_down_wells, group_key, group_well_names,
+    merged_cell_pattern_applies,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +31,23 @@ _METER_TOKENS = {'m', 'meter', 'meters', 'metre', 'metres'}
 def _tokenize(text: str) -> List[str]:
     """Split a string into lower-case alphanumeric tokens (drops punctuation)."""
     return [t for t in re.split(r'[^a-z0-9]+', text.lower()) if t]
+
+
+def _is_blank(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and np.isnan(value):
+        return True
+    return isinstance(value, str) and not value.strip()
+
+
+def _cell_text(value) -> str:
+    """Text of a well cell ('' when blank; 101.0 from a spreadsheet becomes '101')."""
+    if _is_blank(value):
+        return ''
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
 
 
 @dataclass
@@ -65,7 +88,7 @@ class CoreDataHandler:
     """
     
     # Column aliases for robust detection
-    DEPTH_ALIASES = ['depth', 'depth (m)', 'depth(m)', 'depth_m', 'md', 'tvd', 'depth_md']
+    DEPTH_ALIASES = ['depth', 'depth (m)', 'depth(m)', 'depth_m', 'md', 'tvd', 'depth_md', 'tvdss']
     POROSITY_ALIASES = ['porosity', 'porosity (%)', 'porosity(%)', 'por', 'phi', 'core_por', 'core porosity']
     PERM_ALIASES = ['hor.perm', 'hor.perm. (md)', 'perm', 'permeability', 'k', 'kh', 'khor', 
                    'horizontal perm', 'hor perm', 'perm (md)', 'permeability (md)']
@@ -91,23 +114,28 @@ class CoreDataHandler:
         # Optional well column of a multi-well core file.
         self.well_col: Optional[str] = None
         self.well_kind: str = 'name'  # what the column holds: name / uwi / api
-    
-    # Updated read_core_from_buffer with depth_unit support
-    def read_core_from_buffer(self, file_buffer, separator: str = '\t', depth_unit: str = 'Auto') -> bool:
-        """
-        Read core data from a file buffer (for Streamlit uploads).
-        
-        Args:
-            file_buffer: File buffer object
-            separator: Column separator (default tab)
-            depth_unit: Depth unit: 'Auto', 'M', or 'FT'
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        # A handler instance may be reused for another file. Reset all
-        # per-load metadata so a prior M conversion or warning cannot suppress
-        # or contaminate the next load.
+        # Parse diagnostics (reset by every read).
+        self.last_error: Optional[str] = None
+        self.excluded_rows: List[Tuple[Optional[int], str]] = []  # (file line, reason)
+        self.blank_well_rows: List[int] = []   # lines whose well cell was blank (not filled)
+        self.filled_rows: List[int] = []       # lines given a well by fill-down
+        self.fill_down: bool = False
+        self.fill_down_applicable: bool = False  # blanks look like merged cells
+        self.notes: List[str] = []
+        self.spellings: List[str] = []  # well spellings of a split part
+        self.table_read = None  # TableRead without its frame
+        self.depth_is_tvd: bool = False
+        self.tvd_warning: Optional[str] = None
+        # Porosity scale: 'percent' / 'fraction' (None when wells disagree).
+        self.porosity_scale: Optional[str] = None
+        self.porosity_scales: Dict[str, str] = {}  # first spelling of each well -> scale
+        self.porosity_scale_mixed: bool = False
+        self.porosity_warning: Optional[str] = None
+        self._scales_by_group: Dict[str, str] = {}
+        self._por_raw: Optional[np.ndarray] = None  # porosity as read, aligned with data
+
+    def _reset(self):
+        """Clear everything a previous file left behind."""
         self.data = None
         self.depth_col = None
         self.porosity_col = None
@@ -120,133 +148,219 @@ class CoreDataHandler:
         self.porosity_converted = False
         self.well_col = None
         self.well_kind = 'name'
+        self.last_error = None
+        self.excluded_rows = []
+        self.blank_well_rows = []
+        self.filled_rows = []
+        self.fill_down = False
+        self.fill_down_applicable = False
+        self.notes = []
+        self.spellings = []
+        self.table_read = None
+        self.depth_is_tvd = False
+        self.tvd_warning = None
+        self.porosity_scale = None
+        self.porosity_scales = {}
+        self.porosity_scale_mixed = False
+        self.porosity_warning = None
+        self._scales_by_group = {}
+        self._por_raw = None
 
-        try:
-            # Try to read with specified separator
-            try:
-                df = pd.read_csv(file_buffer, sep=separator)
-            except Exception as e:
-                # Fallback: try comma separator
-                logger.debug("Read with sep=%r failed (%s); retrying with comma", separator, e)
-                file_buffer.seek(0)
-                df = pd.read_csv(file_buffer, sep=',')
-            
-            if df.empty:
-                logger.warning("Empty core file")
-                return False
-            
-            # Normalize column names for matching
-            df.columns = df.columns.str.strip().str.lower()
-            
-            # Find required depth column
-            self.depth_col = self._find_column(df, self.DEPTH_ALIASES)
-            if self.depth_col is None:
-                logger.warning("Could not find depth column")
-                return False
-            
-            # Find optional columns
-            self.porosity_col = self._find_column(df, self.POROSITY_ALIASES)
-            self.perm_col = self._find_column(df, self.PERM_ALIASES)
-            self.grain_density_col = self._find_column(df, self.GRAIN_DENSITY_ALIASES)
-            self.well_col, self.well_kind = find_well_column(df, self._find_column)
-            if self.well_col in (self.depth_col, self.porosity_col, self.perm_col,
-                                 self.grain_density_col):
-                self.well_col, self.well_kind = None, 'name'
-            
-            # Validate that we have at least one property to validate
-            if self.porosity_col is None and self.perm_col is None:
-                logger.warning("No porosity or permeability column found")
-                return False
-            
-            # Clean data: drop rows where depth is NaN
-            df = df.dropna(subset=[self.depth_col])
-            
-            # Convert numeric columns
-            df[self.depth_col] = pd.to_numeric(df[self.depth_col], errors='coerce')
-            if self.porosity_col:
-                df[self.porosity_col] = pd.to_numeric(df[self.porosity_col], errors='coerce')
-            if self.perm_col:
-                df[self.perm_col] = pd.to_numeric(df[self.perm_col], errors='coerce')
-            if self.grain_density_col:
-                df[self.grain_density_col] = pd.to_numeric(df[self.grain_density_col], errors='coerce')
-            
-            # Drop rows where depth is still NaN after conversion
-            df = df.dropna(subset=[self.depth_col])
-            
-            if df.empty:
-                logger.warning("No valid core data after cleaning")
-                return False
-            
-            # Sort by depth
-            df = df.sort_values(self.depth_col).reset_index(drop=True)
-            
-            self.data = df
-            
-            # Record original unit
-            if depth_unit != 'Auto':
-                self.depth_unit = depth_unit.upper()
-                self.depth_unit_detected = True
-            else:
-                # Detect from the depth column name via whole-token matching.
-                col_tokens = set(_tokenize(self.depth_col))
-                if col_tokens & _FEET_TOKENS:
-                    self.depth_unit = 'FT'
-                    self.depth_unit_detected = True
-                elif col_tokens & _METER_TOKENS:
-                    self.depth_unit = 'M'
-                    self.depth_unit_detected = True
-                else:
-                    # Unit unknown: do NOT silently assume meters and triple the
-                    # depth of a feet-native file. Treat as feet (no conversion)
-                    # and warn so the UI can prompt the user to confirm.
-                    self.depth_unit = 'FT'
-                    self.depth_unit_detected = False
-                    self.depth_unit_warning = (
-                        "Core depth unit could not be determined from the column "
-                        f"name '{self.depth_col}'; depths were left unchanged "
-                        "(assumed feet). Set the depth unit manually if this is wrong."
-                    )
-                    logger.warning(self.depth_unit_warning)
-
-            self._auto_convert_units()
-
-            # Auto convert to feet only when the unit is positively meters.
-            if self.depth_unit == 'M':
-                self.convert_depth_to_feet()
-
-            return True
-            
-        except Exception as e:
-            logger.error("Error reading core data: %s", e)
+    def _columns_found(self, df: pd.DataFrame) -> bool:
+        """Predicate for ``read_table``: a depth column and a porosity or perm column."""
+        if self._find_column(df, self.DEPTH_ALIASES) is None:
             return False
-    
-    def read_core_file(self, file_path: str, separator: str = '\t') -> bool:
+        return (self._find_column(df, self.POROSITY_ALIASES) is not None
+                or self._find_column(df, self.PERM_ALIASES) is not None)
+
+    def read_core_from_buffer(self, file_buffer, separator: Optional[str] = None,
+                              depth_unit: str = 'Auto', *, fill_down: bool = False,
+                              porosity_scale=None, sheet=0) -> bool:
         """
-        Read core data from a file path.
-        
+        Read core data from a file buffer (for Streamlit uploads).
+
+        Args:
+            file_buffer: File buffer object
+            separator: preferred delimiter (None = detect: tab, comma, ; or |)
+            depth_unit: Depth unit: 'Auto', 'M', or 'FT'
+            fill_down: blank well cells continue the well above
+            porosity_scale: None (decide per well: max > 1 means percent),
+                'percent' / 'fraction' for every well, or ``{well: scale}``
+            sheet: sheet index or name (Excel bytes only)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        return self._read(file_buffer, separator, depth_unit, fill_down, porosity_scale, sheet)
+
+    def read_core_file(self, file_path: str, separator: Optional[str] = None,
+                       depth_unit: str = 'Auto', *, fill_down: bool = False,
+                       porosity_scale=None, sheet=0) -> bool:
+        """
+        Read core data from a file path (delimited text, UTF-8 or CP1252, or .xlsx).
+
         Args:
             file_path: Path to the core data file
-            separator: Column separator
-            
+            separator: preferred delimiter (None = detect)
+
         Returns:
             True if successful
         """
+        return self._read(file_path, separator, depth_unit, fill_down, porosity_scale, sheet)
+
+    def _read(self, source, separator, depth_unit, fill_down, porosity_scale, sheet) -> bool:
+        # A handler instance may be reused for another file. Reset all
+        # per-load metadata so a prior M conversion or warning cannot suppress
+        # or contaminate the next load.
+        self._reset()
         try:
-            # Core reports commonly contain non-ASCII units/sample labels. Use
-            # UTF-8 explicitly rather than the Windows locale default, then
-            # retain a CP1252 fallback for legacy files.
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    return self.read_core_from_buffer(f, separator)
-            except UnicodeDecodeError:
-                logger.warning(
-                    "Core file %s is not UTF-8; retrying with CP1252", file_path
-                )
-                with open(file_path, 'r', encoding='cp1252') as f:
-                    return self.read_core_from_buffer(f, separator)
+            table = read_table(source, self._columns_found, sheet=sheet, delimiter=separator)
+            return self._build_from_table(table, depth_unit, fill_down, porosity_scale)
         except Exception as e:
-            logger.error("Error reading core file: %s", e)
+            self.last_error = str(e)
+            logger.error("Error reading core data: %s", e)
             return False
+
+    def _build_from_table(self, table, depth_unit: str, fill_down: bool,
+                          porosity_scale) -> bool:
+        self.table_read = replace(table, frame=None)
+        self.notes = list(table.notes)
+        df = table.frame.copy()
+        lines = list(table.line_numbers) or list(range(2, len(df) + 2))
+
+        if df.empty:
+            self.last_error = "Empty core file"
+            logger.warning("Empty core file")
+            return False
+
+        # Normalize column names for matching
+        df.columns = df.columns.str.strip().str.lower()
+
+        # Find required depth column
+        self.depth_col = self._find_column(df, self.DEPTH_ALIASES)
+        if self.depth_col is None:
+            self.last_error = f"Could not find depth column. Columns found: {list(df.columns)}"
+            logger.warning("Could not find depth column")
+            return False
+
+        # Find optional columns
+        self.porosity_col = self._find_column(df, self.POROSITY_ALIASES)
+        self.perm_col = self._find_column(df, self.PERM_ALIASES)
+        self.grain_density_col = self._find_column(df, self.GRAIN_DENSITY_ALIASES)
+        self.well_col, self.well_kind = find_well_column(df, self._find_column)
+        if self.well_col in (self.depth_col, self.porosity_col, self.perm_col,
+                             self.grain_density_col):
+            self.well_col, self.well_kind = None, 'name'
+
+        # Validate that we have at least one property to validate
+        if self.porosity_col is None and self.perm_col is None:
+            self.last_error = ("No porosity or permeability column found. "
+                               f"Columns found: {list(df.columns)}")
+            logger.warning("No porosity or permeability column found")
+            return False
+
+        # A depth column that is TVD does not match MD logs.
+        if set(_tokenize(self.depth_col)) & {'tvd', 'tvdss'}:
+            self.depth_is_tvd = True
+            self.tvd_warning = (
+                f"Core depths look like TVD (column '{self.depth_col}'); logs are on MD. "
+                "Import only if the well is vertical or the logs are on TVD."
+            )
+            logger.warning(self.tvd_warning)
+
+        depth_num = pd.to_numeric(df[self.depth_col], errors='coerce')
+
+        # Well column: strip, optionally fill blanks down, count what is left.
+        wells_txt: List[str] = []
+        if self.well_col:
+            wells_txt = [_cell_text(v) for v in df[self.well_col]]
+            if not any(wells_txt):
+                self.notes.append(f"Well column '{self.well_col}' is empty; it was ignored.")
+                self.well_col, self.well_kind = None, 'name'
+                wells_txt = []
+        if self.well_col:
+            self.fill_down_applicable = merged_cell_pattern_applies(
+                wells_txt, depth_num.tolist())
+            self.fill_down = bool(fill_down)
+            if fill_down:
+                filled = fill_down_wells(wells_txt)
+                self.filled_rows = [lines[i] for i, w in enumerate(wells_txt)
+                                    if not w and filled[i]]
+                wells_txt = [f or '' for f in filled]
+
+        keep = []
+        for i in range(len(df)):
+            if pd.isna(depth_num.iloc[i]):
+                raw = df[self.depth_col].iloc[i]
+                reason = ("missing depth" if _is_blank(raw)
+                          else f"non-numeric depth {str(raw)!r}")
+                self.excluded_rows.append((lines[i], reason))
+            elif self.well_col and not wells_txt[i]:
+                self.blank_well_rows.append(lines[i])
+                self.excluded_rows.append((lines[i], "no well (blank well cell)"))
+            else:
+                keep.append(i)
+
+        if not keep:
+            self.last_error = "No valid core data after cleaning"
+            logger.warning("No valid core data after cleaning")
+            return False
+
+        df[self.depth_col] = depth_num
+        if self.well_col:
+            df[self.well_col] = wells_txt
+        # Convert numeric columns
+        for col in (self.porosity_col, self.perm_col, self.grain_density_col):
+            if col:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        df['__line__'] = lines
+        df = df.iloc[keep]
+
+        if self.porosity_col:
+            df = self._convert_porosity(df, porosity_scale)
+
+        # Sort by depth
+        df = df.sort_values(self.depth_col).reset_index(drop=True)
+        self._row_lines = df.pop('__line__').tolist()
+        if self.porosity_col:
+            self._por_raw = df.pop('__por_raw__').to_numpy(dtype=float)
+
+        self.data = df
+
+        # Record original unit
+        if depth_unit != 'Auto':
+            self.depth_unit = depth_unit.upper()
+            self.depth_unit_detected = True
+        else:
+            # Detect from the depth column name via whole-token matching.
+            col_tokens = set(_tokenize(self.depth_col))
+            if col_tokens & _FEET_TOKENS:
+                self.depth_unit = 'FT'
+                self.depth_unit_detected = True
+            elif col_tokens & _METER_TOKENS:
+                self.depth_unit = 'M'
+                self.depth_unit_detected = True
+            elif table.unit_row_unit in ('FT', 'M'):
+                self.depth_unit = table.unit_row_unit
+                self.depth_unit_detected = True
+            else:
+                # Unit unknown: do NOT silently assume meters and triple the
+                # depth of a feet-native file. Treat as feet (no conversion)
+                # and warn so the UI can prompt the user to confirm.
+                self.depth_unit = 'FT'
+                self.depth_unit_detected = False
+                self.depth_unit_warning = (
+                    "Core depth unit could not be determined from the column "
+                    f"name '{self.depth_col}'; depths were left unchanged "
+                    "(assumed feet). Set the depth unit manually if this is wrong."
+                )
+                logger.warning(self.depth_unit_warning)
+
+        # Auto convert to feet only when the unit is positively meters.
+        if self.depth_unit == 'M':
+            self.convert_depth_to_feet()
+
+        return True
     
     def _find_column(self, df: pd.DataFrame, aliases: List[str]) -> Optional[str]:
         """
@@ -267,28 +381,110 @@ class CoreDataHandler:
                     return col
         return None
     
-    def _auto_convert_units(self):
-        """Auto-detect and convert units for porosity."""
-        if self.data is None or self.porosity_col is None:
-            return
-        
-        porosity = self.data[self.porosity_col].dropna()
-        if len(porosity) == 0:
-            return
-        
-        # If max porosity > 1, assume it's in percentage (0-100). Values well
-        # above 100 indicate corrupt data rather than a percent scale, so warn
-        # instead of silently dividing (which would still leave garbage).
-        pmax = porosity.max()
-        if pmax > 100.0:
-            logger.warning(
-                "Core porosity max is %.1f (> 100); data may be corrupt. "
-                "Applying percent->fraction conversion anyway.", pmax
-            )
-        if pmax > 1.0:
-            self.data[self.porosity_col] = self.data[self.porosity_col] / 100.0
-            self.porosity_converted = True
-            logger.info("Converted porosity from %% to fraction (max was %.1f%%)", pmax)
+    def _group_keys(self, df: pd.DataFrame) -> np.ndarray:
+        """Per-row well identity key ('' for a file without a well column)."""
+        if not self.well_col or self.well_col not in df.columns:
+            return np.full(len(df), '', dtype=object)
+        return np.array([group_key(w, self.well_kind) for w in df[self.well_col]], dtype=object)
+
+    def _convert_porosity(self, df: pd.DataFrame, requested) -> pd.DataFrame:
+        """Decide percent vs fraction per well and convert (whole file without a well column).
+
+        Values above 1 after conversion (e.g. above 100 %) are invalid: they are set to NaN
+        and listed in ``excluded_rows``. ``requested`` may force the scale
+        (``'percent'`` / ``'fraction'`` for all wells, or ``{well: scale}``).
+        """
+        col = self.porosity_col
+        raw = df[col].to_numpy(dtype=float)
+        keys = self._group_keys(df)
+        line_of = df['__line__'].to_numpy()
+        forced: Dict[str, str] = {}
+        if isinstance(requested, dict):
+            forced = {group_key(k, self.well_kind): v for k, v in requested.items()}
+        elif requested in ('percent', 'fraction'):
+            forced = {k: requested for k in set(keys)}
+
+        scales: Dict[str, str] = {}
+        converted = raw.copy()
+        for key in dict.fromkeys(keys):
+            mask = keys == key
+            finite = raw[mask][np.isfinite(raw[mask])]
+            pmax = float(finite.max()) if len(finite) else 0.0
+            # The median decides, so one typo ("25" among fractions) is flagged
+            # as out of range instead of dividing the whole well by 100.
+            median = float(np.median(finite)) if len(finite) else 0.0
+            scale = forced.get(key) or ('percent' if median > 1.0 else 'fraction')
+            scales[key] = scale
+            if pmax > 100.0:
+                logger.warning(
+                    "Core porosity max is %.1f (> 100); data may be corrupt; "
+                    "values above 100 %% are excluded.", pmax)
+            if scale == 'percent':
+                converted[mask] = raw[mask] / 100.0
+                logger.info("Converted porosity from %% to fraction (max was %.1f%%)", pmax)
+        bad = np.isfinite(converted) & (converted > 1.0)
+        for i in np.flatnonzero(bad):
+            shown = raw[i]
+            self.excluded_rows.append(
+                (int(line_of[i]), f"porosity {shown:g} out of range (value excluded)"))
+        converted[bad] = np.nan
+
+        df = df.copy()
+        df['__por_raw__'] = raw
+        df[col] = converted
+        self._scales_by_group = scales
+        self._publish_scales(df)
+        return df
+
+    def _publish_scales(self, df: Optional[pd.DataFrame] = None):
+        """Derive the public scale attributes from ``_scales_by_group``."""
+        data = df if df is not None else self.data
+        labels: Dict[str, str] = {}
+        if self.well_col and data is not None and self.well_col in data.columns:
+            for w in data[self.well_col]:
+                labels.setdefault(group_key(w, self.well_kind), str(w))
+        self.porosity_scales = {labels.get(k, k or ''): v
+                                for k, v in self._scales_by_group.items()}
+        distinct = set(self._scales_by_group.values())
+        self.porosity_converted = 'percent' in distinct
+        self.porosity_scale_mixed = len(distinct) > 1
+        self.porosity_scale = next(iter(distinct)) if len(distinct) == 1 else None
+        if self.porosity_scale_mixed:
+            parts = ", ".join(f"{name}: {scale}" for name, scale in self.porosity_scales.items())
+            self.porosity_warning = (
+                f"Porosity scale differs between wells ({parts}). Check each well.")
+        else:
+            self.porosity_warning = None
+
+    def set_porosity_scale(self, scale: str, well: Optional[str] = None) -> int:
+        """Override the porosity scale ('percent' or 'fraction') of this part.
+
+        Re-derives the porosity from the values as read. ``well`` limits the change to
+        one well of a multi-well handler (any spelling); a split part is changed as a
+        whole. Values above 1 after conversion become NaN.
+
+        Returns:
+            The number of values that became invalid.
+        """
+        if scale not in ('percent', 'fraction'):
+            raise ValueError("scale must be 'percent' or 'fraction'")
+        if self.data is None or self.porosity_col is None or self._por_raw is None:
+            return 0
+        keys = self._group_keys(self.data)
+        mask = np.ones(len(keys), dtype=bool)
+        if well is not None:
+            mask = keys == group_key(well, self.well_kind)
+        raw = self._por_raw
+        new = raw[mask] / 100.0 if scale == 'percent' else raw[mask]
+        invalid = np.isfinite(new) & (new > 1.0)
+        new = np.where(invalid, np.nan, new)
+        values = self.data[self.porosity_col].to_numpy(dtype=float).copy()
+        values[mask] = new
+        self.data[self.porosity_col] = values
+        for key in set(keys[mask]):
+            self._scales_by_group[key] = scale
+        self._publish_scales()
+        return int(invalid.sum())
     
     def convert_depth_to_feet(self):
         """Convert depth from meters to feet to match log data."""
@@ -634,17 +830,39 @@ class CoreDataHandler:
         values = self.data[self.well_col].dropna().astype(str).str.strip()
         return [v for v in dict.fromkeys(values) if v]
 
-    def split_by_well(self) -> Dict[str, 'CoreDataHandler']:
-        """One CoreDataHandler per well name (same unit state, that well's samples)."""
+    def _make_part(self, idx: np.ndarray, spellings: List[str]) -> 'CoreDataHandler':
+        part = copy.copy(self)
+        part.data = self.data.iloc[idx].reset_index(drop=True)
+        part.spellings = list(spellings)
+        if self._por_raw is not None:
+            part._por_raw = self._por_raw[idx]
+        keys = {group_key(s, self.well_kind) for s in spellings}
+        part._scales_by_group = {k: v for k, v in self._scales_by_group.items() if k in keys}
+        part._publish_scales()
+        return part
+
+    def split_by_well(self, group: bool = False) -> Dict[str, 'CoreDataHandler']:
+        """One CoreDataHandler per well (same unit state, that well's samples).
+
+        With ``group=False`` the parts are keyed by the raw well string. With
+        ``group=True`` spellings of one well ("BKS-01", "BKS 01") form one part, re-sorted
+        by depth, keyed by the first spelling seen; ``part.spellings`` lists all of them.
+        Each part carries its own ``porosity_scale``.
+        """
         parts: Dict[str, CoreDataHandler] = {}
         names = self.well_names()
         if not names:
             return parts
-        labels = self.data[self.well_col].astype(str).str.strip()
-        for name in names:
-            part = copy.copy(self)
-            part.data = self.data[labels == name].reset_index(drop=True)
-            parts[name] = part
+        labels = self.data[self.well_col].astype(str).str.strip().to_numpy()
+        if not group:
+            for name in names:
+                parts[name] = self._make_part(np.flatnonzero(labels == name), [name])
+            return parts
+        depths = self.data[self.depth_col].to_numpy(dtype=float)
+        for _key, spellings in group_well_names(names, self.well_kind).items():
+            idx = np.flatnonzero(np.isin(labels, spellings))
+            idx = idx[np.argsort(depths[idx], kind='stable')]
+            parts[spellings[0]] = self._make_part(idx, spellings)
         return parts
 
     def to_dataframe(self) -> pd.DataFrame:
