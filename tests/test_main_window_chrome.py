@@ -220,6 +220,7 @@ def test_browser_tree_from_model(browser, sample_log_data):
 def test_browser_results_stale(browser, sample_log_data):
     browser.model.las_data = sample_log_data
     browser.model.results = sample_log_data.assign(VSH=0.3)   # any non-None frame marks results
+    browser.model.active_well.stale = True
     browser.rebuild()
     browser.set_results_stale(True)
     assert _group(browser, "Results")[1].text() == "out of date"
@@ -229,6 +230,7 @@ def test_browser_stale_flag_safe_without_results_and_reapplied(browser, sample_l
     browser.set_results_stale(True)   # no tree yet: must not raise
     browser.model.las_data = sample_log_data
     browser.model.results = sample_log_data.assign(VSH=0.3)
+    browser.model.active_well.stale = True
     browser.rebuild()
     assert _group(browser, "Results")[1].text() == "out of date"
 
@@ -443,6 +445,9 @@ def test_fresh_load_clears_stale(window, tmp_path):
 def test_browser_names_have_tooltips(window, tmp_path):
     _write_las(tmp_path / "d.las", 1000, 1050)
     window._load_single_las(str(tmp_path / "d.las"))
+    # The browser reads sources from the well dataset, not from set_las_sources.
+    window.model.active_well.sources = [{"name": "d.las", "path": "", "rows": 50}]
+    window.data_browser.rebuild()
     root = window.data_browser.tree_model.item(0)
     las_group = root.child(0, 0)
     assert las_group.toolTip() == "LAS files"
