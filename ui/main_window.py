@@ -54,7 +54,7 @@ from services.load_service import (
     sanitize_error_detail,
 )
 from services.export_service import ExportService
-from services.session_service import SessionService
+from services.session_service import SessionService, is_v2_session
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
 from .parameters_window import PAGES, ParametersWindow
@@ -76,6 +76,7 @@ from .tabs.export_tab import ExportTab
 
 from modules.formation_tops import FormationTops
 from modules.core_handler import CoreDataHandler
+from modules.well_matching import assign_to_wells, depth_coverage_warning
 
 
 logger = logging.getLogger(__name__)
@@ -208,9 +209,7 @@ class MainWindow(QMainWindow):
         self.data_browser = DataBrowserPanel(self.model)
         splitter.addWidget(self.data_browser)
         self.data_browser.set_actions(self.actions_)
-        self.data_browser.action_requested.connect(
-            lambda key: self.actions_[key].trigger()
-        )
+        self.data_browser.action_requested.connect(self._on_browser_action)
         self.params_window = ParametersWindow(self.model, self)
         self.merge_dialog = MergeDialog(self)
 
@@ -302,6 +301,7 @@ class MainWindow(QMainWindow):
         self.export_tab.export_succeeded.connect(
             lambda path: self.show_banner("success", f"Exported to {path}")
         )
+        self.summary_tab.well_activated.connect(self._on_well_selected)
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -1117,8 +1117,78 @@ class MainWindow(QMainWindow):
         )
         return False
 
+    def _assign_per_well(self, parsed, file_path: str, kind: str, apply):
+        """Hand a tops/core file to its wells; returns ``(active_part, notes)``.
+
+        Without a well column the whole file belongs to the active well. With
+        one, each part goes to the loaded well it matches (UWI/API or name);
+        ``apply(ds, part)`` attaches a part to a non-active well. Unmatched
+        names and parts whose depths miss a well's logs are reported.
+        """
+        project = self.model.project
+        active = project.active
+        if not parsed.well_names():
+            return parsed, []
+        matches, unmatched = assign_to_wells(
+            parsed.split_by_well(),
+            [(ds.key, ds.well_info) for ds in project.wells],
+            parsed.well_kind,
+        )
+        notes = []
+        name = os.path.basename(file_path)
+        others = [key for key in matches if key != active.key]
+        for key in others:
+            ds = project.get(key)
+            apply(ds, matches[key])
+            note = self._coverage_note(ds, matches[key], kind)
+            if note:
+                notes.append(note)
+            project.well_updated.emit(key)
+        if others:
+            self._recompute_stale(others)
+        assigned = [project.get(key).display_name for key in matches]
+        if assigned:
+            notes.append(f"{name}: {kind} assigned to {', '.join(assigned)}.")
+        if unmatched:
+            notes.append(
+                f"{name}: no loaded well matches {', '.join(unmatched)}; "
+                "those rows were not used."
+            )
+        if active.key not in matches:
+            notes.append(f"{name} has no {kind} for the active well {active.display_name}.")
+        return matches.get(active.key), notes
+
+    @staticmethod
+    def _coverage_note(ds, part, kind: str):
+        """Depth-coverage warning for a part attached to a non-active well."""
+        data = ds.las_data
+        if data is None or "DEPTH" not in data.columns or data["DEPTH"].dropna().empty:
+            return None
+        depth = data["DEPTH"].dropna()
+        if kind == "formation tops":
+            formations = getattr(part, "formations", None) or []
+            if not formations:
+                return None
+            top = min(fm.top_depth for fm in formations)
+            bottom = max(fm.bottom_depth for fm in formations)
+        else:
+            frame = getattr(part, "data", None)
+            col = getattr(part, "depth_col", None)
+            if frame is None or col not in getattr(frame, "columns", []):
+                return None
+            depths = frame[col].dropna()
+            if depths.empty:
+                return None
+            top, bottom = float(depths.min()), float(depths.max())
+        label = f"{ds.display_name}: {kind}"
+        return depth_coverage_warning(label, top, bottom, depth.min(), depth.max())
+
     def _on_tops_file_selected(self, file_path: str):
-        """Handle formation tops file selection (tops belong to the active well)."""
+        """Handle formation tops file selection.
+
+        Tops belong to the active well, unless the file has a well column: then
+        every loaded well gets its own rows.
+        """
         if not self._require_active_well("formation tops"):
             return
         try:
@@ -1128,6 +1198,18 @@ class MainWindow(QMainWindow):
                     # convert_to_feet() only converts when the unit was detected
                     # as meters; feet/undetected files are left unchanged.
                     tops.convert_to_feet()
+
+                    def attach(ds, part):
+                        ds.formation_tops = part
+                        ds.tops_path = file_path
+
+                    tops, notes = self._assign_per_well(
+                        tops, file_path, "formation tops", attach
+                    )
+                    if tops is None:
+                        self._show_load_notes(None, notes)
+                        return
+                    self.model.active_well.tops_path = file_path
                     self.model.formation_tops = tops
 
                     self.params_window.update_formations_list(tops.get_formation_list())
@@ -1136,7 +1218,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {len(tops.formations)} formations"
                     )
 
-                    self._show_load_notes(tops)
+                    self._show_load_notes(tops, notes)
 
                     # Update QC tab
                     self.qc_tab.update_display()
@@ -1160,17 +1242,33 @@ class MainWindow(QMainWindow):
             )
 
     def _on_core_file_selected(self, file_path: str):
-        """Handle core data file selection (core belongs to the active well)."""
+        """Handle core data file selection.
+
+        Core belongs to the active well, unless the file has a well column:
+        then every loaded well gets its own samples.
+        """
         if not self._require_active_well("core data"):
             return
         try:
             self._sync_model_from_ui()
 
             handler = CoreDataHandler()
+            depth_unit = self.model.core_depth_unit
             with open(file_path, "r") as f:
-                if handler.read_core_from_buffer(
-                    f, depth_unit=self.model.core_depth_unit
-                ):
+                if handler.read_core_from_buffer(f, depth_unit=depth_unit):
+
+                    def attach(ds, part):
+                        ds.core_data = part
+                        ds.core_path = file_path
+                        ds.core_depth_unit = depth_unit
+
+                    handler, notes = self._assign_per_well(
+                        handler, file_path, "core data", attach
+                    )
+                    if handler is None:
+                        self._show_load_notes(None, notes)
+                        return
+                    self.model.active_well.core_path = file_path
                     self.model.core_data = handler
                     self.params_window.set_core_available(True)
                     self._refresh_core_actions()
@@ -1181,7 +1279,7 @@ class MainWindow(QMainWindow):
                         f"Loaded {summary['n_samples']} core samples"
                     )
 
-                    self._show_load_notes(handler)
+                    self._show_load_notes(handler, notes)
                 else:
                     QMessageBox.warning(
                         self, "Warning", "Failed to parse core data file"
@@ -1317,6 +1415,20 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage(text)
         self.show_banner("success", text)
 
+    def _on_browser_action(self, key: str):
+        """Data Browser request: an action key, or ``edit_zone:<ZONE>``."""
+        if key.startswith("edit_zone:"):
+            self._edit_zone(key.split(":", 1)[1])
+        elif key in self.actions_:
+            self.actions_[key].trigger()
+
+    def _edit_zone(self, zone: str):
+        """Open the Parameters window on the active well's ``zone`` (Zones page)."""
+        if self.model.active_well is None:
+            return
+        self.model.set_edit_scope("well", zone)
+        self.params_window.open_page("zones")
+
     def _on_data_loaded(self):
         """Refresh every tab after data replacement invalidates derived state."""
         self._update_all_tabs()
@@ -1346,7 +1458,9 @@ class MainWindow(QMainWindow):
             return
 
         self._sync_model_from_ui()
-        result = self.analysis_service.calculate_rw_rsh(self.model)
+        # At the well · zone scope only that zone's samples are used.
+        zone = self.model.edit_zone if self.model.edit_scope == "well" else None
+        result = self.analysis_service.calculate_rw_rsh(self.model, zone=zone)
 
         if result:
             self.params_window.show_calculated_rw_rsh(result["rw"], result["rsh"])
@@ -1547,17 +1661,37 @@ class MainWindow(QMainWindow):
             self, "Load Session", "", "Session Files (*.json);;All Files (*)"
         )
 
-        if file_path:
-            session_data = self.session_service.load_session(file_path)
-            if session_data:
-                self.session_service.apply_session_to_model(self.model, session_data)
-                self._update_ui_from_model()
-                # Sessions restore parameters only; any results in memory
-                # were computed with the old parameters.
-                self._recompute_stale()
-                self.statusBar.showMessage(f"Session loaded from {file_path}")
-            else:
-                QMessageBox.critical(self, "Error", "Failed to load session")
+        if not file_path:
+            return
+        session_data = self.session_service.load_session(file_path)
+        if not session_data:
+            QMessageBox.critical(self, "Error", "Failed to load session")
+            return
+        # Restoring writes the saved values where they belong; it must never
+        # create entries at whatever scope the user happened to be editing.
+        self.model.set_edit_scope("project")
+        if is_v2_session(session_data):
+            # A v2.0 session is a whole project: it replaces the loaded wells.
+            self.batch_runner.cancel()
+            self.model.reset()
+            self.session_service.apply_session_to_model(self.model, session_data)
+            notes = self.session_service.restore_wells(
+                self.model, session_data,
+                progress=lambda message, percent: self._set_progress(
+                    min(max(percent, 1), 99), message),
+            )
+            self._set_progress(100)
+            self._update_ui_from_model()
+            self._refresh_active_well_ui()
+        else:
+            self.session_service.apply_session_to_model(self.model, session_data)
+            notes = self.session_service.restore_wells(self.model, session_data)
+            self._update_ui_from_model()
+        # Results in memory (v1.x) were computed with the old parameters;
+        # restored wells (v2.0) have none and need a run.
+        self._recompute_stale()
+        self._show_load_notes(None, notes)
+        self.statusBar.showMessage(f"Session loaded from {file_path}")
 
     def _on_new_project(self):
         """Handle new project button click - clear all data and reset to fresh state."""

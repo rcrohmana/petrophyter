@@ -100,8 +100,12 @@ def _json_safe(value):
     return value
 
 
-def _is_v2(session_data: Dict) -> bool:
+def is_v2_session(session_data: Dict) -> bool:
+    """True for a v2.x session (a whole project: wells, scopes, tops and core)."""
     return str(session_data.get("_session_version", "1.0")).split(".")[0] == "2"
+
+
+_is_v2 = is_v2_session
 
 
 def attach_tops(well, path: str) -> List[str]:
