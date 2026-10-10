@@ -11,7 +11,9 @@ from typing import Dict, List, Tuple, Optional, Any
 from .las_utils import (
     COMMON_NULL_VALUES,
     DEPTH_COLUMN_CANDIDATES,
+    normalize_curve_units,
     replace_null_values,
+    well_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,9 @@ class LASParser:
         self.original_depth_unit: Optional[str] = None  # None => not detected
         self.depth_unit_detected: bool = False
         self.depth_unit_warning: Optional[str] = None
+        # Curve-unit normalisation notes (converted / inferred / suspicious
+        # units). Always a list so the UI can read it without a None check.
+        self.unit_warnings: List[str] = []
         self.encoding_warning: bool = False
         self.last_error: Optional[str] = None
         
@@ -161,8 +166,11 @@ class LASParser:
         if self.las is None:
             return
             
+        well_name = self._get_header_value('WELL', 'Unknown')
+        if isinstance(well_name, str):
+            well_name = well_name.strip()
         self.well_info = {
-            'well_name': self._get_header_value('WELL', 'Unknown'),
+            'well_name': well_name,
             'field': self._get_header_value('FLD', 'Unknown'),
             'company': self._get_header_value('COMP', 'Unknown'),
             'start_depth': self._get_header_value('STRT', 0),
@@ -170,7 +178,17 @@ class LASParser:
             'step': self._get_header_value('STEP', 0),
             'null_value': self._get_header_value('NULL', -999.25),
             'depth_unit': self._get_depth_unit(),
+            # Identity / provenance fields: None when the header lacks them.
+            'uwi': self._get_text('UWI'),
+            'api': self._get_text('API'),
+            'location': self._get_text('LOC'),
+            'service_company': self._get_text('SRVC'),
+            'date': self._get_text('DATE'),
         }
+        self._extract_header_parameters()
+        key, identified = well_key(self.well_info)
+        self.well_info['well_key'] = key
+        self.well_info['well_identified'] = identified
         # Guard against a non-numeric NULL from the header (e.g. lasio returning
         # an empty string), which would break the abs() null comparison later.
         null_val = pd.to_numeric(self.well_info['null_value'], errors='coerce')
@@ -184,6 +202,56 @@ class LASParser:
         except (KeyError, AttributeError):
             return default
     
+    def _get_header_item(self, *mnemonics: str):
+        """Return the first non-empty header item among mnemonics.
+
+        Looks in the well section and then the parameter section (lasio keeps
+        KB/GL/BHT/TD style entries in either, depending on the file).
+        """
+        for section in (getattr(self.las, 'well', None), getattr(self.las, 'params', None)):
+            if section is None:
+                continue
+            for mnemonic in mnemonics:
+                try:
+                    item = section[mnemonic]
+                except (KeyError, AttributeError, IndexError):
+                    continue
+                value = getattr(item, 'value', None)
+                if value is None or str(value).strip() == '':
+                    continue
+                if isinstance(value, (int, float)) and abs(float(value) + 999.25) < 0.01:
+                    continue
+                return item
+        return None
+
+    def _get_text(self, mnemonic: str) -> Optional[str]:
+        """Header value as stripped text, or None when absent/blank."""
+        item = self._get_header_item(mnemonic)
+        return None if item is None else str(item.value).strip()
+
+    def _extract_header_parameters(self):
+        """Capture elevations, datum, temperature and total depth when present."""
+        numeric_specs = {
+            'kb_elevation': ('KB', 'EKB'),
+            'gl_elevation': ('GL', 'EGL'),
+            'df_elevation': ('DF', 'EDF'),
+            'bht': ('BHT', 'MRT'),
+            'td': ('TD', 'TDL', 'TDD'),
+        }
+        for name, mnemonics in numeric_specs.items():
+            item = self._get_header_item(*mnemonics)
+            if item is None:
+                continue
+            number = pd.to_numeric(item.value, errors='coerce')
+            self.well_info[name] = str(item.value).strip() if pd.isna(number) else float(number)
+            unit = (getattr(item, 'unit', '') or '').strip()
+            if unit:
+                self.well_info[f'{name}_unit'] = unit
+        for name, mnemonic in (('permanent_datum', 'PDAT'), ('depth_measured_from', 'DMF')):
+            text = self._get_text(mnemonic)
+            if text:
+                self.well_info[name] = text
+
     def _get_depth_unit(self) -> Optional[str]:
         """
         Determine the depth unit from the LAS file.
@@ -195,9 +263,16 @@ class LASParser:
         """
         try:
             strt_unit = self.las.well['STRT'].unit
-            if strt_unit:
+            if strt_unit and strt_unit.strip():
                 return strt_unit.strip().upper()
         except (KeyError, AttributeError):
+            pass
+        # STRT carries no unit: fall back to the depth (first) curve's unit.
+        try:
+            curve_unit = self.las.curves[0].unit
+            if curve_unit and curve_unit.strip():
+                return curve_unit.strip().upper()
+        except (IndexError, AttributeError):
             pass
         return None  # Undetected
     
@@ -220,11 +295,13 @@ class LASParser:
             return
             
         self.data = self.las.df().reset_index()
-        
+        depth_source = None  # mnemonic the DEPTH column came from
+
         # Find the depth column (candidates shared with las_handler via las_utils)
         for col in DEPTH_COLUMN_CANDIDATES:
             if col in self.data.columns:
                 self.data = self.data.rename(columns={col: 'DEPTH'})
+                depth_source = col
                 break
 
         # If depth is still in index
@@ -235,6 +312,7 @@ class LASParser:
                 # Only force-rename the first column to DEPTH if it is numeric;
                 # a non-numeric first column is almost certainly not depth.
                 if pd.api.types.is_numeric_dtype(self.data[first_col]):
+                    depth_source = str(first_col)
                     self.data = self.data.rename(columns={first_col: 'DEPTH'})
 
         # Convert depth to FEET, but only when the source unit is positively
@@ -245,10 +323,24 @@ class LASParser:
         self.original_depth_unit = detected_unit
         self.depth_unit_detected = detected_unit is not None
         self.depth_unit_warning = None
+        self.well_info['original_depth_unit'] = detected_unit
+
+        # A TVD mnemonic as the depth column means the log is not on measured
+        # depth; flag it so the user does not mix it with MD core/tops depths.
+        is_tvd = depth_source is not None and depth_source.upper() == 'TVD'
+        self.well_info['depth_reference'] = 'TVD' if is_tvd else 'MD'
+        tvd_warning = (
+            "Depth column is TVD (true vertical depth); core and tops depths "
+            "are usually measured depth (MD)."
+        ) if is_tvd else None
 
         if detected_unit in _METER_UNITS:
             # Convert meters to feet (1 m = 3.28084 ft)
             self.data['DEPTH'] = self.data['DEPTH'] * 3.28084
+            for key in ('start_depth', 'stop_depth', 'step'):
+                value = pd.to_numeric(self.well_info.get(key), errors='coerce')
+                if not pd.isna(value):
+                    self.well_info[key] = float(value) * 3.28084
             self.well_info['depth_unit'] = 'FT'
             self.well_info['converted_from_meters'] = True
             logger.info("Converted depth from %s to FT", detected_unit)
@@ -267,11 +359,23 @@ class LASParser:
             )
             logger.warning(self.depth_unit_warning)
 
+        if tvd_warning:
+            logger.warning(tvd_warning)
+            self.depth_unit_warning = (
+                f"{self.depth_unit_warning} {tvd_warning}"
+                if self.depth_unit_warning else tvd_warning
+            )
+
         # Replace null values with NaN. Both the declared header NULL and the
         # common undeclared sentinels are handled by the shared helper (same
         # dtype set and tolerance as the merge path in las_handler), so a file
         # null-handles identically whether it is loaded singly or merged.
         replace_null_values(self.data, [self.null_value] + COMMON_NULL_VALUES)
+
+        # Bring neutron / density / sonic curves to the app's working units.
+        self.data, self.curve_info, self.unit_warnings = normalize_curve_units(
+            self.data, self.curve_info
+        )
 
         # Store null value info
         self.null_values_replaced = True

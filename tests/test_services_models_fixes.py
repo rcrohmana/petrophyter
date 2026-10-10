@@ -225,29 +225,27 @@ class TestMergeServiceFixes:
         assert len(worker.parsers) == 2
         assert worker.file_names == ["a.las", "b.las"]
 
-    def test_worker_surfaces_cross_well_warning(self, monkeypatch):
-        class FakeHandler:
+    def test_worker_refuses_cross_well_merge(self, monkeypatch):
+        class FailIfCalled:
             def merge_las_files(self, *args, **kwargs):
-                return {
-                    "merged_df": pd.DataFrame({"DEPTH": [1000.0]}),
-                    "merge_report": object(),
-                }
+                raise AssertionError("merge should not start")
 
         monkeypatch.setattr(
             "services.merge_service.validate_same_well",
             lambda parsers: (False, ["Well A", "Well B"]),
         )
-        monkeypatch.setattr("services.merge_service.LASHandler", FakeHandler)
-        messages = []
+        monkeypatch.setattr("services.merge_service.LASHandler", FailIfCalled)
+        errors = []
         completed = []
         worker = MergeWorker([object(), object()], ["a", "b"], 0.5, 5.0)
-        worker.signals.progress.connect(lambda message, percent: messages.append(message))
+        worker.signals.error.connect(errors.append)
         worker.signals.completed.connect(lambda df, report: completed.append(df))
 
         worker.run()
 
-        assert any("warning" in message.lower() and "different wells" in message.lower() for message in messages)
-        assert len(completed) == 1
+        assert len(errors) == 1 and "different wells" in errors[0]
+        assert "Well A" in errors[0] and "Well B" in errors[0]
+        assert completed == []
 
     @pytest.mark.parametrize(
         ("step_ft", "gap_limit_ft", "expected"),
