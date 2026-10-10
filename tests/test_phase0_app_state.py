@@ -109,6 +109,7 @@ def test_session_load_marks_existing_results_stale(window, monkeypatch, tmp_path
     monkeypatch.setattr(
         QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), "")
     )
+    _load(window, _parser("WELL-S"))
     window.model._well.calculated = True
     window._on_load_session()
     assert not window.stale_label.isHidden()

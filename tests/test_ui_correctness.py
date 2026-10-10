@@ -176,14 +176,14 @@ def test_stale_results_cannot_drive_perm_or_export(window, monkeypatch):
 
 
 def test_run_button_is_disabled_before_analysis_service_starts(window, monkeypatch):
-    window.model._well.las_data = pd.DataFrame({"DEPTH": [100.0]})
+    window.model.las_data = pd.DataFrame({"DEPTH": [100.0]})
     window.actions_["run_analysis"].setEnabled(True)
     states = []
     monkeypatch.setattr(window, "_sync_model_from_ui", lambda: None)
     monkeypatch.setattr(
-        window.analysis_service,
-        "run_analysis",
-        lambda model: states.append(window.actions_["run_analysis"].isEnabled()),
+        window.batch_runner,
+        "run",
+        lambda *a, **k: states.append(window.actions_["run_analysis"].isEnabled()),
     )
 
     window._on_run_analysis()
@@ -240,10 +240,13 @@ def test_analysis_completion_refreshes_each_tab_once_with_matching_summary(
             ),
         )
     monkeypatch.setattr(QMessageBox, "information", lambda *args: None)
+    window.model.las_data = pd.DataFrame({"DEPTH": [100.0]})
+    key = window.model.project.active_key
+    calls.clear()
     results = pd.DataFrame({"DEPTH": [100.0]})
     summary = {"marker": "matching", "net_pay": 0, "gross_sand": 0, "ng_pay": 0}
 
-    window._on_analysis_completed(results, summary)
+    window._on_well_completed(key, results, summary, "h")
 
     assert calls == [
         ("qc", "matching"),

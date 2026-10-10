@@ -245,15 +245,24 @@ def test_no_information_messagebox_in_codebase():
     assert offenders == []
 
 
-def test_analysis_complete_shows_banner_not_modal(window, qtbot, monkeypatch):
+def _loaded_well(window, tmp_path, name="w.las"):
+    """Load one real well through the load path; returns its key."""
+    _write_las(tmp_path / name, 1000, 1050)
+    window._load_single_las(str(tmp_path / name))
+    return window.model.project.active_key
+
+
+def test_analysis_complete_shows_banner_not_modal(window, qtbot, monkeypatch, tmp_path):
     import pandas as pd
+    key = _loaded_well(window, tmp_path)
     called = {"modal": False}
     from PyQt6.QtWidgets import QMessageBox
     monkeypatch.setattr(QMessageBox, "information",
                         lambda *a, **k: called.__setitem__("modal", True))
     results = pd.DataFrame({"DEPT": [1000.0], "PHIE": [0.2]})
     summary = {"net_pay": 1625.4, "gross_sand": 2768.8, "ng_pay": 0.587}
-    window._on_analysis_completed(results, summary)
+    window._on_well_completed(key, results, summary, "h")
+    window._on_batch_finished({"ok": [key], "failed": {}, "skipped": [], "cancelled": False})
     assert called["modal"] is False
     assert window.banner.isVisibleTo(window)
     assert "1625.4" in window.banner.message_label.text()
@@ -269,12 +278,17 @@ def test_qc_chip(window):
     assert not window.qc_chip.isVisibleTo(window)
 
 
-def test_parameter_change_marks_results_stale(window):
+def test_parameter_change_marks_results_stale(window, tmp_path):
+    _loaded_well(window, tmp_path)
     window.model.calculated = True     # as after a successful analysis
     window.params_window.parameters_updated.emit()
     assert window.stale_label.isVisibleTo(window)
     assert window.stale_label.property("status") == "warning"
-    window._on_analysis_started()
+    # Stale is decided by the parameter hash: a run with the current
+    # parameters clears it.
+    ds = window.model.active_well
+    ds.run_params_hash = window.model.well_params_hash(ds)
+    window.params_window.parameters_updated.emit()
     assert not window.stale_label.isVisibleTo(window)
 
 
@@ -397,6 +411,7 @@ def test_load_session_marks_results_stale(window, monkeypatch, tmp_path):
     # Sessions restore parameters only, so results in memory stay stale.
     from PyQt6.QtWidgets import QFileDialog
 
+    _loaded_well(window, tmp_path)
     window.model.calculated = True
     window.params_window.parameters_updated.emit()
     assert window.stale_label.isVisibleTo(window)
@@ -416,6 +431,7 @@ def test_load_session_marks_results_stale(window, monkeypatch, tmp_path):
 
 def test_fresh_load_clears_stale(window, tmp_path):
     _write_las(tmp_path / "c.las", 1000, 1050)
+    _loaded_well(window, tmp_path)
     window.model.calculated = True
     window.params_window.parameters_updated.emit()
     assert window.stale_label.isVisibleTo(window)
@@ -530,9 +546,21 @@ def test_banner_refresh_theme_rerenders_kind_icon(window):
         clear_icon_cache()
 
 
-def test_run_disabled_while_analysis_running(window):
-    window._on_analysis_started()
+def test_run_disabled_while_analysis_running(window, qtbot, tmp_path, monkeypatch):
+    import threading
+    import services.analysis_service as svc
+    from PyQt6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
+    _loaded_well(window, tmp_path)
+    assert window.actions_["run_analysis"].isEnabled()
+    gate = threading.Event()
+    real = svc.run_pipeline
+    monkeypatch.setattr(svc, "run_pipeline", lambda *a, **k: (gate.wait(10), real(*a, **k))[1])
+    window._on_run_analysis()
     assert not window.actions_["run_analysis"].isEnabled()
+    gate.set()
+    qtbot.waitUntil(lambda: window.actions_["run_analysis"].isEnabled(), timeout=30000)
 
 
 def _walk_menu_actions(menu):

@@ -318,31 +318,34 @@ def test_remove_well_asks_and_activates_another(two_wells, monkeypatch):
 
 # ---- stale flag, delivery ------------------------------------------------------------
 
-def test_stale_flag_is_per_well(two_wells):
+def test_stale_flag_follows_each_wells_parameter_hash(two_wells):
     window = two_wells
     a, b = (window.model.project.get(k) for k in ("WELL:BKS-01", "WELL:BKS-02"))
     a.calculated = b.calculated = True
-    window.params_window.parameters_updated.emit()  # B is active
-    assert b.stale and not a.stale
+    a.run_params_hash = window.model.well_params_hash(a)
+    b.run_params_hash = window.model.well_params_hash(b)
+    window._recompute_stale()
+    assert not a.stale and not b.stale and window.stale_label.isHidden()
+    # A project parameter change affects every analysed well ...
+    window.model.rw = 0.123
+    window.params_window.parameters_updated.emit()
+    assert a.stale and b.stale
     assert not window.stale_label.isHidden()
     window.model.set_active_well("WELL:BKS-01")
-    assert window.stale_label.isHidden()
-    window.model.set_active_well("WELL:BKS-02")
     assert not window.stale_label.isHidden()
-    window._clear_results_stale()
-    assert not b.stale and window.stale_label.isHidden()
+    # ... and re-running with the current parameters clears the flag.
+    b.run_params_hash = window.model.well_params_hash(b)
+    window._recompute_stale(["WELL:BKS-02"])
+    assert not b.stale and a.stale
 
 
-def test_analysis_results_go_to_the_well_that_started_the_run(two_wells, monkeypatch):
+def test_analysis_results_go_to_the_well_named_by_the_key(two_wells, monkeypatch):
     window = two_wells
-    monkeypatch.setattr(window.analysis_service, "run_analysis", lambda model: None)
-    window.model.set_active_well("WELL:BKS-01")
-    window._on_run_analysis()
-    window.model.set_active_well("WELL:BKS-02")  # switch while it "runs"
+    window.model.set_active_well("WELL:BKS-02")  # B is active while A's result arrives
 
     results = pd.DataFrame({"DEPTH": [1.0]})
     summary = {"net_pay": 1.0, "gross_sand": 2.0, "ng_pay": 0.5}
-    window._on_analysis_completed(results, summary)
+    window._on_well_completed("WELL:BKS-01", results, summary, "h")
 
     a, b = (window.model.project.get(k) for k in ("WELL:BKS-01", "WELL:BKS-02"))
     assert a.results is results and a.summary is summary and a.calculated
@@ -353,24 +356,19 @@ def test_analysis_results_go_to_the_well_that_started_the_run(two_wells, monkeyp
     assert window.model.results is results
 
 
-def test_analysis_error_is_recorded_on_the_starting_well(two_wells, monkeypatch):
+def test_analysis_error_is_recorded_on_the_named_well(two_wells, monkeypatch):
     window = two_wells
-    monkeypatch.setattr(window.analysis_service, "run_analysis", lambda model: None)
-    monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: None)
-    window.model.set_active_well("WELL:BKS-01")
-    window._on_run_analysis()
     window.model.set_active_well("WELL:BKS-02")
-    window._on_analysis_error("Analysis failed: boom")
+    window._on_well_failed("WELL:BKS-01", "Analysis failed: boom")
     a, b = (window.model.project.get(k) for k in ("WELL:BKS-01", "WELL:BKS-02"))
     assert a.status == "error" and b.status == "loaded"
 
 
 def test_analysis_result_for_a_removed_well_is_dropped(two_wells, monkeypatch):
     window = two_wells
-    monkeypatch.setattr(window.analysis_service, "run_analysis", lambda model: None)
-    window._on_run_analysis()  # B
     window.model.project.remove_well("WELL:BKS-02")
-    window._on_analysis_completed(pd.DataFrame({"DEPTH": [1.0]}), {})
+    window._on_well_completed("WELL:BKS-02", pd.DataFrame({"DEPTH": [1.0]}), {}, "h")
+    window._on_well_failed("WELL:BKS-02", "boom")
     assert window.model.project.get("WELL:BKS-01").results is None
 
 

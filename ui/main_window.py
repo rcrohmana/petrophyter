@@ -45,7 +45,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.app_model import AppModel
-from services.analysis_service import AnalysisService
+from services.analysis_service import AnalysisService, BatchRunner
 from services.merge_service import MergeService
 from services.load_service import (
     LoadWorker,
@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
 
         # Initialize services
         self.analysis_service = AnalysisService()
+        self.batch_runner = BatchRunner(self)
         self.merge_service = MergeService()
         self.export_service = ExportService()
         self.session_service = SessionService()
@@ -160,9 +161,8 @@ class MainWindow(QMainWindow):
         self._load_gap = 5.0
         self._bulk_loading = False
         self._load_worker = None
-        # Analysis delivery: the well that started the running analysis.
-        self._analysis_key = None
-        self._analysis_busy = False
+        # Batch analysis: number of wells in the current run.
+        self._batch_total = 0
 
         # Setup UI
         self._build_actions()
@@ -294,18 +294,21 @@ class MainWindow(QMainWindow):
         self.params_window.apply_shale_clicked.connect(self._on_apply_shale)
         self.params_window.calculate_perm_clicked.connect(self._on_calculate_perm)
 
-        self.params_window.parameters_updated.connect(self._mark_results_stale)
+        self.params_window.parameters_updated.connect(self._on_parameters_updated)
+        self.model.parameters_changed.connect(self._on_parameters_updated)
+        self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
+        self.model.formation_tops_loaded.connect(self._on_tops_or_core_changed)
+        self.model.core_data_loaded.connect(self._on_tops_or_core_changed)
         self.export_tab.export_succeeded.connect(
             lambda path: self.show_banner("success", f"Exported to {path}")
         )
 
-        # Analysis service signals
-        self.analysis_service.started.connect(self._on_analysis_started)
-        self.analysis_service.progress.connect(self._on_analysis_progress)
-        self.analysis_service.completed.connect(
-            self._on_analysis_completed, type=Qt.ConnectionType.QueuedConnection
-        )
-        self.analysis_service.error.connect(self._on_analysis_error)
+        # Batch analysis signals
+        self.batch_runner.started.connect(self._on_batch_started)
+        self.batch_runner.progress.connect(self._on_batch_progress)
+        self.batch_runner.well_completed.connect(self._on_well_completed)
+        self.batch_runner.well_failed.connect(self._on_well_failed)
+        self.batch_runner.finished.connect(self._on_batch_finished)
 
         # Merge service signals
         self.merge_service.started.connect(self._on_merge_started)
@@ -467,6 +470,7 @@ class MainWindow(QMainWindow):
         act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
         act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
         act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
+        act("run_all", "Run All Wells", "layers", "Ctrl+Shift+R", self._on_run_all)
         act("toggle_browser", "Data Browser", "panel-left", "Ctrl+B",
             self._toggle_browser, checkable=True)
         act("theme_light", "Light", "sun", None, lambda: self._set_theme("light"), checkable=True)
@@ -478,13 +482,14 @@ class MainWindow(QMainWindow):
                 lambda _=False, k=key: self.params_window.open_page(k))
         act("params_window", "Parameters Window", "sliders-horizontal", "Ctrl+P",
             lambda: self.params_window.open_page(self.params_window.current_page()))
-        for key in ("run_analysis", "toggle_browser", "params_window"):
+        for key in ("run_analysis", "run_all", "toggle_browser", "params_window"):
             self.actions_[key].setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actions_["page_core"].setEnabled(False)
         group = QActionGroup(self)
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
         self.actions_["run_analysis"].setEnabled(False)
+        self.actions_["run_all"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -503,6 +508,7 @@ class MainWindow(QMainWindow):
         session.addAction(self.actions_["load_session"])
         analysis = bar.addMenu("&Analysis")
         analysis.addAction(self.actions_["run_analysis"])
+        analysis.addAction(self.actions_["run_all"])
         self._menus["analysis"] = analysis
         view = bar.addMenu("&View")
         view.addAction(self.actions_["toggle_browser"])
@@ -553,6 +559,12 @@ class MainWindow(QMainWindow):
         self.run_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.run_button.setProperty("variant", "primary")
         toolbar.addWidget(self.run_button)
+        self.run_all_button = QToolButton()
+        self.run_all_button.setDefaultAction(self.actions_["run_all"])
+        self.run_all_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.run_all_button.setProperty("variant", "ghost")
+        self._run_all_action = toolbar.addWidget(self.run_all_button)
+        self._run_all_action.setVisible(False)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
@@ -595,18 +607,35 @@ class MainWindow(QMainWindow):
         if message:
             self.statusBar.showMessage(message)
 
-    def _mark_results_stale(self):
-        """Parameters changed after a successful analysis (spec §2.5)."""
-        if self._restoring or not self.model.calculated:
-            return
-        from themes.helpers import set_status
+    def _recompute_stale(self, keys=None):
+        """Stale = the well's current parameters differ from those of its last run (§5.5)."""
+        project = self.model.project
+        wells = project.wells if keys is None else [
+            ds for ds in (project.get(k) for k in keys) if ds is not None
+        ]
+        changed = []
+        for ds in wells:
+            stale = bool(ds.calculated and self.model.well_params_hash(ds) != ds.run_params_hash)
+            if stale != ds.stale:
+                ds.stale = stale
+                changed.append(ds.key)
+        self._sync_stale_label()
+        for key in changed:
+            project.well_updated.emit(key)
 
-        active = self.model.active_well
-        if active is not None:
-            active.stale = True
-        set_status(self.stale_label, "warning")
-        self.stale_label.setVisible(True)
-        self.data_browser.set_results_stale(True)
+    def _on_parameters_updated(self, *_):
+        """A project-level or active-well parameter changed (programmatic restores are ignored)."""
+        if not self._restoring:
+            self._recompute_stale()
+
+    def _on_scoped_params_changed(self, key: str):
+        if not self._restoring:
+            self._recompute_stale([key] if key else None)
+
+    def _on_tops_or_core_changed(self, *_):
+        active = self.model.project.active_key
+        if active is not None and not self._restoring:
+            self._recompute_stale([active])
 
     def _sync_stale_label(self):
         """Show the stale label for the active well's flag."""
@@ -680,13 +709,6 @@ class MainWindow(QMainWindow):
         if lines:
             only_info = all(l.startswith("Reloaded ") for l in lines)
             self.show_banner("info" if only_info else "warning", "\n".join(lines))
-
-    def _clear_results_stale(self):
-        active = self.model.active_well
-        if active is not None:
-            active.stale = False
-        self.stale_label.setVisible(False)
-        self.data_browser.set_results_stale(False)
 
     def _sync_model_from_ui(self):
         self.params_window.update_model_from_ui()
@@ -965,6 +987,10 @@ class MainWindow(QMainWindow):
 
     def _on_wells_changed(self):
         self._refresh_window_title()
+        self._refresh_run_action()
+        run_all = getattr(self, "_run_all_action", None)
+        if run_all is not None:
+            run_all.setVisible(len(self.model.project) > 1)
         action = getattr(self, "_well_selector_action", None)
         if action is not None:
             action.setVisible(len(self.model.project) > 1)
@@ -994,8 +1020,15 @@ class MainWindow(QMainWindow):
         self._refresh_active_well_ui()
 
     def _refresh_run_action(self):
+        """Run is disabled only while the ACTIVE well is running; other wells may run."""
+        project = self.model.project
+        runner = self.batch_runner
         self.actions_["run_analysis"].setEnabled(
-            self.model.active_well is not None and not self._analysis_busy
+            self.model.active_well is not None and not runner.is_pending(project.active_key)
+        )
+        self.actions_["run_all"].setEnabled(
+            not runner.is_running()
+            and any(ds.las_data is not None for ds in project.wells)
         )
 
     @_restoring_guard
@@ -1162,83 +1195,127 @@ class MainWindow(QMainWindow):
     # =========================================================================
 
     def _on_run_analysis(self):
-        """Handle run analysis button click."""
+        """Run the active well (always, even when its results are up to date)."""
         if self.model.las_data is None:
             QMessageBox.warning(
                 self, "Warning", "No data loaded. Please load a LAS file first."
             )
             return
+        self._start_runs([self.model.project.active_key], force=True)
 
-        # Update model from UI and disable Run before the background worker
-        # can emit its asynchronous started signal.
+    def _on_run_all(self):
+        """Run every well with data; wells whose parameters are unchanged are skipped."""
+        keys = [ds.key for ds in self.model.project.wells if ds.las_data is not None]
+        if not keys:
+            QMessageBox.warning(
+                self, "Warning", "No data loaded. Please load a LAS file first."
+            )
+            return
+        self._start_runs(keys, force=False)
+
+    def _start_runs(self, keys, force: bool):
+        # Update the model from the UI and disable Run before the background
+        # workers can report back.
         self._sync_model_from_ui()
-        self.actions_["run_analysis"].setEnabled(False)
-
-        # Results belong to the well that started the run, even if the user
-        # switches wells while it is running.
-        self._analysis_key = self.model.project.active_key
-        self._analysis_busy = True
-        self.analysis_service.run_analysis(self.model)
-
-    def _on_analysis_started(self):
-        """Handle analysis started."""
-        self._analysis_busy = True
-        self.actions_["run_analysis"].setEnabled(False)
-        self._set_progress(0, "Analyzing...")
-        self.statusBar.showMessage("Running petrophysics analysis...")
-        self._clear_results_stale()
-        self.banner.clear()
-
-    def _on_analysis_progress(self, message: str, percent: int):
-        """Handle analysis progress."""
-        self._set_progress(percent, message)
-        self.statusBar.showMessage(message)
-
-    def _on_analysis_completed(self, results, summary):
-        """Store the results in the well that started the run."""
-        key, self._analysis_key = self._analysis_key, None
-        self._analysis_busy = False
-        self._set_progress(100, "Complete")
+        if self.model.project.active_key in keys:
+            self.actions_["run_analysis"].setEnabled(False)
+        self.batch_runner.run(
+            self.model, keys, force=force, extend=self.batch_runner.is_running()
+        )
         self._refresh_run_action()
 
-        message = (
-            f"Net Pay {summary.get('net_pay', 0):.1f} ft · "
-            f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
-            f"N/G {summary.get('ng_pay', 0) * 100:.1f}%"
-        )
-        if key is None or key == self.model.project.active_key:
-            # Store both pieces atomically so observers see a matching
-            # results/summary pair and only one completion refresh.
-            self.model.set_analysis_results(results, summary)
-            active = self.model.active_well
-            if active is not None:
-                active.error = None
-                active.stale = False
-            self.statusBar.showMessage("Analysis complete")
-            self.show_banner("success", f"Analysis complete — {message}")
-            return
+    def _on_batch_started(self, total: int):
+        self._batch_total = total
+        self.banner.clear()
+        self._set_progress(1, "Analyzing..." if total == 1 else f"Running 0/{total} wells…")
+        self._refresh_run_action()
 
+    def _on_batch_progress(self, done: int, total: int):
+        self._batch_total = total
+        message = "Analyzing..." if total == 1 else f"Running {done}/{total} wells…"
+        self._set_progress(max(1, min(99, int(100 * done / max(total, 1)))), message)
+        self._refresh_run_action()
+
+    def _on_well_completed(self, key: str, results, summary, params_hash: str):
+        """Store results in the well named by ``key`` (dropped if it is gone)."""
+        project = self.model.project
+        ds = project.get(key)
+        if ds is None:
+            return
+        ds.error = None
+        ds.run_params_hash = params_hash
+        ds.stale = self.model.well_params_hash(ds) != params_hash
+        if key == project.active_key:
+            # Results and summary are stored together so observers see a
+            # matching pair and only one completion refresh.
+            self.model.set_analysis_results(results, summary)
+            self._sync_stale_label()
+        else:
+            ds.results, ds.summary, ds.calculated = results, summary, True
+        project.well_updated.emit(key)
+
+    def _on_well_failed(self, key: str, message: str):
         ds = self.model.project.get(key)
         if ds is None:
-            self.statusBar.showMessage("Analysis finished for a well that was removed")
             return
-        ds.results, ds.summary = results, summary
-        ds.calculated, ds.stale, ds.error = True, False, None
+        ds.error = _sanitize_error_detail(message) or "Analysis failed"
         self.model.project.well_updated.emit(key)
-        self.statusBar.showMessage(f"Analysis complete for {ds.display_name}")
-        self.show_banner("success", f"Analysis complete for {ds.display_name} — {message}")
 
-    def _on_analysis_error(self, error: str):
-        """Handle analysis error (recorded on the well that started the run)."""
-        key, self._analysis_key = self._analysis_key, None
-        self._analysis_busy = False
+    def _on_batch_finished(self, report: dict):
+        """Report the whole run once: status bar, a banner or one error dialog."""
         self._set_progress(0, "")
         self._refresh_run_action()
-        ds = self.model.project.get(key) if key is not None else None
-        if ds is not None:
-            ds.error = _sanitize_error_detail(error) or "Analysis failed"
-        QMessageBox.critical(self, "Analysis Error", error)
-        self.statusBar.showMessage("Analysis failed")
+        project = self.model.project
+        ok, failed = list(report.get("ok", [])), dict(report.get("failed", {}))
+        skipped = list(report.get("skipped", []))
+        if report.get("cancelled"):
+            self.statusBar.showMessage("Analysis cancelled")
+            return
+
+        def name(key):
+            ds = project.get(key)
+            return ds.display_name if ds is not None and ds.display_name else key
+
+        if failed:
+            if len(failed) == 1 and not ok:
+                (message,) = failed.values()
+                QMessageBox.critical(self, "Analysis Error", message)
+                self.statusBar.showMessage("Analysis failed")
+                return
+            parts = ", ".join(
+                f"{name(k)} ({_sanitize_error_detail(m) or 'Analysis failed'})"
+                for k, m in failed.items()
+            )
+            noun = "well" if len(failed) == 1 else "wells"
+            self.show_banner("warning", f"{len(failed)} {noun} failed: {parts}")
+            self.statusBar.showMessage(
+                f"{len(ok)} analysed, {len(failed)} failed" if ok else "Analysis failed"
+            )
+            return
+        if not ok:
+            if skipped:
+                self.statusBar.showMessage("All wells are up to date")
+            return
+        if len(ok) == 1:
+            ds = project.get(ok[0])
+            summary = (ds.summary if ds is not None else None) or {}
+            message = (
+                f"Net Pay {summary.get('net_pay', 0):.1f} ft · "
+                f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
+                f"N/G {summary.get('ng_pay', 0) * 100:.1f}%"
+            )
+            if ok[0] == project.active_key:
+                self.statusBar.showMessage("Analysis complete")
+                self.show_banner("success", f"Analysis complete — {message}")
+            else:
+                self.statusBar.showMessage(f"Analysis complete for {name(ok[0])}")
+                self.show_banner("success", f"Analysis complete for {name(ok[0])} — {message}")
+            return
+        text = f"Analysis complete for {len(ok)} wells"
+        if skipped:
+            text += f" ({len(skipped)} unchanged)"
+        self.statusBar.showMessage(text)
+        self.show_banner("success", text)
 
     def _on_data_loaded(self):
         """Refresh every tab after data replacement invalidates derived state."""
@@ -1477,10 +1554,7 @@ class MainWindow(QMainWindow):
                 self._update_ui_from_model()
                 # Sessions restore parameters only; any results in memory
                 # were computed with the old parameters.
-                if self.model.calculated:
-                    self._mark_results_stale()
-                else:
-                    self._clear_results_stale()
+                self._recompute_stale()
                 self.statusBar.showMessage(f"Session loaded from {file_path}")
             else:
                 QMessageBox.critical(self, "Error", "Failed to load session")
@@ -1500,8 +1574,7 @@ class MainWindow(QMainWindow):
                 return
 
         # Removing every well also resets the UI through active_well_changed.
-        self._analysis_key = None
-        self._analysis_busy = False
+        self.batch_runner.cancel()
         self.model.reset()
 
         # Reset status bar
