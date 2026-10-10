@@ -705,10 +705,7 @@ class ArchieParamsGroup(QWidget):
         self.n_spin.valueChanged.connect(lambda: self.params_changed.emit())
 
     def _on_lithology_changed(self, text: str):
-        presets = {
-            "Sandstone (Humble)": {"a": 0.62, "m": 2.15, "n": 2.0},
-            "Carbonate": {"a": 1.0, "m": 2.0, "n": 2.0},
-        }
+        from modules.param_scopes import LITHOLOGY_PRESETS as presets
 
         if text == "Custom":
             self.custom_frame.setVisible(True)

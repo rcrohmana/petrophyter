@@ -474,12 +474,14 @@ class SessionService(QObject):
             return notes
 
         from modules.las_handler import LASHandler
+        from modules.param_scopes import collapse_preset_stores
         from services.load_service import build_well, parse_file
 
         entries = session_data.get("wells") or []
         step = session_data.get("merge_step", getattr(model, "merge_step", 0.5))
         gap = session_data.get("merge_gap_limit", getattr(model, "merge_gap_limit", 5.0))
         restored = 0
+        collapsed = False
         for index, entry in enumerate(entries):
             label = entry.get("display_name") or entry.get("key") or f"well {index + 1}"
             if progress:
@@ -495,6 +497,15 @@ class SessionService(QObject):
                 continue
             model.add_well(well, activate=False)
             restored += 1
+            collapsed |= collapse_preset_stores(well.overrides, well.zone_overrides)
+        project = getattr(model, "project", None)
+        if project is not None:
+            collapsed |= collapse_preset_stores(project.zone_params)
+        if collapsed:
+            notes.append(
+                "Lithology presets now supply a, m and n where the saved values equal the "
+                "preset; those explicit entries were removed so later preset changes flow down."
+            )
 
         active_key = session_data.get("active_key")
         if active_key and active_key in model.project:

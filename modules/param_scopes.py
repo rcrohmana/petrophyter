@@ -23,6 +23,7 @@ project-only parameter ignores every entry.
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -37,6 +38,19 @@ SHALE_AUTO_KEY = "shale_auto"
 UNZONED = "(unzoned)"
 
 PROJECT, PROJECT_ZONE, WELL, WELL_ZONE = "project", "project·zone", "well", "well·zone"
+
+# Lithology preset -> Archie constants. A named preset at a scope supplies a, m
+# and n there (see ``_preset_supply``); "Custom" supplies nothing.
+LITHOLOGY_CUSTOM = "Custom"
+LITHOLOGY_PRESETS: Dict[str, Dict[str, float]] = {
+    "Sandstone (Humble)": {"a": 0.62, "m": 2.15, "n": 2.0},
+    "Carbonate": {"a": 1.0, "m": 2.0, "n": 2.0},
+}
+ARCHIE_KEYS = ("a", "m", "n")
+PRESET_SOURCE_SUFFIX = " (lithology preset)"
+
+# Specificity of a scope (§4.4): well·zone > project·zone > well > project.
+_SCOPE_RANK = {PROJECT: 0, WELL: 1, PROJECT_ZONE: 2, WELL_ZONE: 3}
 
 GR_AUTO = "Statistically (Auto)"
 GR_MANUAL = "Custom (Manual)"
@@ -237,6 +251,8 @@ def resolve(global_params: Dict, overrides: Optional[Dict] = None,
         apply_entry(flat, name, entry)
         info[name] = {"scope": scope, "mode": entry.get("mode"),
                       "source": source_label(entry, scope)}
+    _apply_preset_supply(flat, info, global_params, overrides, zone_params,
+                         zone_overrides, zone)
     if info["temp_gradient"]["mode"] == AUTO:
         gradient = gradient_from_header(header, flat.get("surface_temp"))
         if gradient is None:
@@ -245,6 +261,79 @@ def resolve(global_params: Dict, overrides: Optional[Dict] = None,
             flat["temp_gradient"] = gradient
             info["temp_gradient"]["source"] = "auto (LAS header)"
     return flat, info
+
+
+def _preset_supply(name: str, entry: Dict, scope: str) -> Optional[Dict[str, float]]:
+    """The a/m/n table a winning lithology-preset entry supplies, or None."""
+    if name != "lithology_preset" or scope == PROJECT or entry.get("mode") != MANUAL:
+        return None
+    return LITHOLOGY_PRESETS.get(entry.get("value"))
+
+
+def _apply_preset_supply(flat: Dict, info: Dict, global_params: Dict, overrides,
+                         zone_params, zone_overrides, zone) -> None:
+    """A named preset at scope S supplies a, m, n unless one has an explicit entry
+    at S or at a more specific scope. At the flat project scope nothing changes
+    (the project preset UI writes the flat a/m/n itself)."""
+    entry, scope = winning_entry("lithology_preset", global_params, overrides,
+                                 zone_params, zone_overrides, zone)
+    table = _preset_supply("lithology_preset", entry, scope)
+    if table is None:
+        return
+    for key in ARCHIE_KEYS:
+        if _SCOPE_RANK[info[key]["scope"]] >= _SCOPE_RANK[scope]:
+            continue
+        flat[key] = table[key]
+        info[key] = {"scope": scope, "mode": MANUAL,
+                     "source": scope + PRESET_SOURCE_SUFFIX, "preset": True}
+
+
+def collapse_preset_entries(store: Optional[Dict]) -> bool:
+    """D10: drop explicit a/m/n entries equal to the preset values at the same scope.
+
+    ``store`` is one entries dict (a well's overrides or one zone's entries). The
+    preset entry stays; entries that differ stay explicit. Returns True when
+    anything was removed.
+    """
+    if not isinstance(store, dict):
+        return False
+    preset = store.get("lithology_preset")
+    if not (_active(preset) and preset.get("mode") == MANUAL):
+        return False
+    table = LITHOLOGY_PRESETS.get(preset.get("value"))
+    if table is None:
+        return False
+    entries = [store.get(k) for k in ARCHIE_KEYS]
+    if not all(_active(e) and e.get("mode") == MANUAL for e in entries):
+        return False
+    try:
+        equal = all(math.isclose(float(e.get("value")), table[k], rel_tol=1e-9, abs_tol=1e-9)
+                    for k, e in zip(ARCHIE_KEYS, entries))
+    except (TypeError, ValueError):
+        return False
+    if not equal:
+        return False
+    for k in ARCHIE_KEYS:
+        del store[k]
+    return True
+
+
+def collapse_preset_stores(*stores: Optional[Dict]) -> bool:
+    """Apply :func:`collapse_preset_entries` to entry stores and zone maps.
+
+    Each argument is either a single entries dict or a ``{zone: entries}`` map
+    (told apart by whether its values are dicts of entries).
+    """
+    changed = False
+    for store in stores:
+        if not isinstance(store, dict):
+            continue
+        if any(k in SPECS for k in store):
+            changed |= collapse_preset_entries(store)
+        else:
+            for entries in store.values():
+                changed |= collapse_preset_entries(entries)
+    return changed
 
 
 def zone_plan(global_params: Dict, overrides: Optional[Dict], zone_params: Optional[Dict],
