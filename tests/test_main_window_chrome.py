@@ -140,7 +140,7 @@ def test_params_page_headers_not_selectable(window):
     from PyQt6.QtCore import Qt
     lst = window.params_window.page_list
     headers = [lst.item(i) for i in range(lst.count()) if not lst.item(i).data(Qt.ItemDataRole.UserRole + 1)]
-    assert [h.text() for h in headers] == ["ANALYSIS", "PARAMETERS", "CORRECTIONS"]
+    assert [h.text() for h in headers] == ["ANALYSIS", "PARAMETERS", "CORRECTIONS", "SCOPES"]
     assert all(not (h.flags() & Qt.ItemFlag.ItemIsSelectable) for h in headers)
 
 
@@ -567,9 +567,9 @@ def test_page_actions_use_pages_icons(window):
 
 def test_parameters_page_list_items_have_icons(window):
     from PyQt6.QtCore import Qt
-    from ui.parameters_window import PAGES
+    from ui.parameters_window import EXTRA_PAGES, PAGES
     pw = window.params_window
-    icons = {key: icon for key, _t, _m, icon in PAGES}
+    icons = {key: icon for key, _t, _m, icon in PAGES + EXTRA_PAGES}
     found = set()
     for row in range(pw.page_list.count()):
         item = pw.page_list.item(row)

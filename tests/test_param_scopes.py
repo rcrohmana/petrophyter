@@ -315,3 +315,10 @@ def test_edit_scope_returns_to_project_when_no_well_is_left():
     assert (model.edit_scope, model.edit_zone) == ("well", "UPPER")
     model.reset()
     assert model.edit_scope == "project"
+
+
+def test_promote_to_project_ignores_the_edited_zone():
+    model = _model_with_wells()
+    model.set_edit_scope("well", "UPPER")
+    model.promote_to_project("m", 1.95)
+    assert model.m == 1.95 and model.project.zone_params == {}
