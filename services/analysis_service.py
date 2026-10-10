@@ -143,6 +143,9 @@ class _Relay(QObject):
     def on_error(self, key, message):
         self._runner._on_failed(self._generation, key, message)
 
+    def on_progress(self, message, percent):
+        self._runner._on_progress(self._generation, self._key, message, percent)
+
 
 class BatchRunner(QObject):
     """Run the analysis for several wells on a thread pool.
@@ -156,6 +159,7 @@ class BatchRunner(QObject):
     well_completed = pyqtSignal(str, object, object, str)  # key, results, summary, params hash
     well_failed = pyqtSignal(str, str)
     progress = pyqtSignal(int, int)  # done, total
+    well_progress = pyqtSignal(str, str, int)  # key, stage message, percent (0-100)
     finished = pyqtSignal(dict)  # {"ok", "failed", "skipped", "cancelled"}
 
     def __init__(self, parent=None, max_threads: Optional[int] = None):
@@ -239,6 +243,7 @@ class BatchRunner(QObject):
             worker.signals.started.connect(relay.on_started)
             worker.signals.completed_key.connect(relay.on_completed)
             worker.signals.error_key.connect(relay.on_error)
+            worker.signals.progress.connect(relay.on_progress)
             self._pool.start(worker)
         if extending and snapshots:
             self.progress.emit(self._done, self._total)
@@ -258,6 +263,10 @@ class BatchRunner(QObject):
     def _on_started(self, generation: int, key: str):
         if generation == self._generation and key in self._pending:
             self.well_started.emit(key)
+
+    def _on_progress(self, generation: int, key: str, message: str, percent: int):
+        if generation == self._generation and key in self._pending:
+            self.well_progress.emit(key, message, int(percent))
 
     def _complete_one(self):
         self._done += 1
