@@ -11,6 +11,89 @@ from scipy.optimize import brentq
 from modules.statistics_utils import gr_baseline_from_series
 
 
+def _vectorized_brentq(func, lo, hi, active, xtol=2e-12,
+                       rtol=4 * np.finfo(float).eps, maxiter=100):
+    """Brent's root finder run on every element at once.
+
+    A line-for-line vectorised port of scipy's ``brentq`` (same iterates, so
+    results match the scalar solver bit for bit). ``func`` maps an array of
+    abscissae to function values; ``lo``/``hi`` are scalar bracket ends and
+    ``active`` flags the elements whose bracket holds a sign change (the
+    others are left at ``lo``). Returns ``(roots, failed)`` where ``failed``
+    flags elements that did not converge within ``maxiter``.
+    """
+    n = active.shape
+    xpre = np.full(n, float(lo))
+    xcur = np.full(n, float(hi))
+    fpre = func(xpre)
+    fcur = func(xcur)
+    xblk = np.zeros(n)
+    fblk = np.zeros(n)
+    spre = np.zeros(n)
+    scur = np.zeros(n)
+    out = xpre.copy()
+    done = ~active
+    zero_lo = active & (fpre == 0)
+    out[zero_lo] = xpre[zero_lo]
+    zero_hi = active & ~zero_lo & (fcur == 0)
+    out[zero_hi] = xcur[zero_hi]
+    done = done | zero_lo | zero_hi
+
+    for _ in range(maxiter):
+        if done.all():
+            break
+        # New bracket when the sign changed
+        flip = (fpre != 0) & (fcur != 0) & (np.signbit(fpre) != np.signbit(fcur))
+        xblk = np.where(flip, xpre, xblk)
+        fblk = np.where(flip, fpre, fblk)
+        spre = np.where(flip, xcur - xpre, spre)
+        scur = np.where(flip, xcur - xpre, scur)
+
+        swap = np.abs(fblk) < np.abs(fcur)
+        xpre_n = np.where(swap, xcur, xpre)
+        xcur_n = np.where(swap, xblk, xcur)
+        xblk = np.where(swap, xpre_n, xblk)
+        fpre_n = np.where(swap, fcur, fpre)
+        fcur_n = np.where(swap, fblk, fcur)
+        fblk = np.where(swap, fpre_n, fblk)
+        xpre, xcur, fpre, fcur = xpre_n, xcur_n, fpre_n, fcur_n
+
+        delta = (xtol + rtol * np.abs(xcur)) / 2
+        sbis = (xblk - xcur) / 2
+        conv = ~done & ((fcur == 0) | (np.abs(sbis) < delta))
+        out[conv] = xcur[conv]
+        done = done | conv
+        if done.all():
+            break
+
+        interp = (np.abs(spre) > delta) & (np.abs(fcur) < np.abs(fpre))
+        secant = xpre == xblk
+        stry_sec = -fcur * (xcur - xpre) / (fcur - fpre)
+        dpre = (fpre - fcur) / (xpre - xcur)
+        dblk = (fblk - fcur) / (xblk - xcur)
+        stry_iqi = -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+        stry = np.where(secant, stry_sec, stry_iqi)
+        accept = interp & (
+            2 * np.abs(stry) < np.minimum(np.abs(spre), 3 * np.abs(sbis) - delta)
+        )
+        spre_n = np.where(accept, scur, sbis)
+        scur_n = np.where(accept, stry, sbis)
+        spre, scur = spre_n, scur_n
+
+        xpre = xcur
+        fpre = fcur
+        step = np.where(np.abs(scur) > delta, scur, np.where(sbis > 0, delta, -delta))
+        xcur_new = xcur + step
+        fcur_new = func(xcur_new)
+        # Freeze finished elements
+        xcur = np.where(done, xcur, xcur_new)
+        fcur = np.where(done, fcur, fcur_new)
+
+    # Elements that never converged mirror brentq raising: NaN + failed flag.
+    failed = ~done
+    return np.where(failed, np.nan, out), failed
+
+
 class PetrophysicsCalculator:
     """
     Petrophysics calculations engine.
@@ -1013,53 +1096,45 @@ class PetrophysicsCalculator:
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
 
-        sw_list = []
-        no_root_count = 0
         fail_count = 0
 
         # Pre-calculate constants where possible
         cw = 1.0 / rw if rw > 0 else 0
 
-        for i in range(len(rt)):
-            rt_i = rt.iloc[i] if hasattr(rt, "iloc") else rt[i]
-            phie_i = phie.iloc[i] if hasattr(phie, "iloc") else phie[i]
+        rt_arr = np.asarray(rt, dtype=float)
+        phie_arr = np.asarray(phie, dtype=float)
+        valid = ~(
+            np.isnan(rt_arr) | np.isnan(phie_arr) | (phie_arr <= 0.001) | (rt_arr <= 0)
+        )
+        sw_arr = np.full(len(rt_arr), np.nan)
+        no_root_count = 0
 
-            if np.isnan(rt_i) or np.isnan(phie_i) or phie_i <= 0.001 or rt_i <= 0:
-                sw_list.append(np.nan)
-                continue
+        if valid.any():
+            with np.errstate(all="ignore"):
+                f_star = a / np.power(phie_arr[valid], m)
+                ct = 1.0 / rt_arr[valid]
 
-            # Formation factor F*
-            f_star = a / np.power(phie_i, m)
-            ct = 1.0 / rt_i
+                # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
+                # Model_Ct = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
+                def ws_func(sw):
+                    # Guard against small Sw
+                    sw = np.maximum(sw, 1e-6)
+                    term1 = cw * np.power(sw, n)
+                    term2 = (B * qv) * np.power(sw, n - 1)
+                    return (1.0 / f_star) * (term1 + term2) - ct
 
-            # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
-            # Model_Ct = (1/F*) * Sw^n * (Cw + B*Qv/Sw)
-            #          = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
+                f_lo = ws_func(np.full(f_star.shape, 0.001))
+                f_hi = ws_func(np.full(f_star.shape, 1.0))
+                bracketed = f_lo * f_hi < 0
+                root, failed = _vectorized_brentq(ws_func, 0.001, 1.0, bracketed)
+                # Fallback if no root in range (rare)
+                fallback = np.where(f_hi < 0, 1.0, 0.0)
+                solved = np.where(bracketed, np.clip(root, 0, 1), fallback)
+            no_root_count = int((~bracketed).sum())
+            fail_count = int(failed.sum())
+            sw_arr[valid] = solved
 
-            def ws_func(sw):
-                # Guard against small Sw
-                sw = max(sw, 1e-6)
-                term1 = cw * np.power(sw, n)
-                term2 = (B * qv) * np.power(sw, n - 1)
-                model_ct = (1.0 / f_star) * (term1 + term2)
-                return model_ct - ct
-
-            try:
-                # Root finding
-                if ws_func(0.001) * ws_func(1.0) < 0:
-                    sw_solved = brentq(ws_func, 0.001, 1.0)
-                    sw_solved = np.clip(sw_solved, 0, 1)
-                else:
-                    # Fallback if no root in range (rare)
-                    no_root_count += 1
-                    sw_solved = 1.0 if ws_func(1.0) < 0 else 0.0
-            except Exception:
-                fail_count += 1
-                sw_solved = np.nan
-
-            sw_list.append(sw_solved)
-
-        sw = pd.Series(sw_list, index=self.data.index)
+        sw = pd.Series(sw_arr, index=self.data.index)
         self.results["SW_WS"] = sw
         self.solver_diagnostics["SW_WS"] = {
             "no_root": no_root_count,
@@ -1123,63 +1198,48 @@ class PetrophysicsCalculator:
                 "PHIT", self.results.get("PHIE", self._make_series(0.15))
             )
 
-        sw_list = []
-        no_root_count = 0
         fail_count = 0
 
         cw = 1.0 / rw if rw > 0 else 0
         cwb = 1.0 / rwb if rwb > 0 else 0
 
-        for i in range(len(rt)):
-            rt_i = rt.iloc[i] if hasattr(rt, "iloc") else rt[i]
-            phi_i = phie.iloc[i] if hasattr(phie, "iloc") else phie[i]
+        rt_arr = np.asarray(rt, dtype=float)
+        phi_arr = np.asarray(phie, dtype=float)
+        valid = ~(
+            np.isnan(rt_arr) | np.isnan(phi_arr) | (phi_arr <= 0.001) | (rt_arr <= 0)
+        )
+        sw_arr = np.full(len(rt_arr), np.nan)
+        no_root_count = 0
 
-            if np.isnan(rt_i) or np.isnan(phi_i) or phi_i <= 0.001 or rt_i <= 0:
-                sw_list.append(np.nan)
-                continue
+        if valid.any():
+            with np.errstate(all="ignore"):
+                # Formation factor based on total porosity (usually)
+                f_t = a / np.power(phi_arr[valid], m)
+                ct_measured = 1.0 / rt_arr[valid]
 
-            # Formation factor based on total porosity (usually)
-            f_t = a / np.power(phi_i, m)
-            ct_measured = 1.0 / rt_i
+                # f(Swt) = Model_Ct - Measured_Ct
+                def dw_func(swt):
+                    # Swt must be >= Swb ideally; allow [Swb, 1] for stability.
+                    swt = np.maximum(swt, swb + 1e-4)  # Ensure slightly above Swb
+                    # Ct = (Swt^n / Ft) * (Cw + (Cwb - Cw) * Swb / Swt)
+                    term = cw + (cwb - cw) * (swb / swt)
+                    return (np.power(swt, n) / f_t) * term - ct_measured
 
-            # f(Swt) = Model_Ct - Measured_Ct
-            def dw_func(swt):
-                # Swt must be >= Swb ideally, but for numerical stability we allow [Swb, 1]
-                # Swf = Swt - Swb. If Swt < Swb, logic breaks physically.
-                swt = max(swt, swb + 1e-4)  # Ensure slightly above Swb
-
-                # Conductivity eq:
-                # Ct = (Swt^n / Ft) * (Cw + (Cwb - Cw) * Swb / Swt)
-                term = cw + (cwb - cw) * (swb / swt)
-                model_ct = (np.power(swt, n) / f_t) * term
-                return model_ct - ct_measured
-
-            try:
                 # Root search in [Swb, 1.0]
                 lower_bound = min(max(swb + 0.001, 0.001), 0.99)
 
-                val_low = dw_func(lower_bound)
-                val_high = dw_func(1.0)
+                val_low = dw_func(np.full(f_t.shape, lower_bound))
+                val_high = dw_func(np.full(f_t.shape, 1.0))
+                bracketed = val_low * val_high < 0
+                root, failed = _vectorized_brentq(dw_func, lower_bound, 1.0, bracketed)
+                # No root: if measured cond is very high, Sw -> 1; if very low, Sw -> Swb
+                fallback = np.where(np.abs(val_high) < np.abs(val_low), 1.0, swb)
+                solved = np.clip(np.where(bracketed, root, fallback), 0, 1)
+            no_root_count = int((~bracketed).sum())
+            fail_count = int(failed.sum())
+            sw_arr[valid] = solved
 
-                if val_low * val_high < 0:
-                    sw_solved = brentq(dw_func, lower_bound, 1.0)
-                else:
-                    no_root_count += 1
-                    # If measured cond is very high, Sw -> 1
-                    if abs(val_high) < abs(val_low):
-                        sw_solved = 1.0
-                    else:
-                        # If measured cond is very low, Sw -> Swb
-                        sw_solved = swb
-
-                sw_solved = np.clip(sw_solved, 0, 1)
-            except Exception:
-                fail_count += 1
-                sw_solved = np.nan
-
-            sw_list.append(sw_solved)
-
-        sw = pd.Series(sw_list, index=self.data.index)
+        sw = pd.Series(sw_arr, index=self.data.index)
         self.results["SW_DW"] = sw
         self.solver_diagnostics["SW_DW"] = {
             "no_root": no_root_count,
@@ -1578,21 +1638,13 @@ class PetrophysicsCalculator:
                 self.results.get("PERM_WR", self._make_series(10)),
             )
 
-        def classify(k):
-            if np.isnan(k):
-                return "Unknown"
-            elif k < 1:
-                return "Tight"
-            elif k < 10:
-                return "Poor"
-            elif k < 100:
-                return "Fair"
-            elif k < 1000:
-                return "Good"
-            else:
-                return "Excellent"
-
-        flow_unit = perm.apply(classify)
+        k = np.asarray(perm, dtype=float)
+        labels = np.select(
+            [np.isnan(k), k < 1, k < 10, k < 100, k < 1000],
+            ["Unknown", "Tight", "Poor", "Fair", "Good"],
+            default="Excellent",
+        )
+        flow_unit = pd.Series(labels, index=perm.index, dtype=object)
         self.results["FLOW_UNIT"] = flow_unit
         return flow_unit
 

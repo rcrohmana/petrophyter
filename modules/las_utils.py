@@ -80,12 +80,17 @@ def replace_null_values(df: pd.DataFrame,
     if null_values is None:
         null_values = COMMON_NULL_VALUES
 
+    nulls = np.asarray(list(null_values), dtype=float)
+    if nulls.size == 0:
+        return df
     for col in df.columns:
         if col == depth_col:
             continue
         if pd.api.types.is_numeric_dtype(df[col]):
-            for null in null_values:
-                mask = np.abs(df[col] - null) < tolerance
+            vals = df[col].to_numpy(dtype=float, na_value=np.nan)
+            with np.errstate(invalid='ignore'):
+                mask = (np.abs(vals[:, None] - nulls[None, :]) < tolerance).any(axis=1)
+            if mask.any():
                 df.loc[mask, col] = np.nan
     return df
 
