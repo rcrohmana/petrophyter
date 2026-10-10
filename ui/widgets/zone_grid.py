@@ -5,13 +5,14 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from modules.pipeline import zone_diagnostic_note
 from modules.param_scopes import SPECS, normalize_zone, validate_entry
 from themes.colors import get_color
 
 GRID_PARAMS = ("a", "m", "n", "rw", "rsh", "rho_matrix",
                "vsh_cutoff", "phi_cutoff", "sw_cutoff")
 GR_COLUMN = "gr_baseline"
-STATE_ROLE = Qt.ItemDataRole.UserRole + 1     # "set" | "inherited" | "warning"
+STATE_ROLE = Qt.ItemDataRole.UserRole + 1     # "set" | "inherited" | "warning" | "info"
 ZONE_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
@@ -116,6 +117,7 @@ class ZoneParamGrid(QWidget):
         flat, info = self.model.scope_view(scope, zone)
         muted = QBrush(QColor(get_color("text_muted")))
         warn = QBrush(QColor(get_color("warning")))
+        limiting, note = self._limiting_cell(scope, zone)
         for col, name in enumerate(self.columns[1:], start=1):
             item = self.table.item(row, col)
             item.setData(ZONE_ROLE, zone)
@@ -139,7 +141,21 @@ class ZoneParamGrid(QWidget):
                 item.setForeground(muted)
                 source = str(entry["source"]).replace("·", " · ")
                 item.setToolTip(source if source.startswith("auto") else f"Inherited from {source}")
+            if name == limiting:
+                state = note[0]
+                item.setForeground(warn if state == "warning" else muted)
+                item.setToolTip(note[1])
             item.setData(STATE_ROLE, state)
+
+    def _limiting_cell(self, scope: str, zone: str):
+        """``(param, (level, text))`` of the zone's limiting cutoff, from a fresh run of the well."""
+        ds = self.model.project.active
+        if scope != "well" or ds is None or not ds.calculated or ds.stale:
+            return None, None
+        diag = ((ds.summary or {}).get("zone_diagnostics") or {}).get(zone)
+        note = zone_diagnostic_note(diag) if diag else None
+        limiting = (diag or {}).get("limiting")
+        return (limiting, note) if note and limiting in self.columns else (None, None)
 
     def refresh_theme(self):
         self._zones = []

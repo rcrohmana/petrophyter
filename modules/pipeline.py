@@ -694,6 +694,100 @@ def _zone_rows(results, labels, data, pay_series, step, sources_by_zone):
     return rows
 
 
+ZONE_CUTOFFS = (("vsh_cutoff", "pass_vsh"), ("phi_cutoff", "pass_phi"), ("sw_cutoff", "pass_sw"))
+
+
+def _zone_diagnostics(vsh, phie, sw, cutoffs, step):
+    """Why a zone has no gross / net reservoir / net pay (spec §9.1).
+
+    ``vsh``, ``phie`` and ``sw`` are one zone's series; ``cutoffs`` holds the
+    ``vsh_cutoff``, ``phi_cutoff`` and ``sw_cutoff`` applied in that zone; ``step``
+    is the depth step (thicknesses are in the unit of the summary). Samples with a
+    NaN in any of the three are not ``valid`` and count nowhere. Passing follows
+    the pay flags: ``vsh < cutoff``, ``phie > cutoff``, ``sw < cutoff``.
+
+    ``status``: ``no_data`` (no valid sample; fractions and ``limiting`` are
+    ``None``), ``no_gross``, ``no_reservoir``, ``no_pay`` or ``ok``. ``limiting``
+    is the cutoff with the lowest pass fraction among the samples that pass the
+    other two (``None`` when every cutoff passes everything); a zone without
+    gross, reservoir or pay names the Vsh, PHIE or Sw cutoff respectively.
+    """
+    vsh, phie, sw = (np.asarray(x, dtype=float) for x in (vsh, phie, sw))
+    ok = np.isfinite(vsh) & np.isfinite(phie) & np.isfinite(sw)
+    vsh, phie, sw = vsh[ok], phie[ok], sw[ok]
+    n = int(ok.sum())
+    out = {"valid": n, "gross": 0.0, "pass_vsh": None, "pass_phi": None, "pass_sw": None,
+           "net_reservoir": 0.0, "net_pay": 0.0, "status": "no_data", "limiting": None,
+           "cutoffs": {k: float(cutoffs[k]) for k, _ in ZONE_CUTOFFS}}
+    if n == 0:
+        return out
+    passes = {"vsh_cutoff": vsh < cutoffs["vsh_cutoff"],
+              "phi_cutoff": phie > cutoffs["phi_cutoff"],
+              "sw_cutoff": sw < cutoffs["sw_cutoff"]}
+    gross = passes["vsh_cutoff"]
+    reservoir = gross & passes["phi_cutoff"]
+    pay = reservoir & passes["sw_cutoff"]
+    for name, key in ZONE_CUTOFFS:
+        out[key] = float(passes[name].sum() / n)
+    out["gross"], out["net_reservoir"], out["net_pay"] = (
+        float(m.sum() * step) for m in (gross, reservoir, pay))
+    if not gross.any():
+        out["status"], out["limiting"] = "no_gross", "vsh_cutoff"
+    elif not reservoir.any():
+        out["status"], out["limiting"] = "no_reservoir", "phi_cutoff"
+    elif not pay.any():
+        out["status"], out["limiting"] = "no_pay", "sw_cutoff"
+    else:
+        out["status"] = "ok"
+        worst = 1.0
+        for name, _ in ZONE_CUTOFFS:
+            others = np.logical_and.reduce([v for k, v in passes.items() if k != name])
+            if others.any():
+                fraction = float(passes[name][others].mean())
+                if fraction < worst:
+                    worst, out["limiting"] = fraction, name
+    return out
+
+
+def zone_diagnostic_note(diag):
+    """``(level, text)`` for a zone's diagnostics, or ``None`` when nothing needs a look.
+
+    ``level`` is ``"warning"`` (no net reservoir) or ``"info"``. The wording is
+    diagnostic: a tight or water-bearing zone is legitimate.
+    """
+    status, c = diag.get("status"), diag.get("cutoffs") or {}
+    if status == "no_data":
+        return "info", "No valid samples: VSH, PHIE or Sw is missing over the whole zone."
+    if status == "no_gross":
+        return "info", (f"No gross: the Vsh cutoff {c['vsh_cutoff']:.2f} passes 0% of "
+                        f"{diag['valid']} samples. Shale by this cutoff, as expected for a seal; "
+                        "check the cutoff if the zone should be reservoir.")
+    if status == "no_reservoir":
+        return "warning", (f"No net reservoir: PHIE cutoff {c['phi_cutoff']:.2f} passes 0% of "
+                           f"{diag['gross']:.0f} ft gross. Tight rock, or check the cutoff and "
+                           "the porosity inputs (matrix, shale point).")
+    if status == "no_pay":
+        return "info", (f"No net pay: the Sw cutoff {c['sw_cutoff']:.2f} passes 0% of "
+                        f"{diag['net_reservoir']:.0f} ft net reservoir. May be water-bearing; "
+                        "check the cutoff and the Rw inputs if pay is expected.")
+    return None
+
+
+def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone):
+    """``{zone: diagnostics}`` using the cutoffs applied in each zone."""
+    vsh, phie, sw = pay_series
+    out = {}
+    for zone in dict.fromkeys(labels.dropna()):
+        mask = (labels == zone).to_numpy()
+        table = sources_by_zone.get(zone, {})
+        try:
+            cutoffs = {k: table[k]["value"] for k, _ in ZONE_CUTOFFS}
+        except KeyError:
+            continue
+        out[zone] = _zone_diagnostics(vsh[mask], phie[mask], sw[mask], cutoffs, step)
+    return out
+
+
 def run_pipeline(
     data: pd.DataFrame,
     curve_mapping: Dict[str, str],
@@ -865,6 +959,10 @@ def run_pipeline(
                    _depth_step(data), param_sources)
         if labels is not None else []
     )
+    if summary["zones"]:
+        summary["zone_diagnostics"] = _zone_diagnostics_by_zone(
+            labels, (pay["vsh"], pay["phie"], pay["sw"]),
+            _depth_step(data), param_sources)
 
     solver_diagnostics = {}
     for method, diagnostics in solver_raw.items():
