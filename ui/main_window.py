@@ -1509,117 +1509,87 @@ class MainWindow(QMainWindow):
             # (previously was set to None, causing Statistical Values to not display)
 
     def _on_calculate_perm(self):
-        """Calculate permeability coefficients (with or without core data)."""
+        """Wyllie-Rose coefficients for the edited scope: core fit, else porosity bands.
+
+        At the well · zone scope only that zone's core samples and results are
+        used, and a zone with too few core pairs gives no result (never a
+        silently widened fit). Buckles k comes from the edited scope.
+        """
+        from modules.param_scopes import normalize_zone
+        from modules.perm_calibration import (
+            MIN_CORE_PAIRS, calibrate_from_core, estimate_from_porosity,
+            pair_core_samples, zone_mask,
+        )
+
         if not self.model.calculated or self.model.results is None:
             QMessageBox.warning(self, "Warning", "Please run analysis first")
             return
-
         results = self.model.results
-
         if "PHIE" not in results.columns:
             QMessageBox.warning(
                 self, "Warning", "PHIE not calculated. Run analysis first."
             )
             return
 
-        import numpy as np
+        ds = self.model.active_well
+        zone = self.model.edit_zone if self.model.edit_scope == "well" else None
+        well_name = (ds.display_name or ds.key) if ds is not None else "the well"
+        flat, _info = self.model.scope_view()
+        k_buckles = float(flat.get("k_buckles", self.model.k_buckles))
+        widget = self.params_window.perm_params_widget
+        stale = " Results are out of date; run the analysis first." if ds is not None and ds.stale else ""
+        tops = ds.formation_tops if ds is not None else None
 
-        # If core data available, use core-based fitting
-        if self.model.core_data is not None:
+        core = self.model.core_data
+        if core is not None:
             try:
-                from scipy import optimize
-
-                core = self.model.core_data
-
-                # Get core data
-                core_depths, core_perm = core.get_core_permeability()
-                core_depths_por, core_por = core.get_core_porosity()
-
-                if len(core_perm) >= 5 and len(core_por) >= 5:
-                    # Match porosity with permeability at same depths
-                    matched_por = []
-                    matched_perm = []
-                    for i, d in enumerate(core_depths):
-                        idx = np.argmin(np.abs(core_depths_por - d))
-                        if np.abs(core_depths_por[idx] - d) < 0.5:  # Within 0.5 ft
-                            matched_por.append(core_por[idx])
-                            matched_perm.append(core_perm[i])
-
-                    if len(matched_por) >= 5:
-                        matched_por = np.array(matched_por)
-                        matched_perm = np.array(matched_perm)
-
-                        # Estimate Swirr using Buckles
-                        swirr = self.model.k_buckles / matched_por
-                        swirr = np.clip(swirr, 0.05, 0.8)
-
-                        # Fit Wyllie-Rose: K = C * phi^P / Swi^Q
-                        def wyllie_rose(phi, swi, C, P, Q):
-                            return C * (phi**P) / (swi**Q)
-
-                        def objective(params, phi, swi, k):
-                            C, P, Q = params
-                            k_pred = wyllie_rose(phi, swi, C, P, Q)
-                            return np.sum(
-                                (np.log10(k_pred + 0.001) - np.log10(k + 0.001)) ** 2
-                            )
-
-                        # Initial guess
-                        x0 = [8581, 4.4, 2.0]
-                        bounds = [(10, 50000), (2, 8), (0.5, 4)]
-
-                        result = optimize.minimize(
-                            objective,
-                            x0,
-                            args=(matched_por, swirr, matched_perm),
-                            bounds=bounds,
-                            method="L-BFGS-B",
-                        )
-
-                        if result.success:
-                            C, P, Q = result.x
-                            self.params_window.perm_params_widget.show_calculated_result(
-                                C, P, Q
-                            )
-                            self.statusBar.showMessage(
-                                f"Core-calibrated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}"
-                            )
-                            return
+                perm_depths, perm = core.get_core_permeability()
+                por_depths, por = core.get_core_porosity()
+                keep = zone_mask(perm_depths, tops, zone)
+                perm_depths, perm = perm_depths[keep], perm[keep]
+                keep = zone_mask(por_depths, tops, zone)
+                por_depths, por = por_depths[keep], por[keep]
+                matched_por, matched_perm = pair_core_samples(
+                    perm_depths, perm, por_depths, por
+                )
+                fit = calibrate_from_core(matched_por, matched_perm, k_buckles)
+                if fit is not None:
+                    widget.show_calculated_result(fit["C"], fit["P"], fit["Q"])
+                    where = f" in {zone}" if zone else ""
+                    self.statusBar.showMessage(
+                        f"Core-calibrated{where} ({fit['pairs']} pairs): "
+                        f"C={fit['C']:.0f}, P={fit['P']:.2f}, Q={fit['Q']:.2f}"
+                    )
+                    return
+                if zone:
+                    widget.show_message(
+                        f"{len(matched_por)} core pairs in {zone} (need {MIN_CORE_PAIRS}). "
+                        f"Switch the scope to Well: {well_name} to calibrate on the whole well."
+                    )
+                    return
             except Exception:
                 logger.exception(
                     "Core permeability fit failed; using statistical estimation"
                 )
 
-        # Statistical estimation based on porosity (works without core)
-        try:
-            phie = results["PHIE"].dropna()
-
-            if len(phie) < 10:
-                QMessageBox.warning(self, "Warning", "Insufficient data for regression")
-                return
-
-            phi_mean = phie.mean()
-
-            # Adjust coefficients based on porosity distribution
-            if phi_mean > 0.20:
-                # High porosity - unconsolidated
-                C, P, Q = 10000.0, 4.0, 2.0
-            elif phi_mean > 0.12:
-                # Medium porosity - typical sandstone (Timur defaults)
-                C, P, Q = 8581.0, 4.4, 2.0
+        phie = results["PHIE"]
+        if zone:
+            labels = results["ZONE"] if "ZONE" in results.columns else None
+            phie = phie[labels == normalize_zone(zone)] if labels is not None else phie.iloc[0:0]
+        estimate = estimate_from_porosity(phie)
+        if estimate is None:
+            if zone:
+                widget.show_message(f"Too few PHIE samples in {zone} to estimate.")
             else:
-                # Low porosity - tight formation
-                C, P, Q = 5000.0, 5.0, 2.2
-
-            self.params_window.perm_params_widget.show_calculated_result(C, P, Q)
-            self.statusBar.showMessage(
-                f"Estimated from porosity (mean={phi_mean:.3f}): C={C:.0f}, P={P:.2f}, Q={Q:.2f}"
-            )
-
-        except Exception as e:
-            QMessageBox.warning(
-                self, "Error", f"Failed to calculate coefficients:\n{str(e)}"
-            )
+                QMessageBox.warning(self, "Warning", "Insufficient data for regression")
+            return
+        C, P, Q = estimate["C"], estimate["P"], estimate["Q"]
+        widget.show_calculated_result(C, P, Q)
+        where = f" in {zone}" if zone else ""
+        self.statusBar.showMessage(
+            f"Estimated from porosity{where} (mean={estimate['phi_mean']:.3f}): "
+            f"C={C:.0f}, P={P:.2f}, Q={Q:.2f}.{stale}"
+        )
 
     # =========================================================================
     # EXPORT
