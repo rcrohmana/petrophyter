@@ -2,6 +2,8 @@
 Pytest Fixtures for Petrophyter Tests
 """
 
+import gc
+
 import pytest
 import pandas as pd
 import numpy as np
@@ -35,6 +37,34 @@ def _isolated_qsettings(tmp_path, monkeypatch):
     )
     yield
     QSettings.setDefaultFormat(previous)
+
+
+@pytest.fixture(autouse=True)
+def _collect_garbage():
+    """Free dead Qt wrappers between tests.
+
+    Without this, windows from earlier tests pile up (tens of thousands of
+    widgets) and the cyclic GC can run inside QApplication.setStyleSheet()
+    while Qt iterates over every widget, deleting one under it (segfault).
+    """
+    yield
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _no_quit_prompt(monkeypatch):
+    """Closing a window with a run still in flight must not block on the quit prompt.
+
+    Offscreen, a real QMessageBox never returns. Tests of the prompt itself
+    patch ``MainWindow._confirm_quit`` back.
+    """
+    try:
+        from ui.main_window import MainWindow
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(MainWindow, "_confirm_quit", lambda self, kind: True)
+    yield
 
 
 @pytest.fixture

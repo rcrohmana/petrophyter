@@ -193,6 +193,21 @@ While the analysis runs:
 
 If the analysis fails, an **Analysis Error** dialog opens and the status bar shows **Analysis failed**. When several wells run and only some fail, the others keep their results and one warning banner names each failed well and the reason; a failed well's dot in the Data Browser turns to the error colour. After a multi-well run the banner reads, for example, **Analysis complete for 4 wells (2 unchanged)**.
 
+### While files are loading
+
+While LAS files are read or merged, these actions are unavailable (greyed out; the status tip says "Unavailable while files are loading"):
+
+- **New Project**, **Open LAS File(s)…**, **Open Formation Tops…**, **Open Core Data…** and their multi-well variants
+- **Load Session…**
+- **Merge LAS Files…**
+- **Run Analysis** and **Run All Wells**
+
+Save Session, export, the **View** and **Help** menus, the Parameters window, and theme switching stay available.
+
+An analysis run does not lock the window. **Run Analysis** is disabled only while the active well is running, so you can switch to another well and run it. **New Project** and **Load Session…** cancel a run in progress; its results are discarded.
+
+Closing the window while an analysis runs asks **Analysis is still running. Quit anyway?** (or **Files are still loading. Quit anyway?**). Choosing **Yes** quits without waiting for the result.
+
 ### QC chip
 
 After a LAS file is loaded or merged, the status bar shows a QC chip with the overall data quality score, for example **QC 87/100**. It is hidden when no data is loaded.
