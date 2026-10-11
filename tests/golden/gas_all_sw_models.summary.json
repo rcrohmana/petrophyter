@@ -1,15 +1,15 @@
 {
  "analysis_mode": "Whole Well",
- "avg_phie_pay": 0.23146600260103214,
- "avg_sw_pay": 0.05074261794747159,
- "avg_vsh_pay": 0.17723076870741994,
+ "avg_phie_pay": 0.23146600260103234,
+ "avg_sw_pay": 0.04953982716429002,
+ "avg_vsh_pay": 0.17723076870741958,
  "data_points": 50,
  "gr_max": 39.699098521619945,
  "gr_min": 30.205844942958024,
  "gross_sand": 24.489795918367236,
  "hcpv_gross": 10.360848293075408,
- "hcpv_net_pay": 5.3877359225575825,
- "hcpv_net_res": 5.3877359225575825,
+ "hcpv_net_pay": 5.38773592255756,
+ "hcpv_net_res": 5.38773592255756,
  "net_pay": 24.489795918367236,
  "net_reservoir": 24.489795918367236,
  "ng_pay": 1.0,
@@ -116,8 +116,8 @@
     "value": 2.45
    },
    "rsh": {
-    "source": "auto",
-    "value": 50.0
+    "source": "auto unavailable (fallback: project)",
+    "value": 5.0
    },
    "rw": {
     "source": "project",
@@ -157,8 +157,10 @@
    }
   }
  },
- "rsh": 50.0,
- "rsh_source": "auto",
+ "phih_pay": 5.668555165739542,
+ "rsh": 5.0,
+ "rsh_shale_samples": 9,
+ "rsh_source": "manual (auto estimate unavailable)",
  "rw": 0.05,
  "rw_source": "manual",
  "selected_formations": [],
@@ -175,6 +177,8 @@
  "swirr_mean": 0.09475111703584263,
  "swirr_method": "All Methods",
  "warnings": [
+  "auto Rsh: only 9 samples with Vsh above 0.8 (at least 10 are needed); entered Rsh used.",
+  "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
   "SW_DW: 11 no-root, 0 failed solver points."
  ],
  "zones": []

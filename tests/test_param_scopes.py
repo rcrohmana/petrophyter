@@ -176,6 +176,12 @@ def test_thin_zone_falls_back_to_a_manual_project_zone_value():
 def test_zone_auto_rw_uses_only_that_zones_samples():
     data = _data()
     base = {**MANUAL_RW_RSH_GR}
+    # Auto Rw needs water-like samples (C8): in the Lower zone give every other sample
+    # Rwa = 0.3 ohm.m (water) and the rest Rwa = 3.0, from the PHIE the run computes.
+    phie = run_pipeline(data, FULL_MAPPING, dict(base))[0]["PHIE"].to_numpy()
+    lower_zone = (data["DEPTH"] >= 1040).to_numpy()
+    rwa = np.where(np.arange(len(data)) % 2 == 0, 0.3, 3.0)
+    data.loc[lower_zone, "RT"] = (rwa * 0.62 / np.maximum(phie, 0.01) ** 2.15)[lower_zone]
     plan = _plan(zone_overrides={"LOWER": {"rw": ps.make_entry(ps.AUTO)}}, global_params=base)
     _, summary = run_pipeline(data, FULL_MAPPING, {**base, "zone_plan": plan}, formation_tops=make_tops())
     src = summary["param_sources"]["LOWER"]["rw"]

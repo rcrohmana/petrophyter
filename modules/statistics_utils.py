@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 # P5/P95 baselines are closer than this, the full min/max range is used instead.
 MIN_GR_SEPARATION = 20.0
 
+# Auto-Rw (Rwa method). A sample is a candidate when its porosity exceeds
+# RW_CANDIDATE_MIN_POROSITY and its Vshale is below RW_CANDIDATE_MAX_VSH.
+# Against the Rwa seed (P5), a sample is water-like when its Archie Sw is at
+# least RW_WATER_SW and hydrocarbon-like when it is at most RW_HC_SW.
+RW_CANDIDATE_MIN_POROSITY = 0.15
+RW_CANDIDATE_MAX_VSH = 0.3
+RW_WATER_SW = 0.8
+RW_HC_SW = 0.5
+# Allowed range of an automatic Rw and Rsh (ohm.m).
+RW_MIN, RW_MAX = 0.01, 5.0
+RSH_MIN, RSH_MAX = 0.5, 50.0
+
 
 def gr_baseline_from_series(gr: pd.Series) -> Tuple[float, float]:
     """The single GR baseline rule used by the pipeline, Vshale and "Calculate Rw/Rsh".
@@ -195,42 +207,60 @@ class StatisticsUtils:
     
     def estimate_rw_from_rt_water_zone(self, rt_curve: str = 'RT',
                                         phi_curve='PHIT',
-                                        porosity_threshold: float = 0.15,
+                                        porosity_threshold: float = RW_CANDIDATE_MIN_POROSITY,
                                         a: float = 0.62,
                                         m: float = 2.15,
                                         vsh_series: pd.Series = None,
-                                        vsh_clean_max: float = 0.3,
-                                        min_samples: int = 10) -> Optional[float]:
+                                        vsh_clean_max: float = RW_CANDIDATE_MAX_VSH,
+                                        min_samples: int = 10,
+                                        n: float = 2.0) -> Tuple[Optional[float], str]:
         """
         Estimate Rw with the apparent water resistivity (Rwa) method.
 
         Candidates are clean (VSH < ``vsh_clean_max`` when ``vsh_series`` is
         given), porous (> ``porosity_threshold``) samples with RT > 0. For each,
-        Rwa = RT * phi^m / a. Rw is the median of the Rwa values at or below
-        the 25th percentile of Rwa (the water-bearing end of the distribution).
+        Rwa = RT * phi^m / a (Hingle 1959; Pickett 1966: the minimum Rwa of a
+        water-bearing interval is Rw).
+
+        The 5th percentile of Rwa is the seed (the most water-like end). With
+        Archie, Sw = (seed / Rwa)^(1/n) against the seed, so water-like samples
+        ``W`` have Sw >= :data:`RW_WATER_SW` and hydrocarbon-like samples ``H``
+        have Sw <= :data:`RW_HC_SW`. Rw is the median Rwa of ``W``.
+
+        Quality: ``no_water`` (fewer than ``min_samples`` samples in ``W``;
+        Rw is ``None``), ``water_leg`` (``W`` and ``H`` both have at least
+        ``min_samples`` samples, so the log shows a water/hydrocarbon contrast)
+        or ``uniform`` (no hydrocarbon contrast: the samples are assumed to be
+        water-bearing, which a log alone cannot confirm).
 
         Args:
             rt_curve: Resistivity curve mnemonic
             phi_curve: Porosity column name, or a Series aligned to the data
                 (the pipeline passes PHIE, falling back to PHIT)
             porosity_threshold: Minimum porosity for a candidate sample
-            a, m: Archie parameters
+            a, m, n: Archie parameters
             vsh_series: Reference Vshale; enables the clean-zone filter
             vsh_clean_max: Vshale ceiling for a clean sample
-            min_samples: Fewest candidate samples that give a trustworthy estimate
+            min_samples: Fewest samples the water and hydrocarbon groups need
 
         Returns:
-            Estimated Rw in ohm.m, or None when there are too few candidates.
+            ``(rw, quality)``. Counts and user-facing warnings of the last call
+            are kept in ``self.rw_info`` (``quality``, ``candidates``,
+            ``n_water``, ``n_hc``, ``warnings``).
         """
+        info = {"quality": "no_water", "candidates": 0, "n_water": 0, "n_hc": 0,
+                "warnings": []}
+        self.rw_info = info
+
         if rt_curve not in self.data.columns:
-            return None
+            return None, "no_water"
 
         if isinstance(phi_curve, pd.Series):
             phi = self._align_external_series(phi_curve, "phi_curve")
         elif phi_curve in self.data.columns:
             phi = self.data[phi_curve]
         else:
-            return None
+            return None, "no_water"
 
         frame = pd.DataFrame({"rt": self.data[rt_curve], "phi": phi})
         if vsh_series is not None:
@@ -242,18 +272,42 @@ class StatisticsUtils:
         if vsh_series is not None:
             mask &= frame["vsh"] < vsh_clean_max
         frame = frame[mask]
+        info["candidates"] = len(frame)
 
-        if len(frame) < min_samples:
-            return None
+        if len(frame) == 0:
+            return None, "no_water"
 
         rwa = frame["rt"] * frame["phi"] ** m / a
-        rw = float(rwa[rwa <= np.percentile(rwa, 25)].median())
-        return max(0.01, min(rw, 5.0))
+        seed = float(np.percentile(rwa, 5))
+        n_eff = float(n) if n and n > 0 else 2.0
+        water = rwa[rwa <= seed / RW_WATER_SW ** n_eff]
+        hc = rwa[rwa >= seed / RW_HC_SW ** n_eff]
+        info["n_water"], info["n_hc"] = len(water), len(hc)
+
+        if len(water) < min_samples:
+            return None, "no_water"
+
+        quality = "water_leg" if len(hc) >= min_samples else "uniform"
+        info["quality"] = quality
+        if quality == "uniform":
+            info["warnings"].append(
+                "auto Rw: Rwa shows no water/hydrocarbon contrast; the estimate assumes "
+                "these samples are water-bearing. Check it against a known water zone."
+            )
+        rw = float(water.median())
+        clamped = max(RW_MIN, min(rw, RW_MAX))
+        if clamped != rw:
+            info["warnings"].append(
+                f"auto Rw of {rw:.4g} ohm.m is outside the allowed range "
+                f"{RW_MIN:g} to {RW_MAX:g}; {clamped:g} is used."
+            )
+        return clamped, quality
 
     def estimate_rsh(self, rt_curve: str = 'RT',
                       vsh_series: pd.Series = None,
                       gr_curve: str = 'GR',
-                      unavailable_default: Optional[float] = 5.0) -> Optional[float]:
+                      unavailable_default: Optional[float] = 5.0,
+                      min_samples: int = 10) -> Optional[float]:
         """
         Estimate shale resistivity (Rsh) from pure shale zones.
         
@@ -263,10 +317,15 @@ class StatisticsUtils:
             gr_curve: GR curve mnemonic (fallback)
             unavailable_default: Returned when no shale zone can be found
                 (pass None to detect that case)
+            min_samples: With ``vsh_series``, the fewest samples with
+                Vsh > 0.8 that give a trustworthy estimate
 
         Returns:
-            Estimated Rsh in ohm.m
+            Estimated Rsh in ohm.m. The number of shale samples and any
+            warning of the last call are kept in ``self.rsh_info``.
         """
+        info = {"n_shale": 0, "warnings": []}
+        self.rsh_info = info
         if rt_curve not in self.data.columns:
             return unavailable_default  # Default
             
@@ -297,13 +356,21 @@ class StatisticsUtils:
             shale_mask = rt < np.percentile(rt_valid, 20)
         
         rt_shale = rt[shale_mask].dropna()
-        
+        info["n_shale"] = len(rt_shale)
+
         if len(rt_shale) == 0:
             return unavailable_default
-            
+        if vsh_series is not None and len(rt_shale) < min_samples:
+            return unavailable_default
+
         rsh = float(rt_shale.median())
-        
-        return max(0.5, min(rsh, 50.0))
+        clamped = max(RSH_MIN, min(rsh, RSH_MAX))
+        if clamped != rsh:
+            info["warnings"].append(
+                f"auto Rsh of {rsh:.4g} ohm.m is outside the allowed range "
+                f"{RSH_MIN:g} to {RSH_MAX:g}; {clamped:g} is used."
+            )
+        return clamped
     
     def estimate_dt_matrix(self, dt_curve: str = 'DT',
                            vsh_series: pd.Series = None) -> float:

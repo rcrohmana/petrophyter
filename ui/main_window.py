@@ -1881,8 +1881,8 @@ class MainWindow(QMainWindow):
         """
         from modules.param_scopes import normalize_zone
         from modules.perm_calibration import (
-            MIN_CORE_PAIRS, calibrate_from_core, estimate_from_porosity, fit_core,
-            pair_core_samples, zone_mask,
+            MIN_CORE_PAIRS, apply_warning, calibrate_from_core, estimate_from_porosity,
+            fit_core, pair_core_samples, zone_mask,
         )
 
         if not self.model.calculated or self.model.results is None:
@@ -1900,6 +1900,8 @@ class MainWindow(QMainWindow):
         well_name = (ds.display_name or ds.key) if ds is not None else "the well"
         flat, _info = self.model.scope_view()
         k_buckles = float(flat.get("k_buckles", self.model.k_buckles))
+        perm_q = float(flat.get("perm_Q", self.model.perm_Q))
+        swirr_method = flat.get("swirr_method", self.model.swirr_method)
         widget = self.params_window.perm_params_widget
         stale = " Results are out of date; run the analysis first." if ds is not None and ds.stale else ""
         tops = ds.formation_tops if ds is not None else None
@@ -1917,9 +1919,20 @@ class MainWindow(QMainWindow):
                 matched_por, matched_perm = pair_core_samples(
                     perm_depths, perm, por_depths, por
                 )
-                fit = calibrate_from_core(matched_por, matched_perm, k_buckles)
+                fit = calibrate_from_core(matched_por, matched_perm, k_buckles, q=perm_q)
                 if fit is not None:
                     widget.show_calculated_result(fit["C"], fit["P"], fit["Q"])
+                    notes = [apply_warning(fit, swirr_method, k_buckles)]
+                    if fit.get("clipped_swirr"):
+                        notes.append(
+                            f"{fit['clipped_swirr']} of {fit['pairs']} plugs have a Buckles "
+                            "Swirr at its limit (0.05 or 0.5) and say nothing about the "
+                            "porosity exponent.")
+                    notes = " ".join(n for n in notes if n)
+                    if notes:
+                        # show_message would drop the pending result and its Apply button
+                        widget.result_label.setText(
+                            "\n".join((widget.result_label.text(), notes)))
                     where = f" in {zone}" if zone else ""
                     self.statusBar.showMessage(
                         f"Core-calibrated{where} ({fit['pairs']} pairs): "
@@ -1932,7 +1945,7 @@ class MainWindow(QMainWindow):
                         f"Switch the scope to Well: {well_name} to calibrate on the whole well."
                     )
                     return
-                _, reason = fit_core(matched_por, matched_perm, k_buckles)
+                _, reason = fit_core(matched_por, matched_perm, k_buckles, q=perm_q)
                 core_failure = f"Core calibration failed ({reason}); coefficients estimated from porosity instead"
             except Exception:
                 logger.exception(

@@ -635,3 +635,24 @@ def test_the_provenance_block_is_the_run_manifest_in_every_format(tmp_path, mode
     side = (tmp_path / "res.provenance.txt").read_text(encoding="utf-8")
     assert f"Source files: {block['Source files']}" in side and f"pandas: {block['pandas']}" in side
     assert "Merge recipe: step 0.5 ft" in side
+
+
+def test_field_sw_is_weighted_by_pore_thickness_in_pay(model):
+    a, b = model.project.wells[0], model.project.wells[1]
+    a.summary.update({"net_pay": 10.0, "avg_sw_pay": 0.2, "phih_pay": 1.0})
+    b.summary.update({"net_pay": 1.0, "avg_sw_pay": 0.6, "phih_pay": 3.0})
+    total = wells_summary_frame(model.project.wells).iloc[-1]
+    # (0.2 x 1.0 + 0.6 x 3.0) / (1.0 + 3.0) = 0.50; weighting by net pay would give 0.236
+    assert total["Avg Sw"] == pytest.approx(0.50, rel=1e-12)
+    # PHIE stays net-pay weighted
+    expected = (a.summary["avg_phie_pay"] * 10.0 + b.summary["avg_phie_pay"] * 1.0) / 11.0
+    assert total["Avg PHIE"] == pytest.approx(expected, rel=1e-12)
+
+
+def test_field_sw_without_phih_pay_falls_back_to_net_pay_weights(model):
+    a, b = model.project.wells[0], model.project.wells[1]
+    for ds, net, sw in ((a, 10.0, 0.2), (b, 1.0, 0.6)):
+        ds.summary.update({"net_pay": net, "avg_sw_pay": sw})
+        ds.summary.pop("phih_pay", None)
+    total = wells_summary_frame(model.project.wells).iloc[-1]
+    assert total["Avg Sw"] == pytest.approx((0.2 * 10.0 + 0.6 * 1.0) / 11.0, rel=1e-12)

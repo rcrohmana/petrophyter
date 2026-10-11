@@ -24,13 +24,17 @@ from modules.param_scopes import (
     ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
     juhasz_b, normalize_zone, resolve_tvd,
 )
-from modules.petrophysics import PetrophysicsCalculator
+from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
 from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
 from modules.statistics_utils import (
     MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
 )
 
 ProgressFn = Callable[[str, int], None]
+
+# A zone's own GR P95 is its shale line only if it reaches this fraction of the
+# way from the well's GRmin to its GRmax; below it the zone has no shale.
+ZONE_SHALE_REACH = 0.75
 
 # Analysis parameters read by the pipeline, with the defaults the GUI ships.
 # Keys match the AppModel attribute names and the session-file fields.
@@ -41,6 +45,7 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "gr_min_manual": 20.0,
     "gr_max_manual": 120.0,
     "vsh_methods": ["Linear"],
+    "vsh_primary_method": None,     # None: the first of vsh_methods
     "rho_matrix": 2.65,
     "dt_matrix": 55.5,
     "nphi_matrix": None,
@@ -142,29 +147,33 @@ def resolve_nphi_matrix(params: Dict) -> float:
     return get_default_matrix_parameters(lithology)["nphi_matrix"]
 
 
-def vsh_reference(calc: PetrophysicsCalculator, methods, data: pd.DataFrame, gr_curve: str):
+def resolve_vsh_primary(vsh_methods, stored=None) -> Optional[str]:
+    """The primary Vsh method (UI name): the stored one if still selected, else the first.
+
+    ``stored`` is ``vsh_primary_method`` (``None`` by default). Returns ``None``
+    only when no method is selected.
+    """
+    names = list(vsh_methods or [])
+    if stored is not None and stored in names:
+        return stored
+    return names[0] if names else None
+
+
+def vsh_reference(calc: PetrophysicsCalculator, methods, data: pd.DataFrame, gr_curve: str,
+                  primary: Optional[str] = None):
     """Return the VSH series used for shale masking and its label.
 
-    One method: that method's column. Several: their row-wise maximum.
+    ``methods`` are the calculated method keys; the reference is the column of
+    ``primary`` (a key, default the first of ``methods``). The other selected
+    methods stay in the results as comparison curves.
     """
-    if len(methods) == 1:
-        key = VSH_COLUMN_MAP.get(methods[0], "VSH_LINEAR")
-        vsh_ref = calc.results.get(
-            key,
-            calc.results.get("VSH", pd.Series([0.5] * len(data), index=data.index)),
-        )
-        return vsh_ref, methods[0]
-
-    vsh_arrays = [
-        calc.results[VSH_COLUMN_MAP.get(m, "VSH")]
-        for m in methods
-        if VSH_COLUMN_MAP.get(m, "VSH") in calc.results.columns
-    ]
-    if vsh_arrays:
-        vsh_ref = pd.concat(vsh_arrays, axis=1).max(axis=1)
-    else:
-        vsh_ref = calc.results.get("VSH", pd.Series([0.5] * len(data), index=data.index))
-    return vsh_ref, "max(" + ",".join(methods) + ")"
+    method = primary if primary in methods else (methods[0] if methods else "linear")
+    key = VSH_COLUMN_MAP.get(method, "VSH_LINEAR")
+    vsh_ref = calc.results.get(
+        key,
+        calc.results.get("VSH", pd.Series([0.5] * len(data), index=data.index)),
+    )
+    return vsh_ref, method
 
 
 def _has(curve: Optional[str], data: pd.DataFrame) -> bool:
@@ -191,10 +200,11 @@ def _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings):
 
     vsh_selected = p["vsh_methods"] or ["Linear"]
     methods_to_calc = [VSH_METHOD_MAP[m] for m in vsh_selected if m in VSH_METHOD_MAP] or ["linear"]
+    primary = VSH_METHOD_MAP.get(resolve_vsh_primary(vsh_selected, p.get("vsh_primary_method")))
 
     if has_gr:
         calc.calculate_all_vshale(gr_curve, gr_min, gr_max, methods_to_calc)
-        vsh, _ = vsh_reference(calc, methods_to_calc, data, gr_curve)
+        vsh, _ = vsh_reference(calc, methods_to_calc, data, gr_curve, primary)
         calc.results["VSH"] = vsh
     else:
         vsh = pd.Series([0.3] * len(data), index=data.index)
@@ -349,11 +359,13 @@ def _factor(tctx: Optional[TemperatureContext]) -> Optional[pd.Series]:
     return None if tctx is None else tctx.factor
 
 
-def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None):
+def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None, info=None):
     """Rwa-method Rw on PHIE (PHIT if PHIE is absent) and the reference VSH, or None.
 
     With temperature correction the RT values are first brought to the Rw
-    reference temperature, so the estimate is Rw at that temperature.
+    reference temperature, so the estimate is Rw at that temperature. When
+    ``info`` is given it receives ``quality``, ``n_water``, ``n_hc`` and the
+    estimator's ``warnings``.
     """
     phi = calc.results.get("PHIE")
     if phi is None or not phi.notna().any():
@@ -364,13 +376,20 @@ def _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor=None):
         frame = stats_util.data.copy()
         frame[rt_curve] = frame[rt_curve] / temp_factor.loc[frame.index]
         stats_util = StatisticsUtils(frame)
-    rw = stats_util.estimate_rw_from_rt_water_zone(
-        rt_curve, phi, 0.15, p["a"], p["m"], vsh_series=vsh
+    rw, quality = stats_util.estimate_rw_from_rt_water_zone(
+        rt_curve, phi, 0.15, p["a"], p["m"], vsh_series=vsh, n=p["n"]
     )
+    if info is not None:
+        detail = getattr(stats_util, "rw_info", None) or {}
+        info.update(quality=quality, n_water=detail.get("n_water", 0),
+                    n_hc=detail.get("n_hc", 0), warnings=list(detail.get("warnings", [])))
+        if rw is None:
+            info["warnings"].append(
+                "auto Rw: no water-bearing samples found; entered Rw used.")
     return rw or None
 
 
-def _auto_rsh(stats_util, vsh, rt_curve, temp_factor=None):
+def _auto_rsh(stats_util, vsh, rt_curve, temp_factor=None, info=None):
     """Median RT of the shale zone (VSH > 0.8), or None when there is none.
 
     With temperature correction each sample's RT is first brought to the Rw
@@ -381,7 +400,16 @@ def _auto_rsh(stats_util, vsh, rt_curve, temp_factor=None):
         frame = stats_util.data.copy()
         frame[rt_curve] = frame[rt_curve] / temp_factor.loc[frame.index]
         stats_util = StatisticsUtils(frame)
-    return stats_util.estimate_rsh(rt_curve, vsh, unavailable_default=None) or None
+    rsh = stats_util.estimate_rsh(rt_curve, vsh, unavailable_default=None) or None
+    if info is not None:
+        detail = getattr(stats_util, "rsh_info", None) or {}
+        info.update(n_shale=detail.get("n_shale", 0),
+                    warnings=list(detail.get("warnings", [])))
+        if rsh is None and detail.get("n_shale", 0):
+            info["warnings"].append(
+                f"auto Rsh: only {detail['n_shale']} samples with Vsh above 0.8 "
+                "(at least 10 are needed); entered Rsh used.")
+    return rsh
 
 
 def _rsh_effective(rsh, rsh_auto, p, tctx, index):
@@ -408,25 +436,38 @@ def _unavailable_warning(name, entered):
     )
 
 
-def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None):
+def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None, info=None):
     """Effective Rw/Rsh per ``rw_mode`` / ``rsh_mode``.
 
     Returns ``(rw, rsh, rw_source, rsh_source)``; a source is ``"manual"``,
     ``"auto"`` or :data:`AUTO_UNAVAILABLE`. With temperature correction an
-    auto Rw and Rsh are at the reference temperature.
+    auto Rw and Rsh are at the reference temperature. When ``info`` is given it
+    receives ``rw_quality``, ``rw_water_samples``, ``rw_hc_samples`` and
+    ``rsh_shale_samples`` for an auto estimate; the estimators' warnings go to
+    ``warnings``.
     """
     temp_factor = _factor(tctx)
     rw, rsh = p["rw"], p["rsh"]
     rw_source = rsh_source = "manual"
     if p["rw_mode"] == "auto":
-        estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor)
+        rw_info = {}
+        estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor, rw_info)
+        warnings.extend(rw_info.get("warnings", []))
+        if info is not None and rw_info:
+            info.update(rw_quality=rw_info.get("quality"),
+                        rw_water_samples=rw_info.get("n_water", 0),
+                        rw_hc_samples=rw_info.get("n_hc", 0))
         if estimate is not None:
             rw, rw_source = estimate, "auto"
         else:
             rw_source = AUTO_UNAVAILABLE
             warnings.append(_unavailable_warning("Rw", rw))
     if p["rsh_mode"] == "auto":
-        estimate = _auto_rsh(stats_util, vsh, rt_curve, temp_factor)
+        rsh_info = {}
+        estimate = _auto_rsh(stats_util, vsh, rt_curve, temp_factor, rsh_info)
+        warnings.extend(rsh_info.get("warnings", []))
+        if info is not None and rsh_info:
+            info.update(rsh_shale_samples=rsh_info.get("n_shale", 0))
         if estimate is not None:
             rsh, rsh_source = estimate, "auto"
         else:
@@ -478,14 +519,19 @@ def estimate_rw_rsh(
     tctx = temperature_context(data, p, curve_mapping)
     if tctx is not None:
         warnings.extend(tctx.source["notes"])
+    estimator_info = {}
     rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-        stats_util, calc, vsh, rt_curve, p, warnings, tctx
+        stats_util, calc, vsh, rt_curve, p, warnings, tctx, estimator_info
     )
     return {
         "rw": rw,
         "rsh": rsh,
         "rw_source": rw_source,
         "rsh_source": rsh_source,
+        "rw_quality": estimator_info.get("rw_quality"),
+        "rw_water_samples": estimator_info.get("rw_water_samples"),
+        "rw_hc_samples": estimator_info.get("rw_hc_samples"),
+        "rsh_shale_samples": estimator_info.get("rsh_shale_samples"),
         "gr_min": gr_min,
         "gr_max": gr_max,
         "warnings": warnings,
@@ -540,12 +586,28 @@ def _enough_data(seg: pd.DataFrame, curve: Optional[str]) -> bool:
     )
 
 
-def _zone_gr_baseline(seg, gr_curve):
-    """P5/P95 of the zone's GR, or None when the zone cannot support it (§4.4)."""
+ZONE_NO_SHALE_NOTE = "zone has no shale; GRmax from the well"
+
+
+def _zone_gr_baseline(seg, gr_curve, well_baseline=None):
+    """P5/P95 of the zone's GR, or None when the zone cannot support it (§4.4).
+
+    GRmax is the zone's P95 only if it reaches ``ZONE_SHALE_REACH`` of the way
+    from the well's GRmin to its GRmax (the zone contains shale). Otherwise the
+    zone is clean and its own P95 would label clean sand as shale, so GRmax is
+    the well's. Returns ``(lo, hi)`` or, when GRmax came from the well,
+    ``(lo, hi, ZONE_NO_SHALE_NOTE)``.
+    """
     if not _enough_data(seg, gr_curve):
         return None
     gr = seg[gr_curve].dropna()
     lo, hi = float(np.percentile(gr, 5)), float(np.percentile(gr, 95))
+    if well_baseline is not None:
+        well_lo, well_hi = float(well_baseline[0]), float(well_baseline[1])
+        if hi < well_lo + ZONE_SHALE_REACH * (well_hi - well_lo):
+            if well_hi - lo < MIN_GR_SEPARATION:
+                return None
+            return lo, well_hi, ZONE_NO_SHALE_NOTE
     if hi - lo < MIN_GR_SEPARATION:
         return None
     return lo, hi
@@ -583,9 +645,12 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
     gr_curve = curve_mapping.get("GR", "GR")
     rt_curve = curve_mapping.get("RT", "RT")
     if "gr_baseline" in zone_auto:
-        baseline = _zone_gr_baseline(seg, gr_curve)
+        baseline = _zone_gr_baseline(seg, gr_curve, well["gr"])
         if baseline is None:
             baseline, sources["gr_baseline"] = _fallback_value("gr_baseline", plan_entry, well["gr"])
+        elif len(baseline) == 3:
+            sources["gr_baseline"] = f"auto ({baseline[2]})"
+            baseline = baseline[:2]
     elif "gr_baseline" in zone_keys:
         baseline = (sp["gr_min_manual"], sp["gr_max_manual"])
     else:
@@ -613,14 +678,18 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
 
     values = {}
     temp_factor = _factor(tctx)
+    estimator_info = {"rw": {}, "rsh": {}}
     estimators = {
-        "rw": lambda: _auto_rw(stats_util, calc, vsh, rt_curve, sp, temp_factor),
-        "rsh": lambda: _auto_rsh(stats_util, vsh, rt_curve, temp_factor),
+        "rw": lambda: _auto_rw(stats_util, calc, vsh, rt_curve, sp, temp_factor,
+                               estimator_info["rw"]),
+        "rsh": lambda: _auto_rsh(stats_util, vsh, rt_curve, temp_factor,
+                                 estimator_info["rsh"]),
     }
     rsh_auto = well.get("rsh_auto", False)     # is the Rsh used an estimate at T_ref?
     for name, estimator in estimators.items():
         if name in zone_auto:
             estimate = estimator() if _enough_data(seg, rt_curve) else None
+            warnings.extend(estimator_info[name].get("warnings", []))
             auto = estimate is not None
             if estimate is None:
                 estimate, sources[name] = _fallback_value(name, plan_entry, well[name])
@@ -757,41 +826,29 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay}
 
 
-def _depth_step(data: pd.DataFrame) -> float:
-    """The net-pay depth step, derived as ``calculate_net_pay`` derives it."""
+def _sample_dz(data: pd.DataFrame):
+    """Per-sample thickness of the run's samples (:func:`depth_increments`), or 0.1 ft."""
     if "DEPTH" in data.columns:
-        depths = data["DEPTH"].dropna()
-        if len(depths) > 1:
-            return abs(np.median(np.diff(depths)))
+        return depth_increments(data["DEPTH"])
     return 0.1
 
 
-def _pay_stats(results, vsh, phie, sw, step, mask=None):
-    """Net-pay numbers from the stored flags (same arithmetic as ``calculate_net_pay``)."""
+def _pay_stats(results, vsh, phie, sw, dz, mask=None):
+    """Net-pay numbers from the stored flags (same arithmetic as ``calculate_net_pay``).
+
+    ``dz`` is the per-sample thickness aligned with ``results`` (or a scalar);
+    ``mask`` selects one zone's samples.
+    """
     if mask is not None:
         results, vsh, phie, sw = results[mask], vsh[mask], phie[mask], sw[mask]
-    gross_flag = results["GROSS_SAND_FLAG"].astype(bool)
-    res_flag = results["NET_RES_FLAG"].astype(bool)
-    pay_flag = results["NET_PAY_FLAG"].astype(bool)
-    gross = gross_flag.sum() * step
-    net_res = res_flag.sum() * step
-    net_pay = pay_flag.sum() * step
-    if pay_flag.sum() > 0:
-        avg_phi = float(phie[pay_flag].mean())
-        avg_sw = float(sw[pay_flag].mean())
-        avg_vsh = float(vsh[pay_flag].mean())
-    else:
-        avg_phi = avg_sw = avg_vsh = np.nan
-    return {
-        "gross_sand": float(gross),
-        "net_reservoir": float(net_res),
-        "net_pay": float(net_pay),
-        "ng_reservoir": float(net_res / gross if gross > 0 else 0),
-        "ng_pay": float(net_pay / gross if gross > 0 else 0),
-        "avg_phie_pay": float(avg_phi),
-        "avg_sw_pay": float(avg_sw),
-        "avg_vsh_pay": float(avg_vsh),
-    }
+        if not np.isscalar(dz):
+            dz = np.asarray(dz, dtype=float)[np.asarray(mask, dtype=bool)]
+    return pay_summary(
+        results["GROSS_SAND_FLAG"].astype(bool),
+        results["NET_RES_FLAG"].astype(bool),
+        results["NET_PAY_FLAG"].astype(bool),
+        vsh, phie, sw, dz,
+    )
 
 
 ZONE_SUMMARY_PARAMS = ("a", "m", "n", "rw", "rsh", "vsh_cutoff", "phi_cutoff", "sw_cutoff")
@@ -839,6 +896,8 @@ def _zone_diagnostics(vsh, phie, sw, cutoffs, step):
     vsh, phie, sw = (np.asarray(x, dtype=float) for x in (vsh, phie, sw))
     ok = np.isfinite(vsh) & np.isfinite(phie) & np.isfinite(sw)
     vsh, phie, sw = vsh[ok], phie[ok], sw[ok]
+    if not np.isscalar(step):
+        step = np.asarray(step, dtype=float)[ok]
     n = int(ok.sum())
     out = {"valid": n, "gross": 0.0, "pass_vsh": None, "pass_phi": None, "pass_sw": None,
            "net_reservoir": 0.0, "net_pay": 0.0, "status": "no_data", "limiting": None,
@@ -854,7 +913,7 @@ def _zone_diagnostics(vsh, phie, sw, cutoffs, step):
     for name, key in ZONE_CUTOFFS:
         out[key] = float(passes[name].sum() / n)
     out["gross"], out["net_reservoir"], out["net_pay"] = (
-        float(m.sum() * step) for m in (gross, reservoir, pay))
+        float(np.sum(m * step)) for m in (gross, reservoir, pay))
     if not gross.any():
         out["status"], out["limiting"] = "no_gross", "vsh_cutoff"
     elif not reservoir.any():
@@ -879,6 +938,17 @@ def zone_diagnostic_note(diag):
     ``level`` is ``"warning"`` (no net reservoir) or ``"info"``. The wording is
     diagnostic: a tight or water-bearing zone is legitimate.
     """
+    note = diag.get("note")
+    base = _zone_status_note(diag)
+    if not note:
+        return base
+    text = f"GR baseline: {note}."
+    if base is None:
+        return "info", text
+    return base[0], f"{base[1]} {text}"
+
+
+def _zone_status_note(diag):
     status, c = diag.get("status"), diag.get("cutoffs") or {}
     if status == "no_data":
         return "info", "No valid samples: VSH, PHIE or Sw is missing over the whole zone."
@@ -908,7 +978,11 @@ def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone):
             cutoffs = {k: table[k]["value"] for k, _ in ZONE_CUTOFFS}
         except KeyError:
             continue
-        out[zone] = _zone_diagnostics(vsh[mask], phie[mask], sw[mask], cutoffs, step)
+        zone_step = step if np.isscalar(step) else np.asarray(step, dtype=float)[mask]
+        out[zone] = _zone_diagnostics(vsh[mask], phie[mask], sw[mask], cutoffs, zone_step)
+        note = str((table.get("gr_baseline") or {}).get("source", ""))
+        if ZONE_NO_SHALE_NOTE in note:
+            out[zone]["note"] = ZONE_NO_SHALE_NOTE
     return out
 
 
@@ -1012,9 +1086,10 @@ def run_pipeline(
     # ---- Water saturation (well-level Rw / Rsh) -----------------------------
     emit("Calculating water saturation...", 55)
     rw, rsh, rw_source, rsh_source = p["rw"], p["rsh"], "manual", "manual"
+    rw_rsh_info = {}
     if has_rt:
         rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
-            stats_util, calc, vsh, rt_curve, p, warnings, tctx
+            stats_util, calc, vsh, rt_curve, p, warnings, tctx, rw_rsh_info
         )
     rsh_auto = rsh_source == "auto"
     well_sources = _well_sources(p, rw_source, rsh_source, shale_failed)
@@ -1066,7 +1141,7 @@ def run_pipeline(
         calc.results = pd.concat(parts).reindex(data.index)
         pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
                for k in ("vsh", "phie", "sw", "swirr")}
-        summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _depth_step(data))
+        summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _sample_dz(data))
         warnings[:] = list(dict.fromkeys(warnings))
 
     emit("Calculating HCPV...", 88)
@@ -1094,6 +1169,7 @@ def run_pipeline(
     summary["rsh"] = rsh
     summary["rw_source"] = rw_source
     summary["rsh_source"] = rsh_source
+    summary.update(rw_rsh_info)     # rw_quality and sample counts, only for auto Rw / Rsh
     summary["swirr_method"] = p["swirr_method"]
     summary["swirr_mean"] = pay["swirr"].mean()
     summary["analysis_mode"] = analysis_mode
@@ -1124,13 +1200,13 @@ def run_pipeline(
     summary["param_sources"] = param_sources
     summary["zones"] = (
         _zone_rows(calc.results, labels, data, (pay["vsh"], pay["phie"], pay["sw"]),
-                   _depth_step(data), param_sources)
+                   _sample_dz(data), param_sources)
         if labels is not None else []
     )
     if summary["zones"]:
         summary["zone_diagnostics"] = _zone_diagnostics_by_zone(
             labels, (pay["vsh"], pay["phie"], pay["sw"]),
-            _depth_step(data), param_sources)
+            _sample_dz(data), param_sources)
 
     solver_diagnostics = {}
     for method, diagnostics in solver_raw.items():

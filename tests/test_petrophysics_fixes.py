@@ -171,9 +171,9 @@ class TestHcpvDepthGap:
         sw = pd.Series([0.5, 0.5, 0.5])
         calc = PetrophysicsCalculator(pd.DataFrame({"DEPTH": depth}))
         results = calc.calculate_hcpv(phie=phie, sw=sw, depth=depth)
-        # dz filled = [1.0, 1.0, 2.0]; HCPV_frac = 0.1
+        # Midpoint rule: intervals 1.0 and 2.0 give dz = [1.0, 1.5, 2.0]; HCPV_frac = 0.1
         np.testing.assert_allclose(
-            results["dHCPV"].values, [0.1, 0.1, 0.2], rtol=1e-6
+            results["dHCPV"].values, [0.1, 0.15, 0.2], rtol=1e-6
         )
 
 

@@ -412,3 +412,33 @@ def test_old_session_without_porosity_keys_keeps_defaults(tmp_path):
     path.write_text(json.dumps({"_session_version": "2.1", "dn_combination": "Bogus"}))
     assert svc.apply_session_to_model(model, svc.load_session(str(path)))
     assert model.dn_combination == "Average"
+
+
+def test_vsh_primary_method_round_trips_and_defaults_to_none(tmp_path):
+    from modules.pipeline import PARAM_DEFAULTS, resolve_vsh_primary
+    from services.session_service import _SESSION_DEFAULTS
+
+    # One stored default (None: the first of vsh_methods) in all four places.
+    assert PARAM_DEFAULTS["vsh_primary_method"] is None
+    assert _SESSION_DEFAULTS["vsh_primary_method"] is None
+    model = AppModel()
+    assert model.vsh_primary_method is None
+    assert model.project_params()["vsh_primary_method"] is None
+    # Resolved at use.
+    assert resolve_vsh_primary(["Larionov Older", "Linear"], None) == "Larionov Older"
+    assert resolve_vsh_primary(["Larionov Older", "Linear"], "Linear") == "Linear"
+    assert resolve_vsh_primary(["Larionov Older"], "Linear") == "Larionov Older"
+
+    model.vsh_methods = ["Linear", "Larionov Tertiary"]
+    model.vsh_primary_method = "Larionov Tertiary"
+    path = tmp_path / "v.json"
+    svc = SessionService()
+    assert svc.save_session(model, str(path))
+    fresh = AppModel()
+    assert svc.apply_session_to_model(fresh, svc.load_session(str(path)))
+    assert fresh.vsh_primary_method == "Larionov Tertiary"
+    assert fresh.project_params()["vsh_primary_method"] == "Larionov Tertiary"
+    # A session without the key keeps the default.
+    other = AppModel()
+    assert svc.apply_session_to_model(other, {"vsh_methods": ["Linear"]})
+    assert other.vsh_primary_method is None

@@ -46,6 +46,9 @@ def _add_wells(window, keys):
 
 
 def _ran(window, qtbot, keys=("WELL:A",)):
+    # The sample log has no 10 shale samples and its auto Rsh sits above the 50 ohm.m
+    # limit; a manual Rsh keeps these runs free of Rsh warnings (C8).
+    window.model.rsh_mode = "manual"
     wells = _add_wells(window, list(keys))
     window._on_run_all()
     _finish(window, qtbot)

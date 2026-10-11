@@ -213,7 +213,7 @@ def estimate_shale_point(
     Returns the result dict (also for fallbacks: ``method == "fallback"``).
     """
     # Imported here: modules.pipeline imports this module.
-    from modules.pipeline import VSH_METHOD_MAP, vsh_reference
+    from modules.pipeline import VSH_METHOD_MAP, resolve_vsh_primary, vsh_reference
     from modules.petrophysics import PetrophysicsCalculator
     from modules.statistics_utils import StatisticsUtils
 
@@ -246,7 +246,9 @@ def estimate_shale_point(
         ] or ["linear"]
 
         calc.calculate_all_vshale(gr_curve, gr_min, gr_max, methods_to_calc)
-        vsh_ref, vsh_method_used = vsh_reference(calc, methods_to_calc, data, gr_curve)
+        primary = VSH_METHOD_MAP.get(
+            resolve_vsh_primary(vsh_methods_selected, params.get("vsh_primary_method")))
+        vsh_ref, vsh_method_used = vsh_reference(calc, methods_to_calc, data, gr_curve, primary)
 
         selection_mode = setting("shale_selection_mode")
         min_points = setting("shale_min_points")

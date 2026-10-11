@@ -451,11 +451,14 @@ def wells_summary_frame(wells) -> pd.DataFrame:
     numbers stand for a configuration that no longer exists; they keep their
     row with the error and blank numbers, as do not-run wells with their
     status. The Field row's Status reads ``"4 wells (1 out of date)"``. N/G is
-    total Net / total Gross. Avg PHIE and Avg Sw are weighted by each well's
-    net pay thickness (sum(avg_i * net_i) / sum(net_i), skipping wells whose
-    average is undefined).
+    total Net / total Gross. Avg PHIE is weighted by each well's net pay
+    thickness (sum(avg_i * net_i) / sum(net_i), skipping wells whose average
+    is undefined). Avg Sw is weighted by each well's pore thickness in pay,
+    ``phih_pay`` = sum(phie * dz) (sum(avg_i * phih_i) / sum(phih_i)); without
+    ``phih_pay`` in any summary it falls back to the net pay weights.
     """
     rows = []
+    phih_pay = []
     for ds in wells:
         row = {c: _NAN for c in WELL_COLUMNS}
         status = STATUS_LABELS.get(ds.status, ds.status)
@@ -464,6 +467,7 @@ def wells_summary_frame(wells) -> pd.DataFrame:
         row.update({"Well": well_label(ds), "Status": status,
                     "Rw source": "", "Rsh source": ""})
         summary = ds.summary if ds.summary and ds.calculated and ds.status != "error" else None
+        phih_pay.append(_num(summary.get("phih_pay")) if summary else _NAN)
         if summary:
             row.update({
                 "Gross": _num(summary.get("gross_sand")),
@@ -486,12 +490,16 @@ def wells_summary_frame(wells) -> pd.DataFrame:
     if len(df) and len(included):
         net = included["Net"].fillna(0.0)
 
-        def weighted(column):
-            valid = included[column].notna() & (net > 0)
-            weight = net[valid].sum()
+        phih = pd.Series(phih_pay, index=df.index).loc[included.index]
+
+        def weighted(column, weights=net):
+            valid = included[column].notna() & (weights > 0)
+            weight = weights[valid].sum()
             if weight <= 0:
                 return _NAN
-            return float((included.loc[valid, column] * net[valid]).sum() / weight)
+            return float((included.loc[valid, column] * weights[valid]).sum() / weight)
+
+        sw_weights = phih.fillna(0.0) if (phih > 0).any() else net
 
         gross_total = float(included["Gross"].fillna(0.0).sum())
         net_total = float(net.sum())
@@ -502,7 +510,7 @@ def wells_summary_frame(wells) -> pd.DataFrame:
                 f" ({n_stale} out of date)" if n_stale else ""),
             "Gross": gross_total, "Net": net_total,
             "N/G": net_total / gross_total if gross_total > 0 else _NAN,
-            "Avg PHIE": weighted("Avg PHIE"), "Avg Sw": weighted("Avg Sw"),
+            "Avg PHIE": weighted("Avg PHIE"), "Avg Sw": weighted("Avg Sw", sw_weights),
             "HCPV": float(included["HCPV"].fillna(0.0).sum()),
             "Rw source": "", "Rsh source": "",
         })

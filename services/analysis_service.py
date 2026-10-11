@@ -374,6 +374,10 @@ class AnalysisService(QObject):
             "rsh": round(estimate["rsh"], 2),
             "rw_source": estimate["rw_source"],
             "rsh_source": estimate["rsh_source"],
+            "rw_quality": estimate.get("rw_quality"),
+            "rw_water_samples": estimate.get("rw_water_samples"),
+            "rw_hc_samples": estimate.get("rw_hc_samples"),
+            "rsh_shale_samples": estimate.get("rsh_shale_samples"),
             "warnings": estimate["warnings"],
         }
 
@@ -406,6 +410,7 @@ class AnalysisService(QObject):
             "gr_min_manual": model.gr_min_manual,
             "gr_max_manual": model.gr_max_manual,
             "vsh_methods": model.vsh_methods,
+            "vsh_primary_method": getattr(model, "vsh_primary_method", None),
         }
         params.update(
             {k: getattr(model, k) for k in SHALE_SETTING_DEFAULTS if hasattr(model, k)}

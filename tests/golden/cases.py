@@ -7,6 +7,9 @@ from the conftest fixtures so the cases stay in step with the rest of the suite.
 
 import io
 
+import numpy as np
+import pandas as pd
+
 from modules.formation_tops import FormationTops
 from tests import conftest
 
@@ -20,6 +23,29 @@ TOPS_TXT = (
 
 ALL_SW = ["Archie", "Indonesian", "Simandoux", "Waxman-Smits", "Dual-Water"]
 ALL_VSH = ["Linear", "Larionov Tertiary", "Larionov Older"]
+
+def mixed_depth_step_data():
+    """30 ft sampled every 0.1524 ft, then 40 ft every 0.5 ft (a log with a step change).
+
+    Locks the local-step thickness and HCPV rule (C10) and the weighted pay
+    averages (C12): porosity varies along the interval, so the pore-volume
+    weighted Sw differs from the arithmetic mean.
+    """
+    rng = np.random.default_rng(20261010)
+    fine = 1000.0 + 0.1524 * np.arange(197)
+    coarse = fine[-1] + 0.5 * np.arange(1, 81)
+    depth = np.concatenate([fine, coarse])
+    n = len(depth)
+    wave = np.sin(depth / 6.0)
+    return pd.DataFrame({
+        "DEPTH": depth,
+        "GR": 55.0 + 25.0 * wave + 5.0 * rng.random(n),
+        "RHOB": 2.33 + 0.08 * wave + 0.03 * rng.random(n),
+        "NPHI": 0.22 + 0.05 * wave + 0.02 * rng.random(n),
+        "DT": 85.0 + 8.0 * wave + 3.0 * rng.random(n),
+        "RT": 25.0 + 20.0 * np.cos(depth / 9.0) + 10.0 * rng.random(n),
+    })
+
 
 CASES = {
     "defaults_whole_well": {"data": "sample_log_data", "params": {}},
@@ -56,6 +82,7 @@ CASES = {
         "tops": True,
     },
     "no_rt_no_dt": {"data": "sample_log_data", "drop": ["RT", "DT"], "params": {}},
+    "mixed_depth_step": {"builder": mixed_depth_step_data, "params": {}},
 }
 
 
@@ -73,7 +100,7 @@ def make_tops():
 def build_case(name):
     """Return (data, curve_mapping, params, formation_tops) for a case."""
     spec = CASES[name]
-    data = fixture_frame(spec["data"])
+    data = spec["builder"]() if "builder" in spec else fixture_frame(spec["data"])
     mapping = dict(FULL_MAPPING)
     for curve in spec.get("drop", []):
         data = data.drop(columns=[curve])

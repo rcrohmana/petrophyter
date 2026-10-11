@@ -6,12 +6,12 @@
  "data_points": 100,
  "gr_max": 88.41562199612135,
  "gr_min": 42.68115511379288,
- "gross_sand": 37.37373737373423,
+ "gross_sand": 37.37373737373724,
  "hcpv_gross": 0.0,
  "hcpv_net_pay": 0.0,
  "hcpv_net_res": 0.0,
  "net_pay": 0.0,
- "net_reservoir": 37.37373737373423,
+ "net_reservoir": 37.37373737373724,
  "ng_pay": 0.0,
  "ng_reservoir": 1.0,
  "param_sources": {
@@ -157,6 +157,7 @@
    }
   }
  },
+ "phih_pay": 0.0,
  "rsh": 5.0,
  "rsh_source": "manual",
  "rw": 0.05,

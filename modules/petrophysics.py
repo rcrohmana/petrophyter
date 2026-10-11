@@ -97,6 +97,98 @@ def _vectorized_brentq(func, lo, hi, active, xtol=2e-12,
 # How PHID and PHIN are combined into PHIT / PHIE_DN.
 DN_COMBINATIONS = ("Average", "RMS")
 
+# A depth interval larger than GAP_STEP_FACTOR x the local logging step is a
+# non-physical gap (e.g. Per-Formation mode selecting non-adjacent formations).
+# Chosen > 2 so legitimate variable sampling (e.g. a 0.5 ft -> 1.0 ft
+# transition) is preserved.
+GAP_STEP_FACTOR = 3.0
+# Number of depth intervals in the centred window that defines the local step.
+DEPTH_STEP_WINDOW = 11
+
+
+def depth_increments(depth) -> pd.Series:
+    """Thickness represented by each sample, with local gap detection.
+
+    1. Intervals ``d[i] - d[i-1]`` (absolute). The local step is the centred
+       rolling median of the positive intervals over :data:`DEPTH_STEP_WINDOW`
+       intervals, so a log that changes step (0.1524 ft to 0.5 ft) is read
+       correctly on both sides.
+    2. An interval larger than :data:`GAP_STEP_FACTOR` times the local step is a
+       gap (for example the jump between non-adjacent formations); it is
+       replaced by the local step.
+    3. Midpoint rule: a sample's thickness is half the interval above plus half
+       the interval below. The first and last samples take their one interval.
+
+    Returns a float Series with the index of ``depth`` (zeros for fewer than
+    two samples). On a uniform step every sample gets that step.
+    """
+    index = depth.index if isinstance(depth, pd.Series) else None
+    values = np.asarray(depth, dtype=float)
+    out = np.zeros(values.size)
+    if values.size > 1:
+        delta = np.abs(np.diff(values))
+        positive = pd.Series(np.where(delta > 0, delta, np.nan))
+        local = positive.rolling(DEPTH_STEP_WINDOW, center=True, min_periods=1).median()
+        overall = positive.median()
+        local = local.fillna(overall if np.isfinite(overall) else 0.0).to_numpy()
+        with np.errstate(invalid="ignore"):
+            gap = delta > GAP_STEP_FACTOR * local
+        delta = np.where(gap | ~np.isfinite(delta), local, delta)
+        out[0], out[-1] = delta[0], delta[-1]
+        out[1:-1] = (delta[:-1] + delta[1:]) / 2.0
+    return pd.Series(out, index=index)
+
+
+def swirr_buckles(phi, k_buckles):
+    """Buckles irreducible water saturation, Swirr = K_buckles / PHI.
+
+    The one formula used by the pipeline and by core permeability calibration:
+    porosity is floored at 0.01 (no division by a tiny number) and Swirr is
+    clipped to [0.05, 0.5].
+    """
+    return np.clip(k_buckles / np.maximum(phi, 0.01), 0.05, 0.5)
+
+
+def pay_summary(gross_flag, res_flag, pay_flag, vsh, phie, sw, dz) -> Dict[str, float]:
+    """Thicknesses and weighted pay averages from boolean flags and per-sample ``dz``.
+
+    ``dz`` is a per-sample thickness array (see :func:`depth_increments`) or a
+    scalar step. ``avg_phie_pay`` and ``avg_vsh_pay`` are thickness weighted,
+    sum(x * dz) / sum(dz); ``avg_sw_pay`` is pore-volume weighted,
+    sum(phie * sw * dz) / sum(phie * dz). ``phih_pay`` is sum(phie * dz) over pay.
+    With no weight (a single sample) the arithmetic mean is used.
+    """
+    gross_flag, res_flag, pay_flag = (
+        np.asarray(f, dtype=bool) for f in (gross_flag, res_flag, pay_flag))
+    vsh, phie, sw = (np.asarray(x, dtype=float) for x in (vsh, phie, sw))
+    dz = np.broadcast_to(np.asarray(dz, dtype=float), gross_flag.shape)
+    gross = float(dz[gross_flag].sum())
+    net_res = float(dz[res_flag].sum())
+    net_pay = float(dz[pay_flag].sum())
+    phih = 0.0
+    if pay_flag.any():
+        w, f, s, v = dz[pay_flag], phie[pay_flag], sw[pay_flag], vsh[pay_flag]
+        phih = float((f * w).sum())
+        if w.sum() > 0:
+            avg_phi = float((f * w).sum() / w.sum())
+            avg_vsh = float((v * w).sum() / w.sum())
+        else:
+            avg_phi, avg_vsh = float(f.mean()), float(v.mean())
+        avg_sw = float((f * s * w).sum() / phih) if phih > 0 else float(s.mean())
+    else:
+        avg_phi = avg_sw = avg_vsh = np.nan
+    return {
+        "gross_sand": gross,
+        "net_reservoir": net_res,
+        "net_pay": net_pay,
+        "ng_reservoir": float(net_res / gross if gross > 0 else 0),
+        "ng_pay": float(net_pay / gross if gross > 0 else 0),
+        "avg_phie_pay": avg_phi,
+        "avg_sw_pay": avg_sw,
+        "avg_vsh_pay": avg_vsh,
+        "phih_pay": phih,
+    }
+
 
 class PetrophysicsCalculator:
     """
@@ -109,12 +201,8 @@ class PetrophysicsCalculator:
     - Permeability (Wyllie-Rose, Timur)
     """
 
-    # A per-sample depth increment larger than GAP_STEP_FACTOR x the median
-    # logging step is treated as a non-physical depth gap (e.g. Per-Formation
-    # mode selecting non-adjacent formations) and neutralized in HCPV
-    # integration. Chosen > 2 so legitimate variable sampling (e.g. a 0.5 ft ->
-    # 1.0 ft transition) is preserved.
-    GAP_STEP_FACTOR = 3.0
+    # See the module-level GAP_STEP_FACTOR and depth_increments().
+    GAP_STEP_FACTOR = GAP_STEP_FACTOR
 
     # Minimum fraction of valid (non-NaN) samples a PHIE method must have before
     # it can be selected as the primary porosity. Guards against a mostly-broken
@@ -1455,11 +1543,7 @@ class PetrophysicsCalculator:
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
 
-        phie_safe = np.maximum(phie, 0.01)  # Avoid division by very small numbers
-        swirr = k_buckles / phie_safe
-
-        # Bound to reasonable range
-        swirr = np.clip(swirr, 0.05, 0.5)
+        swirr = swirr_buckles(phie, k_buckles)
 
         self.results["SWIRR_BUCKLES"] = swirr
         return swirr
@@ -1962,14 +2046,10 @@ class PetrophysicsCalculator:
                 ),
             )
 
-        # Determine step
+        # Per-sample thickness (a scalar ``step`` is used as given)
         if step is None:
             if "DEPTH" in self.data.columns:
-                depths = self.data["DEPTH"].dropna()
-                if len(depths) > 1:
-                    step = abs(np.median(np.diff(depths)))
-                else:
-                    step = 0.1
+                step = depth_increments(self.data["DEPTH"]).to_numpy()
             else:
                 step = 0.1
 
@@ -1983,33 +2063,10 @@ class PetrophysicsCalculator:
         self.results["NET_RES_FLAG"] = net_res_flag.astype(int)
         self.results["NET_PAY_FLAG"] = net_pay_flag.astype(int)
 
-        # Calculate thicknesses
-        gross_sand = gross_sand_flag.sum() * step
-        net_reservoir = net_res_flag.sum() * step
-        net_pay = net_pay_flag.sum() * step
-
-        # Calculate average properties in net pay
-        if net_pay_flag.sum() > 0:
-            avg_phi = float(phie[net_pay_flag].mean())
-            avg_sw = float(sw[net_pay_flag].mean())
-            avg_vsh = float(vsh[net_pay_flag].mean())
-        else:
-            avg_phi = avg_sw = avg_vsh = np.nan
-
-        # N/G ratios
-        ng_res = net_reservoir / gross_sand if gross_sand > 0 else 0
-        ng_pay = net_pay / gross_sand if gross_sand > 0 else 0
-
-        return {
-            "gross_sand": float(gross_sand),
-            "net_reservoir": float(net_reservoir),
-            "net_pay": float(net_pay),
-            "ng_reservoir": float(ng_res),
-            "ng_pay": float(ng_pay),
-            "avg_phie_pay": float(avg_phi),
-            "avg_sw_pay": float(avg_sw),
-            "avg_vsh_pay": float(avg_vsh),
-        }
+        # Thicknesses (sum of dz) and weighted pay averages
+        return pay_summary(
+            gross_sand_flag, net_res_flag, net_pay_flag, vsh, phie, sw, step
+        )
 
     def calculate_hcpv(
         self,
@@ -2090,22 +2147,10 @@ class PetrophysicsCalculator:
         hcpv_frac = phie * (1 - sw)
         hcpv_frac = np.clip(hcpv_frac, 0, 1)  # Bound to 0-1
 
-        # Step 2: Calculate depth increment (dz) in feet
-        dz = np.abs(depth.diff())
-
-        # Neutralize non-physical depth gaps. In Per-Formation mode with
-        # non-adjacent formations, the boundary sample would otherwise carry a dz
-        # equal to the full inter-formation distance (hundreds/thousands of ft),
-        # inflating HCPV ~1000x. Any dz far larger than the median logging step is
-        # a gap, not a real interval, so cap it to the median step.
-        valid_dz = dz.dropna()
-        valid_dz = valid_dz[valid_dz > 0]
-        median_step = float(np.median(valid_dz)) if len(valid_dz) > 0 else 0.0
-        if median_step > 0:
-            gap_mask = dz > (self.GAP_STEP_FACTOR * median_step)
-            dz = dz.where(~gap_mask, median_step)
-
-        dz.iloc[0] = dz.iloc[1] if len(dz) > 1 else 0  # Handle first row
+        # Step 2: per-sample thickness (dz) in feet, the same rule as net pay.
+        # Gaps (Per-Formation boundaries between non-adjacent formations) are
+        # neutralised against the LOCAL logging step.
+        dz = depth_increments(depth)
 
         # Step 3: Incremental HCPV (gross)
         d_hcpv = hcpv_frac * dz

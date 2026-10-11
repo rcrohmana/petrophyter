@@ -108,7 +108,7 @@ class TestAnalysisServiceFixes:
 
             def estimate_rw_from_rt_water_zone(self, rt_curve, phi_curve, *args, **kwargs):
                 seen.append(phi_curve)
-                return 0.12
+                return 0.12, "water_leg"
 
             def estimate_rsh(self, *args, **kwargs):
                 return 5.0

@@ -157,15 +157,21 @@
    }
   }
  },
+ "phih_pay": 0.0,
  "rsh": 4.844974974315079,
+ "rsh_shale_samples": 16,
  "rsh_source": "auto",
  "rw": 0.01,
+ "rw_hc_samples": 0,
+ "rw_quality": "no_water",
  "rw_source": "manual (auto estimate unavailable)",
+ "rw_water_samples": 0,
  "selected_formations": [],
  "solver_diagnostics": {},
  "swirr_mean": 0.20466379984798894,
  "swirr_method": "Buckles Number",
  "warnings": [
+  "auto Rw: no water-bearing samples found; entered Rw used.",
   "Rw could not be estimated automatically; using the entered Rw of 0.01."
  ],
  "zones": []

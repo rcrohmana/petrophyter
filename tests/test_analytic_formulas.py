@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from hypothesis import given, settings, strategies as st
 
-from modules.petrophysics import PetrophysicsCalculator
+from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
 
 TIGHT = 1e-9
 
@@ -264,3 +264,103 @@ def test_linear_vsh_within_unit_interval(gr, lo, span):
     calc = _calc(GR=gr)
     vsh = np.asarray(calc.calculate_vshale_linear("GR", gr_min=lo, gr_max=lo + span))
     assert np.all((vsh >= 0.0) & (vsh <= 1.0))
+
+
+# ---------------------------------------------------------------------------
+# Thickness per sample (depth_increments, C10) and weighted pay averages (C12)
+# ---------------------------------------------------------------------------
+class TestDepthIncrementsHandValues:
+    def test_stepped_depth(self):
+        # Depths 0, 1, 2, 4, 6 -> intervals 1, 1, 2, 2.
+        # Local step = median(1, 1, 2, 2) = 1.5 (all four intervals fit in the
+        # 11-interval window); a gap would need an interval above 3 x 1.5 = 4.5.
+        # Midpoint rule: dz = [1, (1+1)/2, (1+2)/2, (2+2)/2, 2] = [1, 1, 1.5, 2, 2]
+        # and sum(dz) = 7.5 = length 6 + (1 + 2)/2 for the two end half-intervals.
+        dz = depth_increments(pd.Series([0.0, 1.0, 2.0, 4.0, 6.0]))
+        np.testing.assert_allclose(dz.to_numpy(), [1.0, 1.0, 1.5, 2.0, 2.0], rtol=TIGHT)
+        assert dz.sum() == pytest.approx(7.5, rel=TIGHT)
+
+    def test_gap_is_replaced_by_the_local_step(self):
+        # Depths 0, 1, 2, 3, 10, 11, 12 -> intervals 1, 1, 1, 7, 1, 1.
+        # Local step = median(1, 1, 1, 7, 1, 1) = 1; 7 > 3 x 1, so the gap
+        # interval becomes 1 and every sample gets dz = 1: sum = 7 samples x 1,
+        # not the 12 ft of depth range.
+        dz = depth_increments(pd.Series([0.0, 1.0, 2.0, 3.0, 10.0, 11.0, 12.0]))
+        np.testing.assert_allclose(dz.to_numpy(), np.ones(7), rtol=TIGHT)
+
+    def test_step_change_is_not_a_gap(self):
+        # Ten intervals of 0.25 then ten of 1.0: the local step follows the log,
+        # so 1.0 against a local 0.25 neighbourhood is not flagged beyond the
+        # 3x threshold except at the very edge; the total is the depth range plus
+        # the two end half-intervals: 2.5 + 10 + (0.25 + 1.0)/2 = 13.125.
+        depth = np.concatenate([np.arange(0, 2.5, 0.25), 2.5 + np.arange(0, 11.0, 1.0)])
+        dz = depth_increments(pd.Series(depth))
+        assert dz.sum() == pytest.approx(13.125, rel=TIGHT)
+
+    def test_short_input(self):
+        assert depth_increments(pd.Series([5.0])).tolist() == [0.0]
+        assert depth_increments(pd.Series([], dtype=float)).tolist() == []
+
+
+class TestHcpvAndPayHandValues:
+    def test_hcpv_of_a_two_sample_well(self):
+        # Depths 100.0, 100.5 -> one interval of 0.5, so dz = [0.5, 0.5].
+        # HCPV_frac = PHIE x (1 - Sw) = 0.2 x 0.5 = 0.10 and 0.1 x 0.5 = 0.05.
+        # dHCPV = 0.10 x 0.5 = 0.05 and 0.05 x 0.5 = 0.025; cumulative 0.075.
+        depth = pd.Series([100.0, 100.5])
+        calc = PetrophysicsCalculator(pd.DataFrame({"DEPTH": depth}))
+        out = calc.calculate_hcpv(
+            phie=pd.Series([0.2, 0.1]), sw=pd.Series([0.5, 0.5]), depth=depth,
+            net_res_flag=pd.Series([1, 1]), net_pay_flag=pd.Series([1, 1]),
+        )
+        np.testing.assert_allclose(out["dHCPV"].to_numpy(), [0.05, 0.025], rtol=TIGHT)
+        assert out["HCPV_CUM"].iloc[-1] == pytest.approx(0.075, rel=TIGHT)
+
+    def test_pore_volume_weighted_sw(self):
+        # Two pay samples, dz = 1 each: phie 0.30 / 0.10, Sw 0.2 / 0.6.
+        # Sw = sum(phie Sw dz) / sum(phie dz) = (0.30 x 0.2 + 0.10 x 0.6) / 0.40
+        #    = (0.06 + 0.06) / 0.40 = 0.30   (the arithmetic mean would be 0.40).
+        # PHIE = (0.30 + 0.10) / 2 = 0.20 and phih = 0.40 ft.
+        flags = np.array([True, True])
+        out = pay_summary(flags, flags, flags, [0.1, 0.1], [0.30, 0.10], [0.2, 0.6], 1.0)
+        assert out["avg_sw_pay"] == pytest.approx(0.30, rel=TIGHT)
+        assert out["avg_phie_pay"] == pytest.approx(0.20, rel=TIGHT)
+        assert out["phih_pay"] == pytest.approx(0.40, rel=TIGHT)
+
+    def test_thickness_weighted_averages(self):
+        # dz = [1, 3], Vsh 0.1 / 0.3: sum(Vsh dz)/sum(dz) = (0.1 + 0.9)/4 = 0.25.
+        flags = np.array([True, True])
+        out = pay_summary(flags, flags, flags, [0.1, 0.3], [0.2, 0.2], [0.3, 0.3], [1.0, 3.0])
+        assert out["avg_vsh_pay"] == pytest.approx(0.25, rel=TIGHT)
+        assert out["net_pay"] == pytest.approx(4.0, rel=TIGHT)
+
+
+class TestThicknessProperties:
+    @settings(deadline=None, max_examples=60)
+    @given(step=st.floats(0.05, 2.0), n=st.integers(3, 300))
+    def test_uniform_interval_thickness_is_its_length_within_one_step(self, step, n):
+        # n samples at a uniform step span (n - 1) x step; every sample is worth
+        # one step, so the total is n x step, within one step of the length.
+        depth = 1000.0 + step * np.arange(n)
+        dz = depth_increments(pd.Series(depth))
+        assert abs(dz.sum() - (n - 1) * step) <= step * (1 + 1e-9)
+        np.testing.assert_allclose(dz.to_numpy(), step, rtol=1e-8)
+
+    @settings(deadline=None, max_examples=60)
+    @given(step=st.floats(0.05, 1.0), n1=st.integers(3, 80), n2=st.integers(3, 80),
+           gap_factor=st.floats(5.0, 2000.0))
+    def test_inserting_a_gap_adds_one_step_not_the_gap(self, step, n1, n2, gap_factor):
+        first = 1000.0 + step * np.arange(n1)
+        second = first[-1] + gap_factor * step + step * np.arange(n2)
+        dz = depth_increments(pd.Series(np.concatenate([first, second])))
+        # The gap interval counts as one local step, so every sample is worth a step.
+        assert dz.sum() == pytest.approx((n1 + n2) * step, rel=1e-8)
+
+    @settings(deadline=None, max_examples=60)
+    @given(steps=st.lists(st.floats(0.1, 3.0), min_size=3, max_size=60),
+           scale=st.floats(0.25, 8.0), shift=st.floats(0.0, 5000.0))
+    def test_thickness_is_scale_and_shift_invariant(self, steps, scale, shift):
+        depth = np.concatenate([[0.0], np.cumsum(steps)])
+        base = depth_increments(pd.Series(depth)).to_numpy()
+        moved = depth_increments(pd.Series(depth * scale + shift)).to_numpy()
+        np.testing.assert_allclose(moved, base * scale, rtol=1e-7, atol=1e-7)

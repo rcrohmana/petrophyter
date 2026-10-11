@@ -1,5 +1,6 @@
 """Zone cutoff validation: why a zone has no gross / net reservoir / net pay (spec §9)."""
 import numpy as np
+import pandas as pd
 import pytest
 from PyQt6.QtCore import Qt
 
@@ -206,3 +207,36 @@ def test_zone_grid_shows_nothing_at_project_scope(qtbot):
     grid = ZoneParamGrid(model)
     qtbot.addWidget(grid)
     assert set(_grid_states(grid).values()) == {"inherited"}
+
+
+# ---- C9: a zone without shale takes GRmax from the well -----------------------
+def test_zone_gr_baseline_uses_the_well_gr_max_when_the_zone_has_no_shale():
+    from modules.pipeline import ZONE_NO_SHALE_NOTE, _zone_gr_baseline
+
+    clean = pd.DataFrame({"DEPTH": np.arange(100.0), "GR": np.linspace(30.0, 60.0, 100)})
+    lo, hi, note = _zone_gr_baseline(clean, "GR", (20.0, 120.0))
+    assert lo == pytest.approx(np.percentile(clean["GR"], 5))
+    assert hi == 120.0 and note == ZONE_NO_SHALE_NOTE
+    # A zone whose P95 reaches 20 + 0.75 x 100 = 95 API keeps its own P95.
+    shaly = pd.DataFrame({"DEPTH": np.arange(100.0), "GR": np.linspace(30.0, 110.0, 100)})
+    assert _zone_gr_baseline(shaly, "GR", (20.0, 120.0)) == (
+        pytest.approx(np.percentile(shaly["GR"], 5)), pytest.approx(np.percentile(shaly["GR"], 95)))
+
+
+def test_clean_sand_zone_vsh_uses_the_well_baseline_and_says_so():
+    from modules.pipeline import ZONE_NO_SHALE_NOTE
+
+    data = fixture_frame("sample_log_data")
+    data["GR"] = 30.0 + 30.0 * (np.arange(len(data)) % 10) / 9.0     # clean sand: 30 to 60 API
+    base = {"vsh_baseline_method": ps.GR_MANUAL, "gr_min_manual": 20.0, "gr_max_manual": 120.0}
+    plan = ps.zone_plan({**PARAM_DEFAULTS, **base}, None, None,
+                        {"LOWER": {"gr_baseline": ps.make_entry(ps.AUTO)}}, ("UPPER", "LOWER"))
+    results, summary = run_pipeline(
+        data, FULL_MAPPING, {**base, "zone_plan": plan}, formation_tops=make_tops())
+    gr_min, gr_max = summary["param_sources"]["LOWER"]["gr_baseline"]["value"]
+    assert gr_max == 120.0
+    # (mean GR 45 - zone P5 31.5) / (120 - 31.5) = 0.15 (0.48 with the zone's own P95)
+    assert results.loc[results["ZONE"] == "LOWER", "VSH"].mean() == pytest.approx(0.15, abs=0.02)
+    assert ZONE_NO_SHALE_NOTE in summary["param_sources"]["LOWER"]["gr_baseline"]["source"]
+    level, text = zone_diagnostic_note(summary["zone_diagnostics"]["LOWER"])
+    assert ZONE_NO_SHALE_NOTE in text

@@ -35,6 +35,7 @@ _SESSION_DEFAULTS = {
     "gr_min_manual": 20.0,
     "gr_max_manual": 120.0,
     "vsh_methods": ["Linear"],
+    "vsh_primary_method": None,
     "rho_matrix": 2.65,
     "dt_matrix": 55.5,
     # Optional explicit matrix neutron response; absent/None preserves the
@@ -644,6 +645,8 @@ class SessionService(QObject):
             model.gr_max_manual = session_data['gr_max_manual']
         if 'vsh_methods' in session_data:
             model.vsh_methods = session_data['vsh_methods']
+        if 'vsh_primary_method' in session_data:
+            model.vsh_primary_method = session_data['vsh_primary_method']
         
         # Matrix parameters
         if 'rho_matrix' in session_data:

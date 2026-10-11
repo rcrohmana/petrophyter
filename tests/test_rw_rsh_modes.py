@@ -85,7 +85,7 @@ class TestRwModes:
         assert summary["rw_source"] == "auto"
 
         # Without the clean filter the low-RT shale wins, which is the old failure mode.
-        shale_fooled = StatisticsUtils(data).estimate_rw_from_rt_water_zone("RT", "NPHI")
+        shale_fooled, _quality = StatisticsUtils(data).estimate_rw_from_rt_water_zone("RT", "NPHI")
         assert shale_fooled < 0.75 * summary["rw"]
 
     def test_too_few_samples_falls_back_with_warning(self):
@@ -98,7 +98,7 @@ class TestRwModes:
     def test_estimator_requires_minimum_candidates(self):
         data = _zoned_frame()
         util = StatisticsUtils(data)
-        assert util.estimate_rw_from_rt_water_zone("RT", "NPHI", min_samples=10_000) is None
+        assert util.estimate_rw_from_rt_water_zone("RT", "NPHI", min_samples=10_000) == (None, "no_water")
 
 
 class TestSingleGrBaseline:
@@ -137,9 +137,22 @@ class TestVshColumnMatchesDownstream:
         results, _ = run_pipeline(
             data, MAPPING, {"vsh_methods": ["Larionov Older", "Linear"]}
         )
-        reference = results[["VSH_LARIO_OLD", "VSH_LINEAR"]].max(axis=1)
-        assert results["VSH"].equals(reference)
-        assert not results["VSH"].equals(results["VSH_LARIO_OLD"])
+        # C11: the first selected method is the primary one, not the row-wise maximum.
+        assert results["VSH"].equals(results["VSH_LARIO_OLD"])
+        assert not results["VSH"].equals(results["VSH_LINEAR"])
+
+    def test_vsh_primary_method_picks_the_reference_column(self):
+        data = _zoned_frame()
+        methods = ["Larionov Older", "Linear"]
+        results, _ = run_pipeline(
+            data, MAPPING, {"vsh_methods": methods, "vsh_primary_method": "Linear"}
+        )
+        assert results["VSH"].equals(results["VSH_LINEAR"])
+        # A stored primary that is no longer selected falls back to the first selected one.
+        results, _ = run_pipeline(
+            data, MAPPING, {"vsh_methods": methods, "vsh_primary_method": "Larionov Tertiary"}
+        )
+        assert results["VSH"].equals(results["VSH_LARIO_OLD"])
 
 
 class TestNphiPercentGuard:

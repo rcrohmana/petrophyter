@@ -69,6 +69,7 @@ class AppModel(QObject):
         self._gr_min_manual: float = 20.0
         self._gr_max_manual: float = 120.0
         self._vsh_methods: List[str] = ["Linear"]
+        self._vsh_primary_method: Optional[str] = None   # None: the first of vsh_methods
 
         # =====================================================================
         # MATRIX PARAMETERS
@@ -399,6 +400,15 @@ class AppModel(QObject):
     @vsh_methods.setter
     def vsh_methods(self, value: List[str]):
         self._vsh_methods = value
+
+    @property
+    def vsh_primary_method(self) -> Optional[str]:
+        """Primary Vsh method; ``None`` means the first of ``vsh_methods``."""
+        return self._vsh_primary_method
+
+    @vsh_primary_method.setter
+    def vsh_primary_method(self, value: Optional[str]):
+        self._vsh_primary_method = value
 
     # =========================================================================
     # PROPERTIES - MATRIX
