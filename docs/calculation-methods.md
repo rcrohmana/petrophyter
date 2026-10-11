@@ -258,8 +258,10 @@ All of these are off by default, and with the options off the results are identi
 the P10 of their Sw; otherwise it is Buckles (`k_buckles / PHIE`, PHIE floored at 0.01). The estimate is then
 limited in this order *(v1.7.2)*: `Swirr = clip(min(estimate, Sw), 0.05, 0.60)`. The floor is applied last, so
 Swirr is never below 0.05, even where the measured Sw is. The samples raised to the floor, limited to the
-measured Sw and limited to 0.60 are counted in the run; they are information unless they are more than 10 % of
-the samples. Before v1.7.2 the floor came first, so Swirr could fall below 0.05.
+measured Sw and limited to 0.60 are counted in the run and shown in Diagnostics. The floor and 0.60 counts
+are information unless they are more than 10 % of the samples, when they are a warning; the samples limited to
+the measured Sw are always information, since `min(estimate, Sw)` is how the method is defined. Before v1.7.2
+the floor came first, so Swirr could fall below 0.05.
 
 **The selected method is the one used** *(v1.7.2)*. `SWIRR`, which feeds permeability, comes from the selected
 method: Clean Zone → `SWIRR_CLEANZONE`, Statistical → `SWIRR_STAT`, Buckles Number → `SWIRR_BUCKLES`. All Methods

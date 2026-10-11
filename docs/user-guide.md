@@ -152,20 +152,24 @@ A page list on the left groups the pages under four headings:
 | **Analysis** | **Analysis Scope** | Whole Well or Per-Formation analysis, and which formations to include |
 | **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT, and optionally TVD (used for formation temperature) |
 | **Analysis** | **Core Matching** | Core depth unit (Auto, M, FT) and the maximum distance for matching core samples to log depths; enabled after core data is loaded |
-| **Parameters** | **Porosity Method** | Primary PHIE method used downstream for Sw, permeability, and HCPV |
-| **Parameters** | **VShale** | GR baseline (statistical or custom GRmin and GRmax) and the Vshale methods: Linear, Larionov Tertiary, Larionov Older |
+| **Parameters** | **Porosity Method** | Primary PHIE method used downstream for Sw, permeability, and HCPV, and the **D-N combination** (Average or RMS) for PHIT and PHIE_DN |
+| **Parameters** | **VShale** | GR baseline (statistical or custom GRmin and GRmax), the Vshale methods (Linear, Larionov Tertiary, Larionov Older) and the **Primary Vsh** |
 | **Parameters** | **Cutoffs** | Net-pay cutoffs for Vsh, PHIE, and Sw |
 | **Parameters** | **Rock Properties** | Matrix and fluid densities and sonic transit times, and shale parameters, including statistical estimation |
 | **Parameters** | **Saturation Models** | Archie constants and lithology presets, the Sw methods to calculate and the primary Sw, and the Rw and Rsh values with a data-driven estimate |
 | **Parameters** | **Permeability** | Wyllie-Rose coefficients C, P, and Q, with a calculate option, and the Swirr estimation method |
-| **Corrections** | **Gas Correction** | Enables the gas correction and sets the NPHI and RHOB factors |
+| **Corrections** | **Gas Correction** | Enables the gas correction and sets the NPHI and RHOB factors, and the gas flag thresholds **Crossover min** and **Gas Vsh max** |
 | **Scopes** | **Zones** | One row per zone and one column per zone parameter (a, m, n, Rw, Rsh, ρ matrix, and the three cutoffs) for the edited scope |
 
 On the **Saturation Models** page, each of Rw and Rsh has an **Auto** checkbox. When it is checked, the value is estimated from the loaded data on every run and the field is disabled; clear it to enter a value yourself. Rw starts in manual mode and Rsh in auto mode. **Apply Calculated Values** fills both fields and switches both to manual.
 
 The **Saturation Models** page also has a **Temperature** section; see [Formation temperature](#formation-temperature).
 
+**D-N combination** sets how density and neutron porosity combine into PHIT and PHIE_DN: **Average** (the default, for liquid-filled rock) or **RMS** (the form of earlier versions). Gas-flagged samples always use RMS. With gas correction on, a sample is flagged as gas when PHID − PHIN is at least **Crossover min** (0.02 v/v by default) and Vsh is at most **Gas Vsh max** (0.40). Both can be set per well and per zone. **Primary Vsh** chooses which selected Vshale method gives the `VSH` curve used by every later step; **First selected** (the default) takes the first checked method. It is a project setting. See [Calculation Methods](calculation-methods.md) for the rules.
+
 The **Rock Properties**, **Saturation Models**, and **Permeability** pages are divided into labeled sections. The shale, Rw/Rsh, and permeability sections have **Calculate** and **Apply** buttons that estimate values from the loaded data and let you accept them. The permeability estimate needs a completed analysis, and it uses core data when available. See [Calculation Methods](calculation-methods.md) for the equations, presets, and valid ranges.
+
+**Calculate** for Rw and Rsh also says how many samples the estimate rests on, for example `42 water-leg samples for Rw; 15 shale samples for Rsh (Rw quality: water_leg)`, and shows the estimate's warnings (no water leg, no water/hydrocarbon contrast, a value at its limit) on the page. On the **Permeability** page the result line names its source, for example `Calculated: C=5000, P=4.00, Q=2.00 (core calibration in UPPER, 6 pairs)` or `(estimated from porosity, mean 0.165)`. Notes appear under it without removing the result or **Apply**: why a core calibration failed, how many plugs have a Buckles Swirr at its limit, and a warning when the current Swirr method or Buckles k differs from the one the fit used (the fitted permeability would then not reproduce the core). Q is held at the entered value during the fit.
 
 ### Parameter scopes and zones
 
@@ -182,7 +186,7 @@ So a zone value entered at project scope applies to that formation in every well
 
 | Can be set per well and per zone | Per well only | Project only |
 |---|---|---|
-| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction; GR clean/shale baseline; Rw and Rsh (and the Rsh reference temperature); Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings (including the datum depth and Waxman-Smits B from temperature); curve mapping and analysis scope (whole well or selected formations) | methods (VShale, porosity, Sw methods, primary Sw), merge settings |
+| a, m, n, lithology preset; matrix and shale ρ, Δt, NPHI; gas correction and its crossover and Vsh thresholds; D-N combination; GR clean/shale baseline; Rw and Rsh (and the Rsh reference temperature); Waxman-Smits and Dual-Water constants; permeability C, P, Q and Buckles k; Vsh, PHIE, and Sw cutoffs | fluid ρ and Δt; the temperature correction settings (including the datum depth and Waxman-Smits B from temperature); curve mapping and analysis scope (whole well or selected formations) | methods (VShale, primary Vsh, porosity, Sw methods, primary Sw), merge settings |
 
 At any scope other than flat **Project**, each field has a small mode button beside it:
 
@@ -232,7 +236,7 @@ While the analysis runs:
 
 - a progress bar appears in the status bar, and the status message shows the current step. For one well this is the stage, such as `Calculating water saturation...`. For several wells the bar shows the combined progress, and the message names the well and its stage, for example `Analysing 2 of 4 wells · BKS-01: Calculating Swirr...`;
 - result tabs refresh when the run completes; and
-- a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`. When the run had warnings (for example, Rw could not be estimated automatically, or part of the interval has no porosity), the banner is a warning, such as `Analysis complete with 2 warnings — …`, with a **Review** button that opens **Diagnostics → Run issues** for that well.
+- a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`. When the run had warnings (for example, Rw could not be estimated automatically, or part of the interval has no porosity), the banner is a warning, such as `Analysis complete with 2 warnings — …`, with a **Review** button that opens **Diagnostics → Run issues** for that well. Only warnings and errors count: notes (information), such as how many samples Swirr limited, keep the banner a success.
 
 **Analysis → Stop analysis**, the **Stop analysis** toolbar button next to Run, or `Esc` while a run is active stops the run. Wells that finished keep their new results, wells that were not run keep their earlier state, and an info banner reports, for example, `Analysis stopped — 3 wells finished, 2 not run`. The action is disabled when nothing is running.
 
@@ -317,13 +321,15 @@ See [Visualization and Export](visualization-and-export.md) for more about plots
 
 ### Diagnostics
 
-**Run issues** comes first: the errors, warnings, and notes of the active well's last run, warnings first. Each row shows the severity, the zone when there is one, and a **Go to** button that opens the related Parameters page (Rw and Rsh, porosity, or the analysis scope) or the Diagnostics section concerned. It reads **No issues in the last run.** when the list is empty, and is hidden before the well has run.
+**Run issues** comes first: the errors, warnings, and notes of the active well's last run, warnings first. Each row shows the severity, the zone when there is one, and a **Go to** button that opens the related Parameters page (Rw and Rsh, porosity, Swirr, or the analysis scope), selecting the Rw or Rsh field when the issue is about one of them, or the Diagnostics section concerned. A warning means something was substituted or fell back (an automatic Rw that could not be estimated, missing porosity, a Swirr method with no value), or that a count passed its limit; counts below their limit are notes (**Info**). It reads **No issues in the last run.** when the list is empty, and is hidden before the well has run.
 
-Below it, cross-validation of the results: **Shale Parameters Cross-Validation** (current versus statistical values and deviation), **Porosity (PHIE) Cross-Validation** with a selectable method, **Water Saturation (Sw) Cross-Validation**, **Permeability (k) Validation**, and **Net Pay Validation**. When core data is loaded, **Core Data Validation** compares core porosity and permeability with the log-derived curves, with core points plotted on a depth track. The shale parameters are the ones **used in the last run**; when the current settings differ, a hint says **Current settings differ — Run to update**. Core samples beside a gap in the log are left out of the comparison and counted (`3 core samples in log gaps`). Warnings appear under each section when values look suspicious. Use the core-calibrated permeability coefficients from the **Permeability** page when the core comparison supports them.
+Below it, cross-validation of the results: **Shale Parameters Cross-Validation** (current versus statistical values and deviation), **Porosity (PHIE) Cross-Validation** with a selectable method, **Water Saturation (Sw) Cross-Validation**, **Permeability (k) Validation**, and **Net Pay Validation**. When core data is loaded, **Core Data Validation** compares core porosity and permeability with the log-derived curves, with core points plotted on a depth track. The shale parameters are the ones **used in the last run**; when the current settings differ, a hint says **Current settings differ — Run to update**. Core samples beside a gap in the log are left out of the comparison and counted (`3 core samples beside a log gap excluded`). Warnings appear under each section when values look suspicious.
+
+**Sw Solver and Porosity Checks** lists, for each Sw model and zone (or **Whole well**), the samples with no porosity (Sw set to 1), at the upper bound (Sw above 1 before the limit), at the lower bound, **BVH capped** (the total-porosity hydrocarbon volume of Waxman-Smits or Dual-Water limited to PHIE), **PHIE > PHIT**, and the Waxman-Smits and Dual-Water solver's no-root and failed counts. A cell above its limit (10 % of the zone's samples at the upper bound, 5 % BVH capped or PHIE > PHIT, any solver failure) is in the warning colour, with a tooltip. Below the table, **Swirr method used** names the series that fed permeability and how many samples were raised to the 0.05 floor, limited to Sw, limited to 0.60, or taken from Buckles; a zone whose automatic GR baseline found no shale is listed with **zone has no shale; GRmax from the well**. Use the core-calibrated permeability coefficients from the **Permeability** page when the core comparison supports them.
 
 ### Summary
 
-Results at a glance: the analysis scope (whole well or the selected formations), **Net Pay Analysis** (gross sand, net reservoir, net pay, N/G reservoir, N/G pay, and the average PHIE, Sw, and Vsh in pay), **HCPV Summary** (gross, net reservoir, and net pay), a **Thickness Summary** chart, and **Used in last run**: the Vsh, PHIE, and Sw cutoffs that run used (not the current settings). When the zones used different cutoffs, the cell reads, for example, **varies by zone (0.25–0.40)**. Before a run it shows **—** and **Run to see the parameters used**; when the current settings differ from the run, a hint says **Current settings differ — Run to update**.
+Results at a glance: the analysis scope (whole well or the selected formations), **Net Pay Analysis** (gross sand, net reservoir, net pay, N/G reservoir, N/G pay, and the average PHIE and Vsh in pay weighted by thickness and the average Sw weighted by pore volume), **HCPV Summary** (gross, net reservoir, and net pay), a **Thickness Summary** chart, and **Used in last run**: the Vsh, PHIE, and Sw cutoffs that run used (not the current settings). When the zones used different cutoffs, the cell reads, for example, **varies by zone (0.25–0.40)**. Before a run it shows **—** and **Run to see the parameters used**; when the current settings differ from the run, a hint says **Current settings differ — Run to update**.
 
 When the active well has formation tops, a **Zones** table gives one row per zone: top and bottom, gross, net, N/G, average PHIE and Sw, HCPV, and the a, m, n, Rw, and cutoffs used; hover a parameter to see its source (for example **well·zone** or **auto (fallback: well)**).
 
@@ -335,10 +341,11 @@ A zone that ends up with no gross, no net reservoir, or no net pay is marked so 
 | No gross | Muted | No sample passes the Vsh cutoff: shale by this cutoff, as expected for a seal. |
 | No net reservoir | Warning colour | Gross exists but no sample passes the PHIE cutoff. Tight rock, or check the cutoff and the porosity inputs. |
 | No net pay | Muted | Net reservoir exists but no sample passes the Sw cutoff. May be water-bearing; check the Rw inputs if pay is expected. |
+| Zone has no shale | Info colour | The zone's automatic GR baseline found no shale, so GRmax comes from the well. |
 
 These marks are diagnostic, not errors, and no dialog opens. On the Parameters window **Zones** page, the cutoff cell that caused the result (Vsh, PHIE, or Sw) is marked the same way and carries the same tooltip, at **Well** scope for the active well while its results are up to date.
 
-With two or more wells, a **Wells** table lists every well with its status, pay summary, and **Issues** (the number of warnings, or the error of a failed well), plus a **Field total** row (thickness and HCPV summed, averages weighted by net pay). The Field total counts wells whose results are current or out of date and leaves out wells whose latest run failed; its status reads, for example, **4 wells (1 out of date)**. Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
+With two or more wells, a **Wells** table lists every well with its status, pay summary, and **Issues** (the number of warnings, or the error of a failed well), plus a **Field total** row (thickness and HCPV summed, PHIE and Vsh weighted by net pay, Sw weighted by pore volume). The Field total counts wells whose results are current or out of date and leaves out wells whose latest run failed; its status reads, for example, **4 wells (1 out of date)**. Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
 
 ### Export
 
