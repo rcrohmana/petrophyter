@@ -38,6 +38,7 @@ from services.load_service import (
     sanitize_error_detail,
 )
 from services.export_service import ExportService
+from services.issues import collect_issues, issue_counts
 from services.session_service import (
     SessionService, is_v2_session, session_level_notes, validate_session,
 )
@@ -340,6 +341,7 @@ class MainWindow(QMainWindow):
         self.batch_runner.well_completed.connect(self._on_well_completed)
         self.batch_runner.well_failed.connect(self._on_well_failed)
         self.batch_runner.finished.connect(self._on_batch_finished)
+        self.diag_tab.goto_requested.connect(self._on_goto_target)
 
         # Merge service signals
         self.merge_service.started.connect(self._on_merge_started)
@@ -523,6 +525,8 @@ class MainWindow(QMainWindow):
         act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
         act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
         act("run_all", "Run All Wells", "layers", "Ctrl+Shift+R", self._on_run_all)
+        # Esc is bound to the action, which is enabled only while a run is active.
+        act("stop_analysis", "Stop analysis", "circle-stop", "Esc", self._on_stop_analysis)
         act("toggle_browser", "Data Browser", "panel-left", "Ctrl+B",
             self._toggle_browser, checkable=True)
         act("theme_light", "Light", "sun", None, lambda: self._set_theme("light"), checkable=True)
@@ -544,6 +548,7 @@ class MainWindow(QMainWindow):
         group.addAction(self.actions_["theme_dark"])
         self.actions_["run_analysis"].setEnabled(False)
         self.actions_["run_all"].setEnabled(False)
+        self.actions_["stop_analysis"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -564,6 +569,7 @@ class MainWindow(QMainWindow):
         analysis = bar.addMenu("&Analysis")
         analysis.addAction(self.actions_["run_analysis"])
         analysis.addAction(self.actions_["run_all"])
+        analysis.addAction(self.actions_["stop_analysis"])
         self._menus["analysis"] = analysis
         view = bar.addMenu("&View")
         view.addAction(self.actions_["toggle_browser"])
@@ -620,6 +626,11 @@ class MainWindow(QMainWindow):
         self.run_all_button.setProperty("variant", "ghost")
         self._run_all_action = toolbar.addWidget(self.run_all_button)
         self._run_all_action.setVisible(False)
+        self.stop_button = QToolButton()
+        self.stop_button.setDefaultAction(self.actions_["stop_analysis"])
+        self.stop_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.stop_button.setProperty("variant", "ghost")
+        toolbar.addWidget(self.stop_button)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
@@ -636,8 +647,8 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         self.main_toolbar = toolbar
 
-    def show_banner(self, kind: str, message: str):
-        self.banner.show_message(kind, message)
+    def show_banner(self, kind: str, message: str, action_text: str = None, on_action=None):
+        self.banner.show_message(kind, message, action_text, on_action)
 
     def update_qc_chip(self, score):
         from themes.helpers import set_status
@@ -1162,6 +1173,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
+        self.actions_["stop_analysis"].setEnabled(self.batch_runner.is_running())
         if self._busy:
             return  # _set_busy(None) refreshes
         project = self.model.project
@@ -1552,6 +1564,18 @@ class MainWindow(QMainWindow):
         )
         self._refresh_run_action()
 
+    # Set by Stop analysis so its cancelled report gets the "stopped" banner; a
+    # cancel from New Project, Load Session, Close or a new run stays quiet.
+    _stop_requested = False
+
+    def _on_stop_analysis(self):
+        """Stop the running analysis; wells that finished keep their results."""
+        if not self.batch_runner.is_running():
+            return
+        self._stop_requested = True
+        self.batch_runner.cancel()
+        self._stop_requested = False
+
     # Status-bar updates from running wells are limited to this many per second.
     _PROGRESS_MAX_HZ = 10
 
@@ -1640,12 +1664,31 @@ class MainWindow(QMainWindow):
         ok, failed = list(report.get("ok", [])), dict(report.get("failed", {}))
         skipped = list(report.get("skipped", []))
         if report.get("cancelled"):
-            self.statusBar.showMessage("Analysis cancelled")
+            if not self._stop_requested:
+                self.statusBar.showMessage("Analysis cancelled")
+                return
+            finished = len(ok) + len(failed)
+            not_run = max(0, self._batch_total - finished)
+            noun = "well" if finished == 1 else "wells"
+            self.statusBar.showMessage("Analysis stopped")
+            self.show_banner(
+                "info",
+                f"Analysis stopped — {finished} {noun} finished, {not_run} not run",
+            )
             return
 
         def name(key):
             ds = project.get(key)
             return ds.display_name if ds is not None and ds.display_name else key
+
+        # Warnings and errors only (infos stay in Diagnostics); ok wells are listed first.
+        warned = {}
+        for key in ok:
+            ds = project.get(key)
+            counts = issue_counts(collect_issues(ds)) if ds is not None else {}
+            n = counts.get("warning", 0) + counts.get("error", 0)
+            if n:
+                warned[key] = n
 
         if failed:
             if len(failed) == 1 and not ok:
@@ -1658,7 +1701,11 @@ class MainWindow(QMainWindow):
                 for k, m in failed.items()
             )
             noun = "well" if len(failed) == 1 else "wells"
-            self.show_banner("warning", f"{len(failed)} {noun} failed: {parts}")
+            review = next(iter(warned), None) or next(iter(failed))
+            self.show_banner(
+                "warning", f"{len(failed)} {noun} failed: {parts}",
+                "Review", lambda k=review: self._review_issues(k),
+            )
             self.statusBar.showMessage(
                 f"{len(ok)} analysed, {len(failed)} failed" if ok else "Analysis failed"
             )
@@ -1675,18 +1722,44 @@ class MainWindow(QMainWindow):
                 f"Gross Sand {summary.get('gross_sand', 0):.1f} ft · "
                 f"N/G {summary.get('ng_pay', 0) * 100:.1f}%"
             )
+            n = warned.get(ok[0], 0)
+            with_warnings = f" with {n} warning" + ("" if n == 1 else "s") if n else ""
             if ok[0] == project.active_key:
-                self.statusBar.showMessage("Analysis complete")
-                self.show_banner("success", f"Analysis complete — {message}")
+                head = f"Analysis complete{with_warnings}"
+                self.statusBar.showMessage(head)
             else:
-                self.statusBar.showMessage(f"Analysis complete for {name(ok[0])}")
-                self.show_banner("success", f"Analysis complete for {name(ok[0])} — {message}")
+                head = f"Analysis complete for {name(ok[0])}{with_warnings}"
+                self.statusBar.showMessage(head)
+            if n:
+                self.show_banner("warning", f"{head} — {message}",
+                                 "Review", lambda k=ok[0]: self._review_issues(k))
+            else:
+                self.show_banner("success", f"{head} — {message}")
             return
         text = f"Analysis complete for {len(ok)} wells"
         if skipped:
             text += f" ({len(skipped)} unchanged)"
         self.statusBar.showMessage(text)
-        self.show_banner("success", text)
+        if warned:
+            text += f" · {len(warned)} with warnings"
+            self.show_banner("warning", text, "Review",
+                             lambda k=next(iter(warned)): self._review_issues(k))
+        else:
+            self.show_banner("success", text)
+
+    def _review_issues(self, key: str):
+        """Banner "Review": the Diagnostics tab on ``key``, at its Run issues."""
+        if key not in self.model.project:
+            return
+        self.model.set_active_well(key)
+        self.tab_widget.setCurrentWidget(self.diag_tab)
+        self.diag_tab.show_run_issues()
+
+    def _on_goto_target(self, target: str):
+        """Run issues "Go to": open the Parameters page that holds the setting."""
+        page = {"params.rw": "sat", "params.porosity": "porosity", "tops": "scope"}.get(target)
+        if page:
+            self.params_window.open_page(page)
 
     def _on_browser_action(self, key: str):
         """Data Browser request: an action key, or ``edit_zone:<ZONE>``."""
@@ -1754,7 +1827,9 @@ class MainWindow(QMainWindow):
         result = self.analysis_service.calculate_rw_rsh(self.model, zone=zone)
 
         if result:
-            self.params_window.show_calculated_rw_rsh(result["rw"], result["rsh"])
+            self.params_window.show_calculated_rw_rsh(
+                result["rw"], result["rsh"], result.get("warnings") or []
+            )
         else:
             QMessageBox.warning(self, "Warning", "Could not calculate Rw/Rsh from data")
 

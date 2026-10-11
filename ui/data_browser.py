@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.param_scopes import normalize_zone
+from services.issues import collect_issues
 from themes.colors import get_color
 from themes.icon_loader import get_icon
 from themes.tokens import METRICS
@@ -187,11 +188,20 @@ class DataBrowserPanel(QWidget):
         k = 0
         if results is not None and data is not None:
             k = len([c for c in results.columns if c not in data.columns])
-        info_item.setText("out of date" if ds.stale else f"{k} curves")
+        warnings = [i.text for i in collect_issues(ds) if i.severity == "warning"]
+        if ds.stale:
+            text = "out of date"
+        elif warnings:
+            text = f"{len(warnings)} warning" + ("" if len(warnings) == 1 else "s")
+        else:
+            text = f"{k} curves"
+        info_item.setText(text)
         info_item.setData(
-            dot_pixmap("warning" if ds.stale else "success"),
+            dot_pixmap("warning" if ds.stale or warnings else "success"),
             Qt.ItemDataRole.DecorationRole,
         )
+        # A read-only count: the first five texts are in the tooltip, no widget.
+        info_item.setToolTip("\n".join(warnings[:5]) if warnings else text)
 
     def rebuild(self):
         old_known, old_expanded = set(), set()

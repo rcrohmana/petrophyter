@@ -21,6 +21,11 @@ class NotificationBanner(QFrame):
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
         self._kind = None
+        self._on_action = None
+        self.action_btn = QPushButton()
+        self.action_btn.setProperty("variant", "ghost")
+        self.action_btn.clicked.connect(self._run_action)
+        self.action_btn.hide()
         close_btn = QPushButton()
         self.close_btn = close_btn
         close_btn.setProperty("variant", "ghost")
@@ -29,10 +34,12 @@ class NotificationBanner(QFrame):
         close_btn.clicked.connect(self.clear)
         layout.addWidget(self.icon_label)
         layout.addWidget(self.message_label, stretch=1)
+        layout.addWidget(self.action_btn)
         layout.addWidget(close_btn)
         self.hide()
 
-    def show_message(self, kind: str, message: str):
+    def show_message(self, kind: str, message: str, action_text: str = None, on_action=None):
+        """Show ``message``; with ``action_text`` and ``on_action`` also a ghost button."""
         if kind not in _KIND_ICONS:
             raise ValueError(f"banner kind {kind!r} not allowed (errors are modal)")
         self._kind = kind
@@ -43,6 +50,10 @@ class NotificationBanner(QFrame):
             get_icon(_KIND_ICONS[kind], _KIND_TOKENS[kind]).pixmap(16, 16)
         )
         self.message_label.setText(message)
+        has_action = bool(action_text) and on_action is not None
+        self._on_action = on_action if has_action else None
+        self.action_btn.setText(action_text if has_action else "")
+        self.action_btn.setVisible(has_action)
         self.show()
 
     def refresh_theme(self):
@@ -52,6 +63,11 @@ class NotificationBanner(QFrame):
                 get_icon(_KIND_ICONS[self._kind], _KIND_TOKENS[self._kind]).pixmap(16, 16)
             )
 
+    def _run_action(self):
+        if self._on_action is not None:
+            self._on_action()
+
     def clear(self):
+        self._on_action = None
         self.hide()
         self.closed.emit()

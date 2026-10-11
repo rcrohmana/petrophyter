@@ -301,7 +301,7 @@ def test_failures_are_reported_once_in_a_banner(two_wells, qtbot, monkeypatch):
     monkeypatch.setattr(QMessageBox, "critical", lambda *a, **k: modal.append(a))
     banners = []
     original = window.show_banner
-    monkeypatch.setattr(window, "show_banner", lambda kind, text: (banners.append((kind, text)), original(kind, text)))
+    monkeypatch.setattr(window, "show_banner", lambda kind, text, *action: (banners.append((kind, text)), original(kind, text, *action)))
     window._on_run_all()
     _finish(window, qtbot)
     assert modal == []

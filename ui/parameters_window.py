@@ -288,9 +288,11 @@ class ParametersWindow(QDialog):
         """Update formation list in analysis mode widget."""
         self.analysis_mode_widget.set_formations(formations)
 
-    def show_calculated_rw_rsh(self, rw: float, rsh: float):
-        """Show calculated Rw/Rsh values."""
+    def show_calculated_rw_rsh(self, rw: float, rsh: float, warnings=()):
+        """Show calculated Rw/Rsh values, with the estimate's warnings in warning style."""
         self.res_params_widget.show_calculated_result(rw, rsh)
+        if warnings:
+            self.res_params_widget.show_message("\n".join(str(w) for w in warnings))
 
     def show_calculated_shale(self, result: dict):
         """Show calculated shale parameters."""

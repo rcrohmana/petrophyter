@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 import logging
 import pandas as pd
@@ -26,6 +26,7 @@ import numpy as np
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
 from ..widgets.table_model import PandasTableModel
+from services.issues import collect_issues
 from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 from themes.helpers import set_status
 from themes.icon_loader import get_icon
@@ -62,6 +63,13 @@ class SelectedMethodTableModel(PandasTableModel):
 class DiagnosticsTab(QWidget):
     """Diagnostics Tab - cross-validation, statistics, and warnings."""
 
+    # A Run issues "Go to" request for a target the main window handles
+    # ("params.rw", "params.porosity", "tops").
+    goto_requested = pyqtSignal(str)
+
+    _SEVERITY_LABELS = {"error": "Error", "warning": "Warning", "info": "Info"}
+    _SEVERITY_STATUS = {"error": "error", "warning": "warning", "info": "accent"}
+
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
@@ -72,9 +80,22 @@ class DiagnosticsTab(QWidget):
 
         # Scroll area
         scroll = QScrollArea()
+        self._scroll = scroll
         scroll.setWidgetResizable(True)
         content = QWidget()
         content_layout = QVBoxLayout(content)
+
+        # =====================================================================
+        # RUN ISSUES (top of the tab, active well)
+        # =====================================================================
+        self.run_issues_group = QGroupBox("Run issues")
+        self.run_issues_layout = QVBoxLayout(self.run_issues_group)
+        self.run_issues_empty = QLabel("No issues in the last run.")
+        self.run_issues_empty.setObjectName("PlaceholderLabel")
+        self.run_issues_layout.addWidget(self.run_issues_empty)
+        self._issue_rows = []
+        self.run_issues_group.setVisible(False)
+        content_layout.addWidget(self.run_issues_group)
 
         # =====================================================================
         # SHALE PARAMETERS CROSS-VALIDATION
@@ -315,11 +336,16 @@ class DiagnosticsTab(QWidget):
     def update_display(self):
         """Update display with analysis results."""
 
+        ds = self.model.active_well
+        issues = collect_issues(ds) if ds is not None else []
         if not self.model.calculated or self.model.results is None:
             self.reset_ui()
+            # A failed run has no results but still has its error to show.
+            self._show_run_issues(issues, has_run=bool(issues))
             return
 
         self.placeholder.setVisible(False)
+        self._show_run_issues(issues, has_run=True)
 
         results = self.model.results
         summary = self.model.summary
@@ -410,14 +436,19 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # WATER SATURATION VALIDATION
         # =====================================================================
-        solver_warnings = []
-        for method, diagnostics in (summary or {}).get("solver_diagnostics", {}).items():
-            no_root = int(diagnostics.get("no_root", 0))
-            failed = int(diagnostics.get("failed", 0))
-            if no_root or failed:
-                solver_warnings.append(
-                    f"{method}: {no_root} no-root, {failed} failed solver points"
-                )
+        # Solver lines come from the same issue list the Run issues section shows;
+        # a summary without warnings (older runs) falls back to its diagnostics.
+        solver_warnings = [
+            i.text for i in issues if i.target == "diagnostics" and i.zone is None
+        ]
+        if not solver_warnings:
+            for method, diagnostics in (summary or {}).get("solver_diagnostics", {}).items():
+                no_root = int(diagnostics.get("no_root", 0))
+                failed = int(diagnostics.get("failed", 0))
+                if no_root or failed:
+                    solver_warnings.append(
+                        f"{method}: {no_root} no-root, {failed} failed solver points"
+                    )
         self.sw_warnings.setText("\n".join(solver_warnings))
         set_status(self.sw_warnings, "warning" if solver_warnings else None)
 
@@ -693,6 +724,7 @@ class DiagnosticsTab(QWidget):
                                 self.core_por_crossplot.refresh()
 
                 # Permeability validation
+                perm_result = None
                 if "PERM_TIMUR" in results.columns:
                     log_perm = results["PERM_TIMUR"].values
                     perm_result = core.validate_permeability(
@@ -770,6 +802,14 @@ class DiagnosticsTab(QWidget):
                     )
                 if por_result and abs(por_result.bias) > 0.05:
                     warnings.append(f"Porosity bias = {por_result.bias:.3f} (>0.05)")
+                n_gaps = max(
+                    (int(getattr(res, "n_in_log_gaps", 0) or 0)
+                     for res in (por_result, perm_result) if res),
+                    default=0,
+                )
+                if n_gaps > 0:
+                    noun = "sample" if n_gaps == 1 else "samples"
+                    warnings.append(f"{n_gaps} core {noun} in log gaps")
 
                 if warnings:
                     self.core_warnings.setText("\n".join(warnings))
@@ -964,8 +1004,53 @@ class DiagnosticsTab(QWidget):
             self.phie_warnings.setText(f"No {selected_method} outliers detected")
             set_status(self.phie_warnings, "success")
 
+    def _show_run_issues(self, issues, has_run: bool):
+        """Fill the Run issues section; hidden before the well has run."""
+        for row in self._issue_rows:
+            self.run_issues_layout.removeWidget(row)
+            row.deleteLater()
+        self._issue_rows = []
+        self.run_issues_group.setVisible(has_run)
+        self.run_issues_empty.setVisible(not issues)
+        for issue in issues:
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            badge = QLabel(self._SEVERITY_LABELS[issue.severity])
+            set_status(badge, self._SEVERITY_STATUS[issue.severity])
+            row_layout.addWidget(badge)
+            if issue.zone:
+                zone = QLabel(str(issue.zone))
+                set_status(zone, "muted")
+                row_layout.addWidget(zone)
+            text = QLabel(issue.text)
+            text.setWordWrap(True)
+            row_layout.addWidget(text, stretch=1)
+            if issue.target:
+                go = QPushButton("Go to")
+                go.setProperty("variant", "ghost")
+                go.clicked.connect(lambda _=False, t=issue.target: self._on_goto(t))
+                row_layout.addWidget(go)
+            self.run_issues_layout.addWidget(row)
+            self._issue_rows.append(row)
+
+    def _on_goto(self, target: str):
+        if target == "diagnostics":
+            self._scroll.ensureWidgetVisible(self.sw_warnings)
+        else:
+            self.goto_requested.emit(target)
+
+    def show_run_issues(self):
+        """Refresh the Run issues section for the active well and scroll to it."""
+        ds = self.model.active_well
+        issues = collect_issues(ds) if ds is not None else []
+        has_run = bool(issues) or (ds is not None and ds.summary is not None)
+        self._show_run_issues(issues, has_run=has_run)
+        self._scroll.verticalScrollBar().setValue(0)
+
     def reset_ui(self):
         """Reset UI to fresh state for New Project."""
+        self._show_run_issues([], has_run=False)
         # Reset shale parameters section
         self.shale_current_label.setText("-")
         self.shale_stat_label.setText("-")

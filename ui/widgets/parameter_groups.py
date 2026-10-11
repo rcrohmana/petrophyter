@@ -807,6 +807,12 @@ class ResistivityParamsGroup(QWidget):
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
 
+        # Estimate warnings (why a value fell back); hidden when there are none
+        self.message_label = QLabel("")
+        self.message_label.setWordWrap(True)
+        self.message_label.setVisible(False)
+        layout.addWidget(self.message_label)
+
         # Apply button
         self.apply_btn = QPushButton("Apply Calculated Values")
         self.apply_btn.setIcon(get_icon("check"))
@@ -825,9 +831,16 @@ class ResistivityParamsGroup(QWidget):
         self.rsh_spin.setEnabled(not self.rsh_auto_cb.isChecked())
         self.params_changed.emit()
 
+    def show_message(self, text: str, status: str = "warning"):
+        """Show a note under the result (empty text hides it), e.g. estimate warnings."""
+        self.message_label.setText(text)
+        self.message_label.setVisible(bool(text))
+        set_status(self.message_label, status if text else None)
+
     def show_calculated_result(self, rw: float, rsh: float):
         """Show calculated values."""
         self.result_label.setText(f"Calculated: Rw={rw:.4f}, Rsh={rsh:.2f}")
+        self.show_message("")
         self.apply_btn.setVisible(True)
         self._calculated_rw = rw
         self._calculated_rsh = rsh
@@ -841,6 +854,7 @@ class ResistivityParamsGroup(QWidget):
             self.rw_auto_cb.setChecked(False)
             self.rsh_auto_cb.setChecked(False)
             self.result_label.setText("")
+            self.show_message("")
             self.apply_btn.setVisible(False)
 
     def calculated(self):
@@ -852,6 +866,7 @@ class ResistivityParamsGroup(QWidget):
     def discard_calculated(self):
         """Clear the calculated result after it was applied elsewhere."""
         self.result_label.setText("")
+        self.show_message("")
         self.apply_btn.setVisible(False)
 
     def get_params(self) -> Dict:
