@@ -2,7 +2,49 @@
 
 # Version History
 
-## v1.7.1 (Build 20261011) — Current Release
+## v1.7.2 (Build 20261011) — Current Release
+
+See the [release notes](releases/v1.7.2.md) for details, including the reference-case deltas. **Results change**;
+sessions from 1.7.1 and older show a notice and every well is out of date until Run.
+
+### Calculation changes
+
+- **Porosity (C1, C4, C5).** PHIT on every porosity path; D-N combination Average (default) or RMS, RMS on gas
+  samples; RMS reproduces the old PHIT. Gas flag needs a 0.02 crossover and Vsh ≤ 0.40; PHIE_GAS ≤ PHIT. The
+  neutron shale term uses `NPHI_shale − NPHI_matrix`.
+- **Saturation (C2, C3, C6, C14).** Waxman-Smits and Dual-Water are solved on PHIT (`SWT_WS`, `SWT_DW`) and
+  reported as effective Sw from the hydrocarbon volume; one validity rule (Sw 1 at porosity ≤ 0.001, Vsh 0–1)
+  for every model; bound hits counted per model and zone. Waxman-Smits accepts Qv 0.
+- **Rw, Rsh, shale (C8, C9, C11).** Automatic Rw from the water-like samples (water leg, no contrast, or no
+  water); automatic Rsh needs 10 shale samples; clamps warn. Zone GR baseline keeps the well's GRmax in a zone
+  without shale. `VSH` from the Primary Vsh method.
+- **Pay, HCPV, Swirr, permeability (C7, C10, C12, C13, C15).** One thickness rule with local gap detection for
+  pay and HCPV; thickness-weighted PHIE and Vsh, pore-volume-weighted Sw; Swirr floor applied last; the
+  selected Swirr method feeds permeability; calibration fits C and P with Q held and the run's Buckles Swirr.
+
+### Interface
+
+- Log tracks in real units from one track definition; Sw track and histograms follow the primary model.
+- Plot controls (HCPV mode, tops, crossplot sync) work on both engines; the export preview says what it shows
+  and the depth interval applies to the export.
+- Settings for the corrections: D-N combination, gas Crossover min and Gas Vsh max (per well and zone),
+  Primary Vsh. Calculate Rw/Rsh shows its sample counts and warnings; the Permeability page shows the result's
+  source, calibration notes and the Swirr mismatch warning while keeping Apply; temperature readout warns.
+- Diagnostics: Sw Solver and Porosity Checks per model and zone, Swirr method used and its limits, zones
+  without shale.
+- Run issues carry codes, severities and field targets; counts below their limit are notes, so a normal run
+  is a success banner.
+
+### Sessions and provenance
+
+- Source files are fingerprinted (SHA-256); a changed file is noted on restore and a missing one can be located.
+  The provenance block records fingerprints, merge recipe and library versions.
+
+### Quality
+
+- Hand-worked formula values and Hypothesis property tests; 1319 tests.
+
+## v1.7.1 (Build 20261011)
 
 See the [release notes](releases/v1.7.1.md) for details.
 
