@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.7.2_(Build_20261011)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.7.3_(Build_20261011)-orange.svg)
 
 ![Petrophyter main window with the interactive log display](docs/images/petrophyter-main-window.png)
 
@@ -32,6 +32,8 @@ Key capabilities include:
 ### Windows installer
 
 Download the latest `Petrophyter_Setup_*.exe` from [Releases](https://github.com/rcrohmana/petrophyter/releases/latest), run it, and launch **Petrophyter** from the Start Menu.
+
+The installer is not code-signed, so Windows SmartScreen may show **Windows protected your PC**. Check the file against `SHA256SUMS.txt` from the same release (`Get-FileHash .\Petrophyter_Setup_*.exe -Algorithm SHA256` in PowerShell), then select **More info → Run anyway**.
 
 ### Run from source
 
@@ -84,7 +86,7 @@ See [Licensing](docs/licensing.md) for the detailed scope, commercial PyQt6 opti
 
 ## Citation
 
-Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.7.2) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
+Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.7.3) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 

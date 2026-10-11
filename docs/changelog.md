@@ -2,7 +2,22 @@
 
 # Version History
 
-## v1.7.2 (Build 20261011) — Current Release
+## v1.7.3 (Build 20261011) — Current Release
+
+See the [release notes](releases/v1.7.3.md) for details, including the settled P0 decisions. Results do not
+change.
+
+- **Curve Mapping detail (U11).** Mapped curves table: unit, coverage (warning below 50 %), range, Auto or
+  Manual mapping.
+- **Changes since the last run (U12).** The Parameters window lists what changed since the active well's
+  last run; **Revert to last run** restores those parameters (project values are shared, tops are not
+  reverted).
+- **Plot engine under Advanced (U13)** on the Log Display tab.
+- The Sw > 1.05 warning needs at least 10 clean samples in the zone.
+- README: SmartScreen and SHA-256 check for the unsigned installer.
+- 1338 tests.
+
+## v1.7.2 (Build 20261011)
 
 See the [release notes](releases/v1.7.2.md) for details, including the reference-case deltas. **Results change**;
 sessions from 1.7.1 and older show a notice and every well is out of date until Run.
