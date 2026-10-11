@@ -10,6 +10,22 @@
  "hcpv_gross": 3.060630507822611,
  "hcpv_net_pay": 0.0,
  "hcpv_net_res": 0.0,
+ "issues": [
+  {
+   "code": "RW_AUTO_NO_WATER",
+   "severity": "warning",
+   "target": "params.rw.rw_value",
+   "text": "auto Rw: no water-bearing samples found; entered Rw used.",
+   "zone": null
+  },
+  {
+   "code": "RW_AUTO_UNAVAILABLE",
+   "severity": "warning",
+   "target": "params.rw.rw_value",
+   "text": "Rw could not be estimated automatically; using the entered Rw of 0.01.",
+   "zone": null
+  }
+ ],
  "net_pay": 0.0,
  "net_reservoir": 0.0,
  "ng_pay": 0.0,
@@ -188,6 +204,14 @@
    "no_root": 0,
    "phie_above_phit": 0
   }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 0,
+  "limited_to_max": 0,
+  "method_used": "Buckles Number",
+  "samples": 50
  },
  "swirr_mean": 0.20466379984798894,
  "swirr_method": "Buckles Number",

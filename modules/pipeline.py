@@ -18,6 +18,7 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from modules.issue_codes import ISSUE_CODES, IssueLog  # noqa: F401  (re-exported)
 from modules.las_utils import mask_nonpositive
 from modules.param_scopes import (
     GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
@@ -35,6 +36,11 @@ ProgressFn = Callable[[str, int], None]
 # A zone's own GR P95 is its shale line only if it reaches this fraction of the
 # way from the well's GRmin to its GRmax; below it the zone has no shale.
 ZONE_SHALE_REACH = 0.75
+
+# Hierarchical Swirr limit counts (floor, 0.60) are a warning only above this share
+# of the samples that have a Swirr; below it they are info. Samples limited to the
+# measured Sw are always info.
+SWIRR_COUNT_SHARE = 0.10
 
 # Analysis parameters read by the pipeline, with the defaults the GUI ships.
 # Keys match the AppModel attribute names and the session-file fields.
@@ -209,7 +215,7 @@ def _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings):
     else:
         vsh = pd.Series([0.3] * len(data), index=data.index)
         calc.results["VSH"] = vsh
-        warnings.append("VSH defaulted to 0.3 because no GR curve was available.")
+        warnings.add("VSH_DEFAULTED", "VSH defaulted to 0.3 because no GR curve was available.")
     return vsh, gr_min, gr_max
 
 
@@ -231,7 +237,8 @@ def _resolve_shale_auto(data, curve_mapping, p, gr_min, gr_max, warnings):
         return []
     estimate = estimate_shale_point(data, curve_mapping, p, gr_min, gr_max)
     if not is_estimate(estimate):
-        warnings.append(
+        warnings.add(
+            "SHALE_POINT_UNAVAILABLE",
             "Shale point could not be estimated automatically "
             f"({estimate.get('vsh_method_used', 'no estimate')}); using the entered values."
         )
@@ -253,7 +260,8 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
     dt_matrix, dt_fluid = p["dt_matrix"], p["dt_fluid"]
 
     if has_neutron and data[nphi_curve].median() > 1.0:
-        warnings.append(
+        warnings.add(
+            "NPHI_PERCENT",
             f"NPHI curve {nphi_curve} has a median above 1.0; it looks like percent, "
             "not fractional porosity (v/v). Porosity and Sw results will be wrong."
         )
@@ -274,7 +282,8 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
             dn_combination=p["dn_combination"], gas_flag=gas_flag
         )
     else:
-        warnings.append(
+        warnings.add(
+            "PHIT_UNAVAILABLE",
             "PHIT was not calculated because no RHOB, NPHI or DT curve was available.")
 
     calc.calculate_all_phie(
@@ -299,10 +308,12 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
     if partial is not None:
         method, fraction = partial
         if method is None:
-            warnings.append("PHIE has no valid samples: no porosity method produced a value, "
-                            "so Sw, pay and HCPV are NaN.")
+            warnings.add("PHIE_NO_VALID",
+                         "PHIE has no valid samples: no porosity method produced a value, "
+                         "so Sw, pay and HCPV are NaN.")
         else:
-            warnings.append(
+            warnings.add(
+                "PHIE_SUBSTITUTED",
                 f"PHIE from {method} covers {fraction * 100:.0f} % of the samples; the rest "
                 "have no porosity and are excluded from pay and HCPV")
 
@@ -436,6 +447,23 @@ def _unavailable_warning(name, entered):
     )
 
 
+_ESTIMATOR_CODES = (
+    ("auto Rw: no water", "RW_AUTO_NO_WATER"),
+    ("auto Rw: Rwa shows no", "RW_AUTO_UNIFORM"),
+    ("auto Rw of", "RW_AUTO_CLAMPED"),
+    ("auto Rsh: only", "RSH_AUTO_FEW_SHALE"),
+    ("auto Rsh of", "RSH_AUTO_CLAMPED"),
+)
+
+
+def _add_estimator_warnings(log, which, texts):
+    """Record the Rw / Rsh estimators' warning texts under their codes."""
+    for text in texts:
+        code = next((c for prefix, c in _ESTIMATOR_CODES if text.startswith(prefix)),
+                    f"{which}_AUTO_NOTE")
+        log.add(code, text)
+
+
 def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None, info=None):
     """Effective Rw/Rsh per ``rw_mode`` / ``rsh_mode``.
 
@@ -452,7 +480,7 @@ def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None, inf
     if p["rw_mode"] == "auto":
         rw_info = {}
         estimate = _auto_rw(stats_util, calc, vsh, rt_curve, p, temp_factor, rw_info)
-        warnings.extend(rw_info.get("warnings", []))
+        _add_estimator_warnings(warnings, "RW", rw_info.get("warnings", []))
         if info is not None and rw_info:
             info.update(rw_quality=rw_info.get("quality"),
                         rw_water_samples=rw_info.get("n_water", 0),
@@ -461,18 +489,18 @@ def _resolve_rw_rsh(stats_util, calc, vsh, rt_curve, p, warnings, tctx=None, inf
             rw, rw_source = estimate, "auto"
         else:
             rw_source = AUTO_UNAVAILABLE
-            warnings.append(_unavailable_warning("Rw", rw))
+            warnings.add("RW_AUTO_UNAVAILABLE", _unavailable_warning("Rw", rw))
     if p["rsh_mode"] == "auto":
         rsh_info = {}
         estimate = _auto_rsh(stats_util, vsh, rt_curve, temp_factor, rsh_info)
-        warnings.extend(rsh_info.get("warnings", []))
+        _add_estimator_warnings(warnings, "RSH", rsh_info.get("warnings", []))
         if info is not None and rsh_info:
             info.update(rsh_shale_samples=rsh_info.get("n_shale", 0))
         if estimate is not None:
             rsh, rsh_source = estimate, "auto"
         else:
             rsh_source = AUTO_UNAVAILABLE
-            warnings.append(_unavailable_warning("Rsh", rsh))
+            warnings.add("RSH_AUTO_UNAVAILABLE", _unavailable_warning("Rsh", rsh))
     return rw, rsh, rw_source, rsh_source
 
 
@@ -510,7 +538,7 @@ def estimate_rw_rsh(
     if len(data) == 0 or not _has(rt_curve, data):
         return None
 
-    warnings = []
+    warnings = IssueLog()
     calc = PetrophysicsCalculator(data)
     stats_util = StatisticsUtils(data)
     vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
@@ -518,7 +546,8 @@ def estimate_rw_rsh(
     _compute_porosity(calc, vsh, data, curve_mapping, p, warnings)
     tctx = temperature_context(data, p, curve_mapping)
     if tctx is not None:
-        warnings.extend(tctx.source["notes"])
+        for note in tctx.source["notes"]:
+            warnings.add("TEMPERATURE_NOTE", note)
     estimator_info = {}
     rw, rsh, rw_source, rsh_source = _resolve_rw_rsh(
         stats_util, calc, vsh, rt_curve, p, warnings, tctx, estimator_info
@@ -534,7 +563,7 @@ def estimate_rw_rsh(
         "rsh_shale_samples": estimator_info.get("rsh_shale_samples"),
         "gr_min": gr_min,
         "gr_max": gr_max,
-        "warnings": warnings,
+        "warnings": list(warnings),
     }
 
 
@@ -688,9 +717,11 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
                 ("phie_above_phit", "effective porosity is above total porosity"),
             ):
                 if counts[key] > INCONSISTENT_POROSITY_SHARE * samples:
-                    warnings.append(
+                    warnings.add(
+                        "BVH_CAPPED" if key == "bvh_exceeds_phie" else "PHIE_ABOVE_PHIT",
                         f"{name}{where}: {text} in {counts[key]} of {samples} samples. "
-                        "Check that PHIE and PHIT come from the same inputs."
+                        "Check that PHIE and PHIT come from the same inputs.",
+                        zone=zone,
                     )
             cutoff = vsh_cutoffs.get(zone, default_cutoff)
             with np.errstate(invalid="ignore"):
@@ -698,14 +729,17 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
             n_clean = int(clean.sum())
             n_upper = int((flags["at_upper_bound"].to_numpy() & clean).sum())
             if n_clean and n_upper > UPPER_BOUND_SHARE * n_clean:
-                warnings.append(
+                warnings.add(
+                    "SW_AT_BOUND",
                     f"{name}{where}: Sw > 1 before clipping in {n_upper} clean samples: "
-                    "check Rw, m, n or Rt."
+                    "check Rw, m, n or Rt.",
+                    zone=zone,
                 )
         if labels is not None:
             entry["zones"] = by_zone
         if entry["no_phit"]:
-            warnings.append(
+            warnings.add(
+                "SW_NO_PHIT",
                 f"{name}: {entry['no_phit']} samples have an effective porosity but no total "
                 f"porosity, so {name} has no Sw there."
             )
@@ -713,29 +747,51 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
     return out
 
 
-def _swirr_warnings(calcs, index, warnings):
-    """Warn about Swirr samples that were limited or taken from Buckles; returns the fallback count."""
+def _swirr_warnings(calcs, index, warnings, n_swirr=0):
+    """Record Swirr samples that were limited or taken from Buckles; returns the counts.
+
+    The floor and 0.60 counts are info, and a warning only when one of them
+    exceeds ``SWIRR_COUNT_SHARE`` of the ``n_swirr`` samples that have a Swirr.
+    Samples limited to the measured Sw are always info: ``min(Swirr, Sw)`` is the
+    method's definition (kept on purpose, P0 spec section 12), not a correction.
+    The returned dict has ``fallback_samples``, ``floor_samples``, ``limited_by_sw``
+    and ``limited_to_max``.
+    """
+    counts = {"fallback_samples": 0, "floor_samples": 0, "limited_by_sw": 0, "limited_to_max": 0}
     parts = [c.swirr_flags for c in calcs if c.swirr_flags is not None]
     if not parts:
-        return 0
+        return counts
     flags = _concat_flags(parts, index)
-    n_raised = int(flags["raised_to_floor"].sum()) if "raised_to_floor" in flags else 0
-    n_by_sw = int(flags["limited_by_sw"].sum()) if "limited_by_sw" in flags else 0
-    n_max = int(flags["limited_to_max"].sum()) if "limited_to_max" in flags else 0
+
+    def count(column):
+        return int(flags[column].sum()) if column in flags else 0
+
+    counts["floor_samples"] = n_raised = count("raised_to_floor")
+    counts["limited_by_sw"] = n_by_sw = count("limited_by_sw")
+    counts["limited_to_max"] = n_max = count("limited_to_max")
+    counts["fallback_samples"] = count("buckles_fallback")
+
+    def level(n):
+        return "warning" if n > SWIRR_COUNT_SHARE * n_swirr else "info"
+
     if n_raised:
-        warnings.append(
+        warnings.add(
+            "SWIRR_FLOOR",
             f"Hierarchical Swirr: {n_raised} samples were raised to the 0.05 floor "
-            "(Swirr is never below 0.05, even where the measured Sw is)."
-        )
+            "(Swirr is never below 0.05, even where the measured Sw is).",
+            severity=level(n_raised))
     if n_by_sw:
-        warnings.append(
+        warnings.add(
+            "SWIRR_LIMITED",
             f"Hierarchical Swirr: {n_by_sw} samples were limited to the measured Sw "
-            "(Swirr cannot exceed Sw)."
-        )
+            "(Swirr cannot exceed Sw).",
+            severity="info")
     if n_max:
-        warnings.append(f"Hierarchical Swirr: {n_max} samples were limited to the 0.60 maximum.")
-    n_fallback = int(flags["buckles_fallback"].sum()) if "buckles_fallback" in flags else 0
-    return n_fallback
+        warnings.add(
+            "SWIRR_MAXED",
+            f"Hierarchical Swirr: {n_max} samples were limited to the 0.60 maximum.",
+            severity=level(n_max))
+    return counts
 
 
 def _swirr_method_label(method, n_fallback, warnings):
@@ -743,7 +799,8 @@ def _swirr_method_label(method, n_fallback, warnings):
     if method == "All Methods":
         return "All methods (Buckles used)"
     if n_fallback:
-        warnings.append(
+        warnings.add(
+            "SWIRR_FALLBACK",
             f"Swirr method {method}: no value for {n_fallback} samples; "
             "Buckles Swirr was used for them."
         )
@@ -813,7 +870,8 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
     for name, estimator in estimators.items():
         if name in zone_auto:
             estimate = estimator() if _enough_data(seg, rt_curve) else None
-            warnings.extend(estimator_info[name].get("warnings", []))
+            _add_estimator_warnings(warnings, name.upper(),
+                                    estimator_info[name].get("warnings", []))
             auto = estimate is not None
             if estimate is None:
                 estimate, sources[name] = _fallback_value(name, plan_entry, well[name])
@@ -925,7 +983,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
                 calc.results["SW"] = calc.results[available[0]]
             else:
                 calc.results["SW"] = pd.Series([1.0] * len(data), index=data.index)
-                warnings.append(
+                warnings.add(
+                    "SW_DEFAULTED_NO_METHOD",
                     "Water saturation defaulted to 1.0 because no selected method produced a result."
                 )
 
@@ -1099,8 +1158,11 @@ def _zone_status_note(diag):
     return None
 
 
-def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone):
-    """``{zone: diagnostics}`` using the cutoffs applied in each zone."""
+def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone, log=None):
+    """``{zone: diagnostics}`` using the cutoffs applied in each zone.
+
+    A zone whose GRmax came from the well also adds an info ``ZONE_NO_SHALE`` to ``log``.
+    """
     vsh, phie, sw = pay_series
     out = {}
     for zone in dict.fromkeys(labels.dropna()):
@@ -1115,6 +1177,8 @@ def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone):
         note = str((table.get("gr_baseline") or {}).get("source", ""))
         if ZONE_NO_SHALE_NOTE in note:
             out[zone]["note"] = ZONE_NO_SHALE_NOTE
+            if log is not None:
+                log.add("ZONE_NO_SHALE", ZONE_NO_SHALE_NOTE, zone=zone)
     return out
 
 
@@ -1158,15 +1222,16 @@ def run_pipeline(
         raise PipelineError("No data loaded. Please load a LAS file first.")
 
     data = data.copy()
-    warnings = []
+    warnings = IssueLog()
 
     # Resistivity, density and slowness cannot be <= 0 (tool-off or casing
     # readings): NaN, counted. Session-restored frames bypass the parser.
     for logical in ("RT", "RHOB", "DT"):
         mnemonic = curve_mapping.get(logical, logical)
         for name, count in mask_nonpositive(data, [mnemonic]).items():
-            warnings.append(f"{logical}: {count} samples ≤ 0 set to NaN" if name == logical
-                            else f"{logical} ({name}): {count} samples ≤ 0 set to NaN")
+            warnings.add(f"{logical}_NONPOSITIVE",
+                         f"{logical}: {count} samples ≤ 0 set to NaN" if name == logical
+                         else f"{logical} ({name}): {count} samples ≤ 0 set to NaN")
 
     analysis_mode = p["analysis_mode"]
     selected_formations = p["selected_formations"]
@@ -1181,12 +1246,14 @@ def run_pipeline(
                 "exists in this well's tops")
         raise PipelineError("No data in selected formation(s)")
     if missing:
-        warnings.append(f"Selected formations not in this well's tops: {', '.join(missing)}")
+        warnings.add("FORMATION_MISSING",
+                     f"Selected formations not in this well's tops: {', '.join(missing)}")
 
     labels = None
     if formation_tops is not None and getattr(formation_tops, "formations", None):
         labels, zone_warnings = assign_zones(data["DEPTH"], formation_tops)
-        warnings.extend(zone_warnings)
+        for text in zone_warnings:
+            warnings.add("FORMATION_OVERLAP", text)
     plan = {}
     if labels is not None:
         present = set(labels.unique())
@@ -1199,9 +1266,11 @@ def run_pipeline(
     has_rt = _has(rt_curve, data)
     tctx = temperature_context(data, p, curve_mapping)
     if tctx is not None:
-        warnings.extend(tctx.source["notes"])
+        for note in tctx.source["notes"]:
+            warnings.add("TEMPERATURE_NOTE", note)
         if p.get("ws_b_auto") and tctx.factor is None:
-            warnings.append(
+            warnings.add(
+                "WS_B_RW_UNCORRECTED",
                 "WS B from temperature uses Rw as entered (the Rw temperature correction is off)."
             )
 
@@ -1278,7 +1347,7 @@ def run_pipeline(
         pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
                for k in ("vsh", "phie", "sw", "swirr")}
         summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _sample_dz(data))
-        warnings[:] = list(dict.fromkeys(warnings))
+        warnings.dedupe()
 
     emit("Calculating HCPV...", 88)
     hcpv = calc.calculate_hcpv(
@@ -1296,7 +1365,8 @@ def run_pipeline(
     results = calc.export_results()
     renamed = getattr(calc, "renamed_inputs", [])
     if renamed:
-        warnings.append(
+        warnings.add(
+            "INPUT_RENAMED",
             f"input curves {', '.join(renamed)} kept as "
             f"{', '.join(c + '_IN' for c in renamed)}")
     summary["gr_min"] = gr_min
@@ -1306,8 +1376,12 @@ def run_pipeline(
     summary["rw_source"] = rw_source
     summary["rsh_source"] = rsh_source
     summary.update(rw_rsh_info)     # rw_quality and sample counts, only for auto Rw / Rsh
-    swirr_fallback = _swirr_warnings(flag_calcs, data.index, warnings)
-    summary["swirr_method"] = _swirr_method_label(p["swirr_method"], swirr_fallback, warnings)
+    n_swirr = int(pay["swirr"].notna().sum())
+    swirr_counts = _swirr_warnings(flag_calcs, data.index, warnings, n_swirr)
+    summary["swirr_method"] = _swirr_method_label(
+        p["swirr_method"], swirr_counts["fallback_samples"], warnings)
+    summary["swirr_diagnostics"] = {
+        "method_used": summary["swirr_method"], "samples": n_swirr, **swirr_counts}
     summary["swirr_mean"] = pay["swirr"].mean()
     summary["analysis_mode"] = analysis_mode
     summary["selected_formations"] = selected_formations
@@ -1343,7 +1417,7 @@ def run_pipeline(
     if summary["zones"]:
         summary["zone_diagnostics"] = _zone_diagnostics_by_zone(
             labels, (pay["vsh"], pay["phie"], pay["sw"]),
-            _sample_dz(data), param_sources)
+            _sample_dz(data), param_sources, warnings)
 
     vsh_cutoffs = {}
     for zone in (dict.fromkeys(labels.dropna()) if labels is not None else ()):
@@ -1360,14 +1434,17 @@ def run_pipeline(
             "failed": int(diagnostics.get("failed", 0)),
         })
         if counts["no_root"] or counts["failed"]:
-            warnings.append(
+            warnings.add(
+                "SOLVER_FAILED",
                 f"{method}: {counts['no_root']} no-root, {counts['failed']} failed solver points."
             )
     summary["solver_diagnostics"] = solver_diagnostics
 
     if not has_rt:
-        warnings.append("Water saturation defaulted to 1.0 because no RT curve was available.")
-    summary["warnings"] = warnings
+        warnings.add("SW_DEFAULTED_NO_RT",
+                     "Water saturation defaulted to 1.0 because no RT curve was available.")
+    summary["warnings"] = list(warnings)
+    summary["issues"] = list(warnings.issues)
 
     if "HCPV_CUM" in hcpv:
         def _last(series):

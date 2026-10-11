@@ -10,6 +10,22 @@
  "hcpv_gross": 0.0,
  "hcpv_net_pay": 0.0,
  "hcpv_net_res": 0.0,
+ "issues": [
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "SW_DEFAULTED_NO_RT",
+   "severity": "warning",
+   "target": null,
+   "text": "Water saturation defaulted to 1.0 because no RT curve was available.",
+   "zone": null
+  }
+ ],
  "net_pay": 0.0,
  "net_reservoir": 37.37373737373724,
  "ng_pay": 0.0,
@@ -164,10 +180,17 @@
  "rw_source": "manual",
  "selected_formations": [],
  "solver_diagnostics": {},
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 38,
+  "limited_to_max": 0,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 100
+ },
  "swirr_mean": 0.3124247430548857,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
-  "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
   "Water saturation defaulted to 1.0 because no RT curve was available."
  ],
  "zones": []

@@ -10,6 +10,15 @@
  "hcpv_gross": 5.109116982161619,
  "hcpv_net_pay": 4.449120466720342,
  "hcpv_net_res": 4.449120466720342,
+ "issues": [
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 7 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  }
+ ],
  "net_pay": 32.41640000000001,
  "net_reservoir": 32.41640000000001,
  "ng_pay": 1.0,
@@ -176,10 +185,16 @@
    "phie_above_phit": 0
   }
  },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 7,
+  "limited_to_max": 0,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 277
+ },
  "swirr_mean": 0.14156094971753586,
  "swirr_method": "Hierarchical (Recommended)",
- "warnings": [
-  "Hierarchical Swirr: 7 samples were limited to the measured Sw (Swirr cannot exceed Sw)."
- ],
+ "warnings": [],
  "zones": []
 }

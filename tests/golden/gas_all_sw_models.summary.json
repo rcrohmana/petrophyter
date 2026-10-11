@@ -10,6 +10,43 @@
  "hcpv_gross": 10.948223881922274,
  "hcpv_net_pay": 5.668555165739541,
  "hcpv_net_res": 5.668555165739541,
+ "issues": [
+  {
+   "code": "RSH_AUTO_FEW_SHALE",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "auto Rsh: only 9 samples with Vsh above 0.8 (at least 10 are needed); entered Rsh used.",
+   "zone": null
+  },
+  {
+   "code": "RSH_AUTO_UNAVAILABLE",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
+   "zone": null
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Waxman-Smits: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 50 of 50 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": null
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Dual-Water: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 50 of 50 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": null
+  },
+  {
+   "code": "SOLVER_FAILED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "SW_DW: 50 no-root, 0 failed solver points.",
+   "zone": null
+  }
+ ],
  "net_pay": 24.489795918367236,
  "net_reservoir": 24.489795918367236,
  "ng_pay": 1.0,
@@ -215,6 +252,14 @@
    "no_root": 0,
    "phie_above_phit": 0
   }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 0,
+  "limited_to_max": 0,
+  "method_used": "All methods (Buckles used)",
+  "samples": 50
  },
  "swirr_mean": 0.09475111703584263,
  "swirr_method": "All methods (Buckles used)",

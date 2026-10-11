@@ -261,6 +261,7 @@ def test_field_total_excludes_failed_well_and_counts_stale(model):
 
 def test_summary_tab_issues_column(qtbot, model):
     model.project.get("W:A").summary["warnings"] = ["PHIE missing", "Rw fallback"]
+    model.project.get("W:A").summary.pop("issues", None)   # count the plain warnings (v1.7.1 path)
     model.project.get("W:B").error = "boom"
     tab = SummaryTab(model)
     qtbot.addWidget(tab)

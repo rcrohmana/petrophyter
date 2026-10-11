@@ -127,7 +127,12 @@ def test_swirr_lines_and_status(qtbot):
     assert "2 of 300 samples limited to Sw" in lines
     assert "1 of 300 samples limited to 0.60" in lines
     assert "4 of 300 samples taken from Buckles (fallback)" in lines
-    assert warn
+    assert warn                                                    # any fallback warns
+    quiet = {**summary["swirr_diagnostics"], "fallback_samples": 0, "floor_samples": 30,
+             "limited_by_sw": 250, "limited_to_max": 0}
+    assert not swirr_summary_lines({"swirr_diagnostics": quiet})[1]   # 30 is 10 %, not above
+    loud = {**quiet, "limited_to_max": 31}
+    assert swirr_summary_lines({"swirr_diagnostics": loud})[1]
 
     # Older summary without swirr_diagnostics: the method only, no warning.
     assert swirr_summary_lines({"swirr_method": "Buckles Number"}) == (

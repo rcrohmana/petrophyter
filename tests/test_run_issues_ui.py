@@ -42,9 +42,6 @@ def _add_wells(window, keys):
     for key in keys:
         window.model.project.add_well(_well(key))
     window.model.set_active_well(keys[0])
-    # Buckles Swirr: the default Hierarchical Swirr notes how many samples it limited
-    # to Sw or to 0.60 (C7), which would make every run on this random log "with warnings".
-    window.params_window.swir_params_widget.method_combo.setCurrentText("Buckles Number")
     return [window.model.project.get(k) for k in keys]
 
 
@@ -56,6 +53,12 @@ def _ran(window, qtbot, keys=("WELL:A",)):
     window._on_run_all()
     _finish(window, qtbot)
     return wells
+
+
+def _set_warnings(ds, texts):
+    """A summary as v1.7.1 wrote it: plain warnings, no structured ``issues``."""
+    ds.summary.pop("issues", None)
+    ds.summary["warnings"] = list(texts)
 
 
 def _report(ok, **extra):
@@ -108,21 +111,21 @@ def test_auto_rsh_unavailable_gives_a_warning_banner_with_review(window, qtbot):
 
 def test_single_well_with_warnings_counts_them(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = ["Rw could not be estimated automatically; using 0.05.",
-                              "PHIE was substituted."]
+    _set_warnings(ds, ["Rw could not be estimated automatically; using 0.05.",
+                       "PHIE was substituted."])
     window._on_batch_finished(_report([ds.key]))
     text = window.banner.message_label.text()
     assert _kind(window) == "warning"
     assert text.startswith("Analysis complete with 2 warnings — Net Pay")
     assert window.banner.action_btn.text() == "Review"
-    ds.summary["warnings"] = ["One only."]
+    _set_warnings(ds, ["One only."])
     window._on_batch_finished(_report([ds.key]))
     assert window.banner.message_label.text().startswith("Analysis complete with 1 warning — ")
 
 
 def test_infos_do_not_count_toward_the_banner(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = []
+    _set_warnings(ds, [])
     ds.summary["zone_diagnostics"] = {"Z": {"gross": 0, "pay": 0}}
     window._on_batch_finished(_report([ds.key]))
     assert _kind(window) in ("success", "warning")
@@ -134,7 +137,7 @@ def test_infos_do_not_count_toward_the_banner(window, qtbot):
 
 def test_several_wells_banner_counts_wells_with_warnings(window, qtbot):
     a, b = _ran(window, qtbot, ("WELL:A", "WELL:B"))
-    b.summary["warnings"] = ["Rsh could not be estimated automatically; using 5.0."]
+    _set_warnings(b, ["Rsh could not be estimated automatically; using 5.0."])
     window._on_batch_finished(_report([a.key, b.key], skipped=["WELL:C"]))
     assert _kind(window) == "warning"
     assert (window.banner.message_label.text()
@@ -156,8 +159,8 @@ def test_failed_wells_banner_gets_review(window, qtbot):
 
 def test_review_opens_diagnostics_with_the_list(window, qtbot):
     a, b = _ran(window, qtbot, ("WELL:A", "WELL:B"))
-    b.summary["warnings"] = ["Rw could not be estimated automatically; using 0.05.",
-                             "PHIE was substituted."]
+    _set_warnings(b, ["Rw could not be estimated automatically; using 0.05.",
+                      "PHIE was substituted."])
     window._on_batch_finished(_report([a.key, b.key]))
     window.banner.action_btn.click()
     diag = window.diag_tab
@@ -171,8 +174,22 @@ def test_review_opens_diagnostics_with_the_list(window, qtbot):
 
 # ---- Diagnostics Run issues ------------------------------------------------------------
 
-def test_run_issues_empty_state_after_a_clean_run(window, qtbot):
-    _ran(window, qtbot)
+def test_clean_default_run_lists_only_infos(window, qtbot):
+    """Default Hierarchical Swirr: its sample counts are info (U1.2), never warnings."""
+    [ds] = _ran(window, qtbot)
+    assert ds.summary["warnings"] == []
+    diag = window.diag_tab
+    diag.show_run_issues()
+    badges = [r.findChildren(type(diag.run_issues_empty))[0].text() for r in diag._issue_rows]
+    assert badges and set(badges) == {"Info"}
+    assert {i["code"] for i in ds.summary["issues"]} <= {"SWIRR_LIMITED", "SWIRR_FLOOR",
+                                                         "SWIRR_MAXED", "ZONE_NO_SHALE"}
+
+
+def test_run_issues_empty_state_without_issues(window, qtbot):
+    [ds] = _ran(window, qtbot)
+    ds.summary["issues"] = []
+    ds.summary["zone_diagnostics"] = {}
     diag = window.diag_tab
     diag.show_run_issues()
     assert diag.run_issues_group.isVisibleTo(diag)
@@ -182,8 +199,8 @@ def test_run_issues_empty_state_after_a_clean_run(window, qtbot):
 
 def test_run_issues_list_has_severity_zone_and_go_to(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = ["Rw could not be estimated automatically; using 0.05.",
-                              "Selected formations not in the tops: X."]
+    _set_warnings(ds, ["Rw could not be estimated automatically; using 0.05.",
+                       "Selected formations not in the tops: X."])
     ds.summary["zone_diagnostics"] = {}
     diag = window.diag_tab
     diag.show_run_issues()
@@ -203,7 +220,7 @@ def test_run_issues_list_has_severity_zone_and_go_to(window, qtbot):
 
 def test_go_to_porosity_and_row_without_target(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = ["PHIE was substituted for 4 samples.", "Something else."]
+    _set_warnings(ds, ["PHIE was substituted for 4 samples.", "Something else."])
     diag = window.diag_tab
     diag.show_run_issues()
     with_button = [r for r in diag._issue_rows if r.findChild(QPushButton) is not None]
@@ -214,7 +231,7 @@ def test_go_to_porosity_and_row_without_target(window, qtbot):
 
 def test_errors_sort_first_and_failed_well_shows_its_error(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = ["W1"]
+    _set_warnings(ds, ["W1"])
     ds.error = "Run failed badly"
     diag = window.diag_tab
     diag.show_run_issues()
@@ -239,7 +256,7 @@ def test_run_issues_hidden_before_a_run_and_after_reset(window, qtbot):
 
 def test_solver_label_is_fed_by_the_issue_list(window, qtbot):
     [ds] = _ran(window, qtbot)
-    ds.summary["warnings"] = ["SW_WS: 2 no-root, 1 failed solver points."]
+    _set_warnings(ds, ["SW_WS: 2 no-root, 1 failed solver points."])
     window.diag_tab.update_display()
     assert "2 no-root" in window.diag_tab.sw_warnings.text()
 
@@ -281,16 +298,16 @@ def _results_info(window):
 def test_browser_results_row_shows_warning_count_without_widgets(window, qtbot):
     [ds] = _ran(window, qtbot)
     assert _results_info(window).text().endswith("curves")
-    ds.summary["warnings"] = [f"Warning number {i}." for i in range(7)][:2]
+    _set_warnings(ds, [f"Warning number {i}." for i in range(7)][:2])
     window.data_browser.rebuild()
     info = _results_info(window)
     assert info.text() == "2 warnings"
     tip = info.toolTip().split("\n")
     assert tip == ["Warning number 0.", "Warning number 1."]
-    ds.summary["warnings"] = [f"Warning number {i}." for i in range(7)]
+    _set_warnings(ds, [f"Warning number {i}." for i in range(7)])
     window.data_browser.rebuild()
     assert len(_results_info(window).toolTip().split("\n")) == 5
-    ds.summary["warnings"] = ["Only one."]
+    _set_warnings(ds, ["Only one."])
     window.data_browser.rebuild()
     assert _results_info(window).text() == "1 warning"
     assert window.data_browser.findChildren(QPushButton) == []

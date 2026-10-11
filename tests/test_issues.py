@@ -75,3 +75,59 @@ def test_tops_and_solver_targets():
         "VSH defaulted to 0.3 because no GR curve was available.",
     ]}))
     assert [i.target for i in issues] == ["tops", "diagnostics", None]
+
+
+# ---- structured path (summary["issues"], v1.7.2) ----------------------------------------
+
+def _rec(code, severity, text, zone=None, target=None):
+    return {"code": code, "severity": severity, "text": text, "zone": zone, "target": target}
+
+
+def _structured(**extra):
+    summary = _summary(issues=[
+        _rec("RSH_AUTO_UNAVAILABLE", "warning",
+             "Rsh could not be estimated automatically; using the entered Rsh of 2.0.",
+             target="params.rw.rsh_value"),
+        _rec("PHIE_SUBSTITUTED", "warning",
+             "PHIE from DENSITY covers 80 % of the samples; the rest have no porosity "
+             "and are excluded from pay and HCPV", target="params.porosity"),
+        _rec("SWIRR_FLOOR", "info", "Hierarchical Swirr: 3 samples were raised to the 0.05 floor.",
+             target="params.swirr"),
+    ])
+    summary.update(extra)
+    return summary
+
+
+def test_structured_path_spec_case_has_no_duplicate():
+    issues = collect_issues(_ds(_structured()))
+    # Two warnings, the no_reservoir note (warning), and as info the no_pay note and a Swirr count.
+    assert issue_counts(issues) == {"error": 0, "warning": 3, "info": 2}
+    texts = [(i.zone, i.text) for i in issues]
+    assert len(texts) == len(set(texts))
+    by_code = {i.code: i for i in issues if i.code}
+    assert by_code["RSH_AUTO_UNAVAILABLE"].target == "params.rw.rsh_value"
+    assert by_code["SWIRR_FLOOR"].severity == "info"
+
+
+def test_structured_path_adds_unavailable_rsh_once_when_no_issue_has_it():
+    issues = collect_issues(_ds({"issues": [], "warnings": [], "rsh_source": AUTO_UNAVAILABLE}))
+    assert [i.text for i in issues] == ["Rsh could not be estimated automatically."]
+
+
+def test_structured_path_does_not_duplicate_the_no_shale_note():
+    summary = {"issues": [_rec("ZONE_NO_SHALE", "info", "zone has no shale; GRmax from the well",
+                               zone="A", target="diagnostics")],
+               "zone_diagnostics": {"A": {"status": "ok", "cutoffs": CUTOFFS,
+                                          "note": "zone has no shale; GRmax from the well"}}}
+    issues = collect_issues(_ds(summary))
+    assert [(i.code, i.zone) for i in issues] == [("ZONE_NO_SHALE", "A")]
+
+
+def test_structured_path_failed_dataset_gives_one_error():
+    issues = collect_issues(_ds({"issues": []}, error="boom"))
+    assert issue_counts(issues) == {"error": 1, "warning": 0, "info": 0}
+
+
+def test_issue_code_field_is_last_and_optional():
+    assert Issue("warning", "t", "W").code is None
+    assert Issue("warning", "t", "W", "Z", "tops", "FORMATION_MISSING").code == "FORMATION_MISSING"

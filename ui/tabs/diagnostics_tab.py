@@ -27,8 +27,8 @@ from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
 from ..widgets.table_model import PandasTableModel
 from modules.pipeline import (
-    INCONSISTENT_POROSITY_SHARE, SW_COLUMN_MAP, SW_MODEL_NAMES, UPPER_BOUND_SHARE,
-    ZONE_NO_SHALE_NOTE,
+    INCONSISTENT_POROSITY_SHARE, SW_COLUMN_MAP, SW_MODEL_NAMES, SWIRR_COUNT_SHARE,
+    UPPER_BOUND_SHARE, ZONE_NO_SHALE_NOTE,
 )
 from services.issues import collect_issues
 from themes.colors import get_color, get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
@@ -120,7 +120,12 @@ class SwChecksTableModel(PandasTableModel):
 
 
 def swirr_summary_lines(summary):
-    """``(lines, warn)`` describing the Swirr method used and its limits; empty without a method."""
+    """``(lines, warn)`` describing the Swirr method used and its limits; empty without a method.
+
+    Warning style on the run's rule: any Buckles fallback, or floor / 0.60 hits above
+    ``SWIRR_COUNT_SHARE`` of the samples. Samples limited to Sw never warn (that is
+    the method's ``min(Swirr, Sw)``).
+    """
     method = (summary or {}).get("swirr_method")
     diag = (summary or {}).get("swirr_diagnostics") or {}
     if not method and not diag:
@@ -137,7 +142,10 @@ def swirr_summary_lines(summary):
         ):
             n = int(diag.get(key, 0))
             lines.append(f"{n} of {total} samples {text}")
-            warn = warn or n > 0
+            if key == "fallback_samples":
+                warn = warn or n > 0
+            elif key != "limited_by_sw":
+                warn = warn or n > SWIRR_COUNT_SHARE * total
     return lines, warn
 
 

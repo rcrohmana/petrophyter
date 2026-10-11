@@ -1764,10 +1764,23 @@ class MainWindow(QMainWindow):
         self.diag_tab.show_run_issues()
 
     def _on_goto_target(self, target: str):
-        """Run issues "Go to": open the Parameters page that holds the setting."""
-        page = {"params.rw": "sat", "params.porosity": "porosity", "tops": "scope"}.get(target)
+        """Run issues "Go to": open the Parameters page that holds the setting.
+
+        ``target`` is ``section[.group[.field]]``; the section picks the page and a
+        third part, when the window can focus fields, the field.
+        """
+        parts = (target or "").split(".")
+        if parts[0] == "params" and len(parts) > 1:
+            section = parts[1]
+            field = parts[2] if len(parts) > 2 else None
+        else:
+            section, field = parts[0], None
+        page = {"rw": "sat", "sat": "sat", "porosity": "porosity", "swirr": "perm", "tops": "scope"}.get(section)
         if page:
             self.params_window.open_page(page)
+            focus = getattr(self.params_window, "focus_field", None)
+            if field and focus is not None:
+                focus(field)
 
     def _on_browser_action(self, key: str):
         """Data Browser request: an action key, or ``edit_zone:<ZONE>``."""

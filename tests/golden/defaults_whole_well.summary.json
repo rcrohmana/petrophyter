@@ -10,6 +10,29 @@
  "hcpv_gross": 6.565657432044237,
  "hcpv_net_pay": 5.1227731854213205,
  "hcpv_net_res": 5.1227731854213205,
+ "issues": [
+  {
+   "code": "RSH_AUTO_CLAMPED",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_MAXED",
+   "severity": "warning",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum.",
+   "zone": null
+  }
+ ],
  "net_pay": 37.37373737373724,
  "net_reservoir": 37.37373737373724,
  "ng_pay": 1.0,
@@ -176,11 +199,18 @@
    "phie_above_phit": 0
   }
  },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 38,
+  "limited_to_max": 24,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 100
+ },
  "swirr_mean": 0.3320393428612109,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
   "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
-  "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
   "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum."
  ],
  "zones": []
