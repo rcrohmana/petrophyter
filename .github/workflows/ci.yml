@@ -13,9 +13,9 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       RELEASE: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # Same Python as requirements-lock.txt (release env mldl, 3.13.x)
           python-version: "3.13"
@@ -59,7 +59,7 @@ jobs:
 
       - name: Upload manifest, self-test log and checksums
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-manifest
           path: |

@@ -38,7 +38,7 @@ See the [release notes](releases/v1.7.1.md) for details.
 
 - `requirements-lock.txt`, a test gate and `--self-test` check in the build script, `SHA256SUMS.txt` and environment manifest written by the build, and a GitHub Actions workflow.
 - `docs/calculation-methods.md` matches the code (Vsh methods, Indonesian closed form, Simandoux form, automatic Rw and Rsh).
-- 1077 tests; `pytest -n 8 -m "not slow"` runs them in about a minute.
+- 1078 tests; `pytest -n 8 -m "not slow"` runs them in about a minute.
 
 ## v1.7.0 (Build 20261010)
 
