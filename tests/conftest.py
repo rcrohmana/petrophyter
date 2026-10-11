@@ -67,6 +67,21 @@ def _no_quit_prompt(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_discard_prompt(monkeypatch):
+    """Closing a window with unsaved changes must not block on the Save / Discard prompt.
+
+    Tests of the prompt itself patch ``MainWindow._confirm_discard`` back.
+    """
+    try:
+        from ui.main_window import MainWindow
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(MainWindow, "_confirm_discard", lambda self, action: True)
+    yield
+
+
 @pytest.fixture
 def sample_log_data():
     """Generate sample log data for testing."""

@@ -198,7 +198,7 @@ def test_open_three_files_two_wells_one_merged(window, qtbot, tmp_path, monkeypa
     assert project.get("WELL:BKS-01").merged and not project.get("WELL:BKS-02").merged
     assert [s["name"] for s in project.get("WELL:BKS-01").sources] == ["a1.las", "a2.las"]
     assert project.active_key == "WELL:BKS-02"  # last added
-    assert window.windowTitle() == "BKS-02 · 2 wells — Petrophyter"
+    assert window.windowTitle() == "*BKS-02 · 2 wells — Petrophyter"
     assert window.actions_["merge_las"].isEnabled() and window.actions_["open_las"].isEnabled()
 
 
@@ -251,7 +251,7 @@ def test_switching_wells_updates_mapping_title_and_results(two_wells):
     window = two_wells
     combos = window.params_window.curve_mapping_widget.curve_combos
     assert combos["GR"].currentText() == "CGR"
-    assert window.windowTitle() == "BKS-02 · 2 wells — Petrophyter"
+    assert window.windowTitle() == "*BKS-02 · 2 wells — Petrophyter"
 
     a = window.model.project.get("WELL:BKS-01")
     a.results = pd.DataFrame({"DEPTH": [1.0]})
@@ -259,7 +259,7 @@ def test_switching_wells_updates_mapping_title_and_results(two_wells):
     assert combos["GR"].currentText() == "GR"
     assert window.model.curve_mapping["GR"] == "GR"
     assert window.model.results is a.results
-    assert window.windowTitle() == "BKS-01 · 2 wells — Petrophyter"
+    assert window.windowTitle() == "*BKS-01 · 2 wells — Petrophyter"
     assert "BKS-01" in window.well_indicator.label.text()
     window.model.set_active_well("WELL:BKS-02")
     assert combos["GR"].currentText() == "CGR"
@@ -310,9 +310,9 @@ def test_remove_well_asks_and_activates_another(two_wells, monkeypatch):
     window._on_remove_well_requested("WELL:BKS-02")
     assert window.model.project.keys() == ["WELL:BKS-01"]
     assert window.model.project.active_key == "WELL:BKS-01"
-    assert window.windowTitle() == "BKS-01 — Petrophyter"
+    assert window.windowTitle() == "*BKS-01 — Petrophyter"
     window._on_remove_well_requested("WELL:BKS-01")
-    assert window.windowTitle() == "Petrophyter"
+    assert window.windowTitle() == "*Petrophyter"
     assert not window.actions_["run_analysis"].isEnabled()
 
 

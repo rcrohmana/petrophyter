@@ -357,6 +357,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 | `Ctrl+N` | Start a new project | **File → New Project** |
 | `Ctrl+O` | Open LAS file(s) | **File → Open LAS File(s)…** |
 | `Ctrl+S` | Save session | **Session → Save Session…** |
+| `Ctrl+Shift+S` | Save session as | **Session → Save Session As…** |
 | `Ctrl+Shift+O` | Load session | **Session → Load Session…** |
 | `F5` | Run analysis | **Analysis → Run Analysis** |
 | `Ctrl+Shift+R` | Run all wells | **Analysis → Run All Wells** |

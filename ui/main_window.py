@@ -290,6 +290,8 @@ class MainWindow(QMainWindow):
         self.statusBar.addPermanentWidget(self.status_progress)
         self.statusBar.addPermanentWidget(self.qc_chip)
         self._restoring = False
+        # True while a session is being installed: its signals are not user edits.
+        self._session_swap = False
 
     def _setup_connections(self):
         """Connect signals and slots."""
@@ -308,6 +310,22 @@ class MainWindow(QMainWindow):
         self.params_window.parameters_updated.connect(self._on_parameters_updated)
         self.model.parameters_changed.connect(self._on_parameters_updated)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
+
+        # Unsaved-changes tracking: only signals that change saved content. Not
+        # well_updated (results, stale flags, errors), analysis_complete,
+        # scope_changed or active_well_changed.
+        self.model.dirty_changed.connect(lambda _dirty: self._refresh_window_title())
+        for signal in (
+            self.model.data_loaded,
+            self.model.merge_complete,
+            self.model.core_data_loaded,
+            self.model.formation_tops_loaded,
+            self.model.project.wells_changed,
+            self.model.project.tops_changed,
+        ):
+            signal.connect(self._on_content_changed)
+        for signal in (self.model.parameters_changed, self.model.scoped_params_changed):
+            signal.connect(self._on_parameter_edited)
         self.model.formation_tops_loaded.connect(self._on_tops_or_core_changed)
         self.model.core_data_loaded.connect(self._on_tops_or_core_changed)
         self.export_tab.export_succeeded.connect(
@@ -389,6 +407,9 @@ class MainWindow(QMainWindow):
             self._on_core_file_selected(file)
 
     def closeEvent(self, event):
+        if not self._confirm_discard("close"):
+            event.ignore()
+            return
         busy = self._busy or ("analysis" if self.batch_runner.is_running() else None)
         if busy:
             if not self._confirm_quit(busy):
@@ -464,7 +485,8 @@ class MainWindow(QMainWindow):
             name = os.path.basename(str(self.model.las_filename))
         if name and len(self.model.project) > 1:
             name = f"{name} · {len(self.model.project)} wells"
-        self.setWindowTitle(f"{name} — Petrophyter" if name else "Petrophyter")
+        title = f"{name} — Petrophyter" if name else "Petrophyter"
+        self.setWindowTitle(f"*{title}" if self.model.dirty else title)
 
     def _build_actions(self):
         from PyQt6.QtGui import QAction, QActionGroup, QKeySequence
@@ -497,6 +519,7 @@ class MainWindow(QMainWindow):
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
         act("exit", "Exit", "log-out", None, self.close)
         act("save_session", "Save Session…", "save", "Ctrl+S", self._on_save_session)
+        act("save_session_as", "Save Session As…", "save", "Ctrl+Shift+S", self._on_save_session_as)
         act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
         act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
         act("run_all", "Run All Wells", "layers", "Ctrl+Shift+R", self._on_run_all)
@@ -536,6 +559,7 @@ class MainWindow(QMainWindow):
             file_menu.addSeparator() if key is None else file_menu.addAction(self.actions_[key])
         session = bar.addMenu("&Session")
         session.addAction(self.actions_["save_session"])
+        session.addAction(self.actions_["save_session_as"])
         session.addAction(self.actions_["load_session"])
         analysis = bar.addMenu("&Analysis")
         analysis.addAction(self.actions_["run_analysis"])
@@ -653,6 +677,16 @@ class MainWindow(QMainWindow):
         self._sync_stale_label()
         for key in changed:
             project.well_updated.emit(key)
+
+    def _on_content_changed(self, *_):
+        """Wells, tops, core or merge data changed (not while a session is being installed)."""
+        if not self._session_swap:
+            self.model.mark_dirty()
+
+    def _on_parameter_edited(self, *_):
+        """A parameter changed; programmatic widget refreshes and session installs do not count."""
+        if not self._restoring and not self._session_swap:
+            self.model.mark_dirty()
 
     def _on_parameters_updated(self, *_):
         """A project-level or active-well parameter changed (programmatic restores are ignored)."""
@@ -775,7 +809,7 @@ class MainWindow(QMainWindow):
         "load": ("new_project", "load_session") + _LOAD_ACTIONS,
         # New Project and Load Session stay available: they cancel the restore.
         # Save Session would save a half-restored project.
-        "restore": _LOAD_ACTIONS + ("save_session",),
+        "restore": _LOAD_ACTIONS + ("save_session", "save_session_as"),
     }
     _BUSY_TIPS = {
         "load": "Unavailable while files are loading",
@@ -809,7 +843,7 @@ class MainWindow(QMainWindow):
         """Normal gating of the data and run actions; busy actions stay disabled."""
         busy = set(self._BUSY_ACTIONS.get(self._busy, ()))
         for key in ("new_project", "open_las", "open_tops", "open_core",
-                    "load_session", "save_session", "merge_las"):
+                    "load_session", "save_session", "save_session_as", "merge_las"):
             if key not in busy:
                 self.actions_[key].setEnabled(True)
         self._refresh_import_actions()
@@ -1439,6 +1473,9 @@ class MainWindow(QMainWindow):
             details.extend(f"{ds.display_name}: {n}" for n in row.notes)
         for key in changed:
             project.well_updated.emit(key)
+        if changed:
+            # Core for a non-active well emits only well_updated.
+            self.model.mark_dirty()
         if kind == "tops":
             project.tops_changed.emit(list(changed))
         self._recompute_stale(changed)
@@ -1865,24 +1902,60 @@ class MainWindow(QMainWindow):
     # =========================================================================
 
     def _on_save_session(self):
-        """Handle save session button click."""
+        """Save to the current session file; the first save asks for a file (Save As)."""
+        self._save_session(as_new=False)
+
+    def _on_save_session_as(self):
+        """Save under a new file name."""
+        self._save_session(as_new=True)
+
+    def _save_session(self, as_new: bool) -> bool:
+        """Write the session; False when the file dialog was cancelled or the write failed."""
         from PyQt6.QtWidgets import QFileDialog
 
         # Update model from UI first
         self._sync_model_from_ui()
 
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Session",
-            "petrophyter_session.json",
-            "Session Files (*.json);;All Files (*)",
-        )
+        file_path = None if as_new else self.model.session_path
+        if not file_path:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Session",
+                self.model.session_path or "petrophyter_session.json",
+                "Session Files (*.json);;All Files (*)",
+            )
+        if not file_path:
+            return False
+        if not self.session_service.save_session(self.model, file_path):
+            QMessageBox.critical(self, "Error", "Failed to save session")
+            return False
+        self.model.session_path = file_path
+        self.model.mark_clean()
+        self._refresh_window_title()
+        self.statusBar.showMessage(f"Session saved to {file_path}")
+        return True
 
-        if file_path:
-            if self.session_service.save_session(self.model, file_path):
-                self.statusBar.showMessage(f"Session saved to {file_path}")
-            else:
-                QMessageBox.critical(self, "Error", "Failed to save session")
+    def _confirm_discard(self, action: str) -> bool:
+        """Offer to save unsaved changes before ``action`` ("close", "load" or "new").
+
+        True when the action may go on (saved or discarded); False on Cancel, or when
+        the Save was cancelled in its file dialog or failed.
+        """
+        if not self.model.dirty:
+            return True
+        verb = {"close": "closing", "load": "loading a session",
+                "new": "starting a new project"}.get(action, action)
+        text = f"You have unsaved changes. Save them before {verb}?"
+        if action == "new":
+            text += "\n\nAll current data will be cleared."
+        box = QMessageBox.StandardButton
+        reply = QMessageBox.question(
+            self, "Unsaved changes", text,
+            box.Save | box.Discard | box.Cancel, box.Save,
+        )
+        if reply == box.Save:
+            return self._save_session(as_new=False)
+        return reply == box.Discard
 
     def _on_load_session(self):
         """Handle load session button click."""
@@ -1902,6 +1975,9 @@ class MainWindow(QMainWindow):
         if problems:
             QMessageBox.critical(self, "Error", f"Failed to load session: {problems[0]}")
             return
+        # Asked only once the file is known to be loadable; nothing is replaced before this.
+        if not self._confirm_discard("load"):
+            return
         if is_v2_session(session_data):
             # A v2.0 session is a whole project: it replaces the loaded wells, but only
             # once every well is built. Here nothing of the open project is touched; the
@@ -1912,11 +1988,18 @@ class MainWindow(QMainWindow):
         else:
             # Restoring writes the saved values where they belong; it must never
             # create entries at whatever scope the user happened to be editing.
-            self.model.set_edit_scope("project")
-            self.session_service.apply_session_to_model(self.model, session_data)
-            notes = session_level_notes(session_data)
-            notes += self.session_service.restore_wells(self.model, session_data)
-            self._update_ui_from_model()
+            self._session_swap = True
+            try:
+                self.model.set_edit_scope("project")
+                self.session_service.apply_session_to_model(self.model, session_data)
+                notes = session_level_notes(session_data)
+                notes += self.session_service.restore_wells(self.model, session_data)
+                self._update_ui_from_model()
+            finally:
+                self._session_swap = False
+            # A 1.x file holds parameters only: the open wells stay, so the project
+            # does not match the file, and Save must not overwrite it in 2.x format.
+            self.model.mark_dirty()
         # Results in memory (v1.x) were computed with the old parameters;
         # restored wells (v2.0) have none and need a run.
         self._recompute_stale()
@@ -1998,27 +2081,42 @@ class MainWindow(QMainWindow):
         self._set_progress(0, "")
         # The swap: every well is built, so the old project can go.
         self.batch_runner.cancel()
-        self.model.reset()
-        self.model.set_edit_scope("project")
-        self.session_service.apply_session_to_model(self.model, session_data)
-        notes = session_level_notes(session_data) + list(notes)
-        self._bulk_loading = True
+        self._session_swap = True
         try:
-            notes = self.session_service.install_wells(
-                self.model, datasets, self._restore_active_key, notes)
+            self.model.reset()
+            self.model.set_edit_scope("project")
+            self.session_service.apply_session_to_model(self.model, session_data)
+            notes = session_level_notes(session_data) + list(notes)
+            self._bulk_loading = True
+            try:
+                notes = self.session_service.install_wells(
+                    self.model, datasets, self._restore_active_key, notes)
+            finally:
+                self._bulk_loading = False
+            self._update_ui_from_model()
+            self._refresh_active_well_ui()
         finally:
-            self._bulk_loading = False
-        self._update_ui_from_model()
-        self._refresh_active_well_ui()
+            self._session_swap = False
+        self._mark_session_loaded(self._restore_path)
         # Restored wells have no results and need a run.
         self._recompute_stale()
         self._show_load_notes(None, notes)
         self.statusBar.showMessage(f"Session loaded from {self._restore_path}")
 
+    def _mark_session_loaded(self, file_path: str):
+        """The project now matches ``file_path``: Save writes there, nothing is unsaved."""
+        self.model.session_path = file_path
+        self.model.mark_clean()
+        self._refresh_window_title()
+
     def _on_new_project(self):
         """Handle new project button click - clear all data and reset to fresh state."""
-        # Confirm with user if data is loaded
-        if self.model.las_data is not None or self.model.results is not None:
+        if self.model.dirty:
+            # The save prompt also carries the "all data will be cleared" sentence.
+            if not self._confirm_discard("new"):
+                return
+        elif self.model.las_data is not None or self.model.results is not None:
+            # Confirm with user if data is loaded
             reply = QMessageBox.question(
                 self,
                 "New Project",
@@ -2033,6 +2131,9 @@ class MainWindow(QMainWindow):
         self._cancel_restore()
         self.batch_runner.cancel()
         self.model.reset()
+        self.model.session_path = None
+        self.model.mark_clean()
+        self._refresh_window_title()
 
         # Reset status bar
         self.statusBar.showMessage("Ready. Load a LAS file to begin.")

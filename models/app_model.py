@@ -47,6 +47,8 @@ class AppModel(QObject):
     # changed (argument: the affected well key, "" for project scopes).
     scope_changed = pyqtSignal()
     scoped_params_changed = pyqtSignal(str)
+    # Unsaved changes (saved content changed since the last save or load).
+    dirty_changed = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -55,6 +57,8 @@ class AppModel(QObject):
         # facade over the active well. Without wells they read and write a
         # scratch dataset, which becomes a real well once data is assigned.
         self.project = Project(self)
+        self.dirty: bool = False
+        self.session_path: Optional[str] = None
         self._scratch = WellDataset()
         self.project.active_well_changed.connect(self._on_active_well_changed)
 
@@ -895,6 +899,18 @@ class AppModel(QObject):
         self._well.calculated = results is not None
         if results is not None:
             self.analysis_complete.emit()
+
+    def mark_dirty(self):
+        """Saved content changed since the last save or load."""
+        if not self.dirty:
+            self.dirty = True
+            self.dirty_changed.emit(True)
+
+    def mark_clean(self):
+        """The project matches the session file just written or read."""
+        if self.dirty:
+            self.dirty = False
+            self.dirty_changed.emit(False)
 
     def reset(self):
         """Remove every well and its results (keep user parameters)."""
