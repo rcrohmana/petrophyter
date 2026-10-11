@@ -280,10 +280,18 @@ class ParametersWindow(QDialog):
         self.update_model_from_ui()
         self.parameters_updated.emit()
         self._update_temperature_readout()
+        self.refresh_curve_details()
 
     def update_available_curves(self, curves: list, detected: dict = None):
         """Update curve mapping combos."""
         self.curve_mapping_widget.set_available_curves(curves, detected)
+        self.refresh_curve_details()
+
+    def refresh_curve_details(self):
+        """Unit, coverage, range and auto/manual of the active well's mapped curves (U11)."""
+        from services.curve_details import curve_detail_rows
+
+        self.curve_mapping_widget.set_details(curve_detail_rows(self.model.active_well))
 
     def update_formations_list(self, formations: list):
         """Update formation list in analysis mode widget."""
@@ -969,6 +977,7 @@ class ParametersWindow(QDialog):
     def reset_ui(self):
         """Reset the parameter pages to their fresh/initial state."""
         self.curve_mapping_widget.set_available_curves([], None)
+        self.curve_mapping_widget.set_details([])
         self.analysis_mode_widget.set_formations([])
         self.analysis_mode_widget.whole_well_radio.setChecked(True)
         self.set_core_available(False)

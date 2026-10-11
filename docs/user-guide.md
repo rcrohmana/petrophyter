@@ -150,7 +150,7 @@ A page list on the left groups the pages under four headings:
 | Menu | Page | What it controls |
 |---|---|---|
 | **Analysis** | **Analysis Scope** | Whole Well or Per-Formation analysis, and which formations to include |
-| **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT, and optionally TVD (used for formation temperature) |
+| **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT, and optionally TVD (used for formation temperature). The **Mapped curves** table below the choices shows each curve's unit from the file, its coverage (share of the well's samples with a value, in warning colour below 50 %), its range, and **Auto** (the curve detected from the curve names) or **Manual** (chosen by you; the tooltip names the curve detection would pick) |
 | **Analysis** | **Core Matching** | Core depth unit (Auto, M, FT) and the maximum distance for matching core samples to log depths; enabled after core data is loaded |
 | **Parameters** | **Porosity Method** | Primary PHIE method used downstream for Sw, permeability, and HCPV, and the **D-N combination** (Average or RMS) for PHIT and PHIE_DN |
 | **Parameters** | **VShale** | GR baseline (statistical or custom GRmin and GRmax), the Vshale methods (Linear, Larionov Tertiary, Larionov Older) and the **Primary Vsh** |

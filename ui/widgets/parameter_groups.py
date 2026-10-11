@@ -27,6 +27,9 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QMenu,
     QLayout,
+    QHeaderView,
+    QTableWidget,
+    QTableWidgetItem,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from PyQt6.QtGui import QAction, QActionGroup
@@ -143,6 +146,23 @@ class CurveMappingGroup(QWidget):
             self.curve_combos[ctype] = combo
             layout.addRow(f"{ctype}:", combo)
 
+        # U11: what each mapped curve holds (unit, coverage, range, auto or manual)
+        from services.curve_details import DETAIL_COLUMNS
+        self.details_label = QLabel("Mapped curves")
+        layout.addRow(self.details_label)
+        self.details_table = QTableWidget(0, len(DETAIL_COLUMNS))
+        self.details_table.setHorizontalHeaderLabels(DETAIL_COLUMNS)
+        self.details_table.verticalHeader().setVisible(False)
+        self.details_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.details_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.details_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents)
+        self.details_table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self.details_table.setMinimumHeight(220)
+        self.details_table.horizontalHeaderItem(DETAIL_COLUMNS.index("Mapping")).setToolTip(
+            "Auto: the curve detected from the curve names. Manual: chosen by you.")
+        layout.addRow(self.details_table)
+
     def set_available_curves(self, curves: List[str], detected: Dict[str, str] = None):
         """Update available curves in all combos."""
         for ctype, combo in self.curve_combos.items():
@@ -164,6 +184,32 @@ class CurveMappingGroup(QWidget):
         return {
             ctype: combo.currentText() for ctype, combo in self.curve_combos.items()
         }
+
+    def set_details(self, rows):
+        """Fill the Mapped curves table from ``services.curve_details.curve_detail_rows``."""
+        from PyQt6.QtGui import QBrush, QColor
+        from services.curve_details import (
+            DETAIL_COLUMNS, LOW_COVERAGE, detail_cells, detail_tooltip,
+        )
+        from themes.colors import get_color
+
+        table = self.details_table
+        table.setRowCount(len(rows))
+        coverage_col = DETAIL_COLUMNS.index("Coverage")
+        for r, row in enumerate(rows):
+            tip = detail_tooltip(row)
+            for c, text in enumerate(detail_cells(row)):
+                item = QTableWidgetItem(text)
+                if tip:
+                    item.setToolTip(tip)
+                if c >= 3:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                        if c < 5 else Qt.AlignmentFlag.AlignCenter)
+                if (c == coverage_col and row["coverage"] is not None
+                        and row["coverage"] < LOW_COVERAGE):
+                    item.setForeground(QBrush(QColor(get_color("warning"))))
+                table.setItem(r, c, item)
 
 
 class VShaleParamsGroup(QWidget):

@@ -442,18 +442,26 @@ class LASParser:
         Returns:
             The mnemonic of the found curve or None
         """
-        if curve_type not in self.CURVE_ALIASES:
-            return None
+        return find_curve(self.get_available_curves(), curve_type)
 
-        available = self.get_available_curves()
-        for alias in self.CURVE_ALIASES[curve_type]:
-            if alias in available:
-                return alias
-            # Case insensitive search
-            for curve in available:
-                if curve.upper() == alias.upper():
-                    return curve
+
+def find_curve(columns, curve_type: str) -> Optional[str]:
+    """The first of ``columns`` that is an alias of ``curve_type`` (case-insensitive), or None.
+
+    Aliases are tried in order, so the preferred mnemonic wins when several are present.
+    """
+    aliases = LASParser.CURVE_ALIASES.get(curve_type)
+    if not aliases:
         return None
+    available = [str(c) for c in columns]
+    for alias in aliases:
+        if alias in available:
+            return alias
+        # Case insensitive search
+        for curve in available:
+            if curve.upper() == alias.upper():
+                return curve
+    return None
 
 
 def load_las_file(file_path: str) -> Optional[LASParser]:
