@@ -56,19 +56,23 @@ def pair_core_samples(perm_depths, perm, por_depths, por,
     return np.array(matched_por), np.array(matched_perm)
 
 
-def calibrate_from_core(porosity, permeability, k_buckles: float,
-                        min_pairs: int = MIN_CORE_PAIRS) -> Optional[Dict]:
-    """Least-squares fit of C, P, Q in log10(k) to matched core pairs.
+def fit_core(porosity, permeability, k_buckles: float,
+             min_pairs: int = MIN_CORE_PAIRS):
+    """Core fit with a reason: ``(fit, None)`` on success, ``(None, reason)`` on failure.
 
-    Returns ``{"method": "core", "C", "P", "Q", "pairs"}``, or None when there
-    are fewer than ``min_pairs`` pairs or the optimiser does not converge.
+    Pairs that are not finite or not positive are not usable and are left out
+    of the fit; ``reason`` names the cause (too few usable pairs, or the
+    optimiser not converging).
     """
     from scipy import optimize
 
     porosity = np.asarray(porosity, float)
     permeability = np.asarray(permeability, float)
+    usable = (np.isfinite(porosity) & np.isfinite(permeability)
+              & (porosity > 0) & (permeability > 0))
+    porosity, permeability = porosity[usable], permeability[usable]
     if len(porosity) < min_pairs:
-        return None
+        return None, f"{len(porosity)} usable plugs; need {min_pairs}"
     swirr = np.clip(k_buckles / porosity, 0.05, 0.8)
 
     def objective(params, phi, swi, k):
@@ -81,10 +85,21 @@ def calibrate_from_core(porosity, permeability, k_buckles: float,
         bounds=_BOUNDS, method="L-BFGS-B",
     )
     if not result.success:
-        return None
+        return None, f"{len(porosity)} usable plugs; the fit did not converge"
     C, P, Q = result.x
     return {"method": "core", "C": float(C), "P": float(P), "Q": float(Q),
-            "pairs": int(len(porosity))}
+            "pairs": int(len(porosity))}, None
+
+
+def calibrate_from_core(porosity, permeability, k_buckles: float,
+                        min_pairs: int = MIN_CORE_PAIRS) -> Optional[Dict]:
+    """Least-squares fit of C, P, Q in log10(k) to matched core pairs.
+
+    Returns ``{"method": "core", "C", "P", "Q", "pairs"}``, or None when there
+    are fewer than ``min_pairs`` usable pairs or the optimiser does not
+    converge (:func:`fit_core` also gives the reason).
+    """
+    return fit_core(porosity, permeability, k_buckles, min_pairs)[0]
 
 
 def estimate_from_porosity(phie) -> Optional[Dict]:

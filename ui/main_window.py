@@ -1757,7 +1757,7 @@ class MainWindow(QMainWindow):
         """
         from modules.param_scopes import normalize_zone
         from modules.perm_calibration import (
-            MIN_CORE_PAIRS, calibrate_from_core, estimate_from_porosity,
+            MIN_CORE_PAIRS, calibrate_from_core, estimate_from_porosity, fit_core,
             pair_core_samples, zone_mask,
         )
 
@@ -1781,6 +1781,7 @@ class MainWindow(QMainWindow):
         tops = ds.formation_tops if ds is not None else None
 
         core = self.model.core_data
+        core_failure = ""
         if core is not None:
             try:
                 perm_depths, perm = core.get_core_permeability()
@@ -1807,6 +1808,8 @@ class MainWindow(QMainWindow):
                         f"Switch the scope to Well: {well_name} to calibrate on the whole well."
                     )
                     return
+                _, reason = fit_core(matched_por, matched_perm, k_buckles)
+                core_failure = f"Core calibration failed ({reason}); coefficients estimated from porosity instead"
             except Exception:
                 logger.exception(
                     "Core permeability fit failed; using statistical estimation"
@@ -1826,8 +1829,10 @@ class MainWindow(QMainWindow):
         C, P, Q = estimate["C"], estimate["P"], estimate["Q"]
         widget.show_calculated_result(C, P, Q)
         where = f" in {zone}" if zone else ""
+        head = f"{core_failure}{where}" if core_failure else f"Estimated from porosity{where}"
         self.statusBar.showMessage(
-            f"Estimated from porosity{where} (mean={estimate['phi_mean']:.3f}): "
+            f"{head} "
+            f"(mean={estimate['phi_mean']:.3f}): "
             f"C={C:.0f}, P={P:.2f}, Q={Q:.2f}.{stale}"
         )
 

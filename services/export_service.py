@@ -57,6 +57,86 @@ def _summary_frame(summary: dict) -> pd.DataFrame:
 def _validate_results(results: pd.DataFrame) -> None:
     if not isinstance(results, pd.DataFrame):
         raise ValueError("results must be a pandas DataFrame")
+    _check_unique_columns(results)
+
+
+def _check_unique_columns(df: pd.DataFrame) -> None:
+    """Refuse a frame with duplicate column names (they break every writer)."""
+    names = [str(c) for c in df.columns]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        raise ValueError(
+            "duplicate column names: " + ", ".join(duplicates)
+            + " (rename or remove the duplicate curves before exporting)")
+
+
+# H2: text a spreadsheet would read as a formula or command.
+_RISKY_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _is_number_text(text: str) -> bool:
+    try:
+        float(text.strip())
+    except ValueError:
+        return False
+    return True
+
+
+def _csv_safe_text(value):
+    """Prefix a risky text value with ``'`` unless it is just a number."""
+    if (isinstance(value, str) and value.startswith(_RISKY_PREFIXES)
+            and not _is_number_text(value)):
+        return "'" + value
+    return value
+
+
+def spreadsheet_safe(df: pd.DataFrame, csv: bool = False) -> pd.DataFrame:
+    """Copy of ``df`` whose text cells and headers cannot run as a formula.
+
+    Only text cells and column headers are touched, never numeric columns.
+    CSV (``csv=True``): risky text that is not a number gets a leading ``'``.
+    Excel: the copy is unchanged here; :func:`_write_excel_sheet` marks cells
+    that start with ``=`` as strings after ``to_excel`` so the visible text
+    stays the same.
+    """
+    _check_unique_columns(df)
+    out = df.copy()
+    if not csv:
+        return out
+    for column in out.columns:
+        if _is_text_column(out[column]):
+            out[column] = out[column].map(_csv_safe_text)
+    out.columns = [_csv_safe_text(c) if isinstance(c, str) else c
+                   for c in out.columns]
+    return out
+
+
+def _is_text_column(series: pd.Series) -> bool:
+    return series.dtype == object or pd.api.types.is_string_dtype(series)
+
+
+def _write_excel_sheet(writer, df: pd.DataFrame, sheet_name: str) -> None:
+    """``to_excel`` with every ``=...`` header or text cell written as a literal string.
+
+    openpyxl turns a string that starts with ``=`` into a formula; such cells
+    are marked as strings after writing, so the visible text is unchanged.
+    Only the header row and text columns are scanned (numeric columns cannot
+    hold a formula), which keeps large result sheets fast.
+    """
+    safe = spreadsheet_safe(df)
+    safe.to_excel(writer, sheet_name=sheet_name, index=False)
+    sheet = writer.sheets[sheet_name]
+
+    def literal(cell):
+        if isinstance(cell.value, str) and cell.value.startswith("="):
+            cell.data_type = "s"
+
+    for cell in sheet[1]:
+        literal(cell)
+    for index, column in enumerate(safe.columns, start=1):
+        if _is_text_column(safe[column]):
+            for (cell,) in sheet.iter_rows(min_row=2, min_col=index, max_col=index):
+                literal(cell)
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +340,11 @@ def _export_wells_excel(wells, file_path):
     zones = zones_frame(ready)
     with _atomic_target(file_path, ".xlsx") as temporary_path:
         with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
-            wells_summary_frame(wells).to_excel(
-                writer, sheet_name=SUMMARY_SHEET, index=False)
+            _write_excel_sheet(writer, wells_summary_frame(wells), SUMMARY_SHEET)
             if len(zones):
-                zones.to_excel(writer, sheet_name=ZONES_SHEET, index=False)
+                _write_excel_sheet(writer, zones, ZONES_SHEET)
             for ds, sheet in zip(ready, names):
-                ds.results.to_excel(writer, sheet_name=sheet, index=False)
+                _write_excel_sheet(writer, ds.results, sheet)
 
 
 class ExportService(QObject):
@@ -284,7 +363,7 @@ class ExportService(QObject):
         try:
             _validate_results(results)
             with _atomic_target(file_path) as temporary_path:
-                results.to_csv(temporary_path, index=False)
+                spreadsheet_safe(results, csv=True).to_csv(temporary_path, index=False)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -303,8 +382,8 @@ class ExportService(QObject):
             summary_df = _summary_frame(summary)
             with _atomic_target(file_path, ".xlsx") as temporary_path:
                 with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
-                    results.to_excel(writer, sheet_name="Results", index=False)
-                    summary_df.to_excel(writer, sheet_name="Summary", index=False)
+                    _write_excel_sheet(writer, results, "Results")
+                    _write_excel_sheet(writer, summary_df, "Summary")
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -341,7 +420,7 @@ class ExportService(QObject):
         try:
             frame = combined_results(wells)
             with _atomic_target(file_path) as temporary_path:
-                frame.to_csv(temporary_path, index=False)
+                spreadsheet_safe(frame, csv=True).to_csv(temporary_path, index=False)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -400,7 +479,7 @@ class ExportService(QObject):
         """Get CSV data as string."""
         _validate_results(results)
         buffer = io.StringIO()
-        results.to_csv(buffer, index=False)
+        spreadsheet_safe(results, csv=True).to_csv(buffer, index=False)
         return buffer.getvalue()
 
     def get_excel_bytes(self, results: pd.DataFrame, summary: dict) -> bytes:
@@ -408,6 +487,6 @@ class ExportService(QObject):
         _validate_results(results)
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            results.to_excel(writer, sheet_name="Results", index=False)
-            _summary_frame(summary).to_excel(writer, sheet_name="Summary", index=False)
+            _write_excel_sheet(writer, results, "Results")
+            _write_excel_sheet(writer, _summary_frame(summary), "Summary")
         return buffer.getvalue()

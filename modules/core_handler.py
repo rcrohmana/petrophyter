@@ -15,6 +15,7 @@ from scipy.interpolate import interp1d
 
 from dataclasses import replace
 
+from modules.las_utils import COMMON_NULL_VALUES
 from modules.table_reader import read_table
 from modules.well_matching import (
     find_well_column, fill_down_wells, group_key, group_well_names,
@@ -85,6 +86,7 @@ class CoreValidationResult:
     r_squared: Optional[float]  # Coefficient of determination
     spearman_rho: float  # Spearman correlation (robust to non-linear)
     spearman_pvalue: float
+    n_in_log_gaps: int = 0  # core samples excluded: beside a log gap (I14)
 
 
 @dataclass  
@@ -102,6 +104,7 @@ class PermValidationResult:
     n_valid_log: int
     mae_log10: float
     rmse_log10: float
+    n_in_log_gaps: int = 0  # core samples excluded: beside a log gap (I14)
 
 
 class CoreDataHandler:
@@ -181,6 +184,7 @@ class CoreDataHandler:
         self.well_kind = 'name'
         self.last_error = None
         self.excluded_rows = []
+        self.n_core_in_log_gaps = 0
         self.blank_well_rows = []
         self.filled_rows = []
         self.fill_down = False
@@ -399,6 +403,7 @@ class CoreDataHandler:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df['__line__'] = lines
         df = df.iloc[keep]
+        df = self._clean_core_values(df)
 
         if self.porosity_col:
             df = self._convert_porosity(df, porosity_scale)
@@ -470,6 +475,51 @@ class CoreDataHandler:
         if not self.well_col or self.well_col not in df.columns:
             return np.full(len(df), '', dtype=object)
         return np.array([group_key(w, self.well_kind) for w in df[self.well_col]], dtype=object)
+
+    def _clean_core_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Set null sentinels and non-physical values to NaN, listing each in ``excluded_rows`` (I6).
+
+        Sentinels (``COMMON_NULL_VALUES``) apply to porosity, permeability and
+        grain density; negative porosity and permeability <= 0 are non-physical.
+        The row stays (its other columns may be valid); only the value is blanked.
+        """
+        df = df.copy()
+        line_of = df['__line__'].to_numpy()
+        well_of = (df[self.well_col].to_numpy() if self.well_col and self.well_col in df.columns
+                   else np.full(len(df), '', dtype=object))
+        nulls = np.asarray(COMMON_NULL_VALUES, dtype=float)
+        counts: Dict[str, int] = {}
+
+        def blank(col, mask, reason, label):
+            if not mask.any():
+                return
+            for i in np.flatnonzero(mask):
+                self.excluded_rows.append((int(line_of[i]), f"{label} (value excluded)"))
+                self.excluded_row_wells[int(line_of[i])] = str(well_of[i])
+            counts[reason] = counts.get(reason, 0) + int(mask.sum())
+            df.loc[df.index[mask], col] = np.nan
+
+        for col, name in ((self.porosity_col, 'porosity'), (self.perm_col, 'permeability'),
+                          (self.grain_density_col, 'grain density')):
+            if not col:
+                continue
+            values = df[col].to_numpy(dtype=float)
+            blank(col, np.isin(values, nulls), 'null_sentinel',
+                  f"null sentinel in {name}")
+        if self.porosity_col:
+            values = df[self.porosity_col].to_numpy(dtype=float)
+            blank(self.porosity_col, np.isfinite(values) & (values < 0.0),
+                  'negative_porosity', "negative porosity")
+        if self.perm_col:
+            values = df[self.perm_col].to_numpy(dtype=float)
+            blank(self.perm_col, np.isfinite(values) & (values <= 0.0),
+                  'nonpositive_perm', "permeability not positive")
+        labels = {'null_sentinel': "null sentinel value(s)",
+                  'negative_porosity': "negative porosity value(s)",
+                  'nonpositive_perm': "non-positive permeability value(s)"}
+        for reason, n in counts.items():
+            self.notes.append(f"{n} {labels[reason]} excluded.")
+        return df
 
     def _convert_porosity(self, df: pd.DataFrame, requested) -> pd.DataFrame:
         """Decide percent vs fraction per well and convert (whole file without a well column).
@@ -648,38 +698,45 @@ class CoreDataHandler:
         Returns:
             Interpolated log values at core depths
         """
+        self.n_core_in_log_gaps = 0
+        core_depths = np.asarray(core_depths, dtype=float)
         # Create mask for valid log data
         valid_mask = ~np.isnan(log_values) & ~np.isnan(log_depth)
         if valid_mask.sum() < 2:
             return np.full(len(core_depths), np.nan)
-        
+
         log_depth_valid = log_depth[valid_mask]
         log_values_valid = log_values[valid_mask]
-        
+
         # Linear interpolation
         try:
-            interp_func = interp1d(log_depth_valid, log_values_valid, 
-                                   kind='linear', 
-                                   bounds_error=False, 
+            interp_func = interp1d(log_depth_valid, log_values_valid,
+                                   kind='linear',
+                                   bounds_error=False,
                                    fill_value=np.nan)
             interpolated = interp_func(core_depths)
-            
-            # Apply max distance constraint
-            # Find nearest log depth for each core depth
-            # (Note: log_depth_valid is usually sorted or mostly sorted)
-            for i, cd in enumerate(core_depths):
-                if np.isnan(interpolated[i]):
-                    continue
-                # Simple check for nearest point
-                nearest_dist = np.min(np.abs(log_depth_valid - cd))
-                if nearest_dist > max_dist_ft:
-                    interpolated[i] = np.nan
-            
+
+            # I14: keep a value only when the valid log samples immediately
+            # above and below the core depth are both within max_dist_ft
+            # (an exact sample match counts), so a core is never matched
+            # across a log gap.
+            depths = np.sort(log_depth_valid)
+            hi = np.searchsorted(depths, core_depths, side='left')
+            in_span = ~np.isnan(interpolated)
+            hi_c = np.clip(hi, 0, len(depths) - 1)
+            lo_c = np.clip(hi - 1, 0, len(depths) - 1)
+            exact = depths[hi_c] == core_depths
+            near = ((core_depths - depths[lo_c] <= max_dist_ft)
+                    & (depths[hi_c] - core_depths <= max_dist_ft))
+            gap = in_span & ~(exact | near)
+            interpolated[gap] = np.nan
+            self.n_core_in_log_gaps = int(gap.sum())
+
             return interpolated
         except Exception as e:
             logger.warning("Interpolation error: %s", e)
             return np.full(len(core_depths), np.nan)
-    
+
     def validate_porosity(self, log_depth: np.ndarray,
                           log_phie: np.ndarray,
                           max_dist_ft: float = 2.0) -> Optional[CoreValidationResult]:
@@ -704,6 +761,9 @@ class CoreDataHandler:
         
         # Interpolate log to core depths
         log_at_core = self.interpolate_log_to_core(log_depth, log_phie, core_depths, max_dist_ft)
+        n_gaps = self.n_core_in_log_gaps
+        if n_gaps:
+            logger.info("%d core samples in log gaps", n_gaps)
         
         # Create valid mask (both log and core have values)
         valid_mask = ~np.isnan(log_at_core) & ~np.isnan(core_por)
@@ -740,7 +800,8 @@ class CoreDataHandler:
             rmse=rmse,
             r_squared=r_squared,
             spearman_rho=spearman_rho,
-            spearman_pvalue=spearman_p
+            spearman_pvalue=spearman_p,
+            n_in_log_gaps=n_gaps
         )
     
     def validate_permeability(self, log_depth: np.ndarray,
@@ -769,6 +830,9 @@ class CoreDataHandler:
         
         # Interpolate log to core depths
         log_at_core = self.interpolate_log_to_core(log_depth, log_perm, core_depths, max_dist_ft)
+        n_gaps = self.n_core_in_log_gaps
+        if n_gaps:
+            logger.info("%d core samples in log gaps", n_gaps)
         
         # Create valid mask for linear domain
         valid_mask = ~np.isnan(log_at_core) & ~np.isnan(core_perm)
@@ -823,7 +887,8 @@ class CoreDataHandler:
             spearman_pvalue=spearman_p,
             n_valid_log=n_valid_log,
             mae_log10=mae_log10,
-            rmse_log10=rmse_log10
+            rmse_log10=rmse_log10,
+            n_in_log_gaps=n_gaps
         )
     
     def get_matched_data(self, log_depth: np.ndarray,

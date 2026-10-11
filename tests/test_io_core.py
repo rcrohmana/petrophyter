@@ -171,3 +171,80 @@ def test_read_core_file_decodes_utf8_headers(tmp_path):
     handler = CoreDataHandler()
     assert handler.read_core_file(str(path), separator="\t")
     assert "grain density (g/cm³)" in handler.to_dataframe().columns
+
+
+# --------------------------------------------------------------------------- #
+# I6: null sentinels and non-physical values; I14: matching across log gaps
+# --------------------------------------------------------------------------- #
+def _plug_text(n=20, sentinel_rows=()):
+    rows = ["Depth (ft)\tPorosity\tPerm (mD)"]
+    for i in range(n):
+        por, perm = 0.10 + 0.005 * i, 5.0 * (1 + i)
+        if i in sentinel_rows:
+            por, perm = -999.25, -999.25
+        rows.append(f"{1000 + i}\t{por}\t{perm}")
+    return "\n".join(rows) + "\n"
+
+
+def test_i6_sentinels_are_excluded_counted_and_statistics_match_clean_file():
+    bad = (2, 5, 8, 11, 14)
+    sent = CoreDataHandler()
+    assert sent.read_core_from_buffer(_buf(_plug_text(sentinel_rows=bad)), separator="\t")
+    # five rows x two values, each with a reason
+    reasons = [r for _, r in sent.excluded_rows]
+    assert len(reasons) == 10 and all("null sentinel" in r for r in reasons)
+    assert any("null sentinel" in n for n in sent.notes)
+
+    clean = CoreDataHandler()
+    lines = _plug_text().splitlines()
+    keep = [ln for i, ln in enumerate(lines) if i == 0 or (i - 1) not in bad]
+    assert clean.read_core_from_buffer(_buf("\n".join(keep) + "\n"), separator="\t")
+
+    d1, p1 = sent.get_core_porosity()
+    d2, p2 = clean.get_core_porosity()
+    assert np.array_equal(d1, d2) and np.allclose(p1, p2)
+    k1 = sent.get_core_permeability()[1]
+    assert np.allclose(k1, clean.get_core_permeability()[1])
+    assert np.nanmin(p1) > 0 and np.nanmin(k1) > 0
+
+
+def test_i6_negative_porosity_and_nonpositive_perm_are_excluded():
+    handler = CoreDataHandler()
+    assert handler.read_core_from_buffer(
+        _buf("Depth (ft)\tPorosity\tPerm (mD)\n1000\t0.2\t10\n1001\t-0.05\t0\n1002\t0.18\t-3\n1003\t0.21\t30\n"),
+        separator="\t")
+    reasons = " ".join(r for _, r in handler.excluded_rows)
+    assert "negative porosity" in reasons and "permeability not positive" in reasons
+    assert np.all(handler.get_core_porosity()[1] > 0)
+    assert np.all(handler.get_core_permeability()[1] > 0)
+
+
+def _gap_handler(depths):
+    handler = CoreDataHandler()
+    text = "Depth (ft)\tPorosity\n" + "".join(f"{d}\t0.2\n" for d in depths)
+    assert handler.read_core_from_buffer(_buf(text), separator="\t")
+    return handler
+
+
+def test_i14_core_beside_a_log_gap_is_nan_and_counted():
+    handler = _gap_handler([1002.0])
+    out = handler.interpolate_log_to_core(
+        np.array([1000.0, 1001.0, 1100.0]), np.array([0.1, 0.2, 0.3]),
+        np.array([1002.0]), max_dist_ft=2.0)
+    assert np.isnan(out[0]) and handler.n_core_in_log_gaps == 1
+
+
+def test_i14_close_samples_and_exact_match_still_match():
+    handler = _gap_handler([1000.5])
+    depth, vals = np.array([1000.0, 1001.0, 1100.0]), np.array([0.1, 0.2, 0.3])
+    out = handler.interpolate_log_to_core(depth, vals, np.array([1000.5, 1001.0, 1100.0]), 2.0)
+    assert out[0] == pytest.approx(0.15) and out[1] == pytest.approx(0.2) and out[2] == pytest.approx(0.3)
+    assert handler.n_core_in_log_gaps == 0
+
+
+def test_i14_validation_statistics_count_gap_cores():
+    depths = [1000.0, 1001.0, 1002.0, 1003.0, 1052.0, 1053.0, 1054.0]
+    handler = _gap_handler(depths)
+    log_depth = np.array([1000.0, 1001.0, 1002.0, 1003.0, 1100.0])
+    result = handler.validate_porosity(log_depth, np.full(5, 0.2), max_dist_ft=2.0)
+    assert result.n_points == 4 and result.n_in_log_gaps == 3

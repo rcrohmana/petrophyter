@@ -77,3 +77,18 @@ def test_zone_mask():
     assert list(zone_mask(depths, tops, "upper")) == [True, True, False, False]
     assert list(zone_mask(depths, tops, None)) == [True] * 4
     assert list(zone_mask(depths, None, "UPPER")) == [False] * 4
+
+
+def test_i6_calibration_reports_a_reason_and_survives_sentinels():
+    from modules.perm_calibration import fit_core
+
+    fit, reason = fit_core([0.2, 0.21], [10, 12], 0.03)
+    assert fit is None and "2 usable plugs" in reason and "need 5" in reason
+
+    por = np.linspace(0.10, 0.25, 20)
+    k = 5 * np.exp(18 * por)
+    por_s, k_s = por.copy(), k.copy()
+    por_s[[2, 5, 8, 11, 14]] = -999.25
+    k_s[[2, 5, 8, 11, 14]] = -999.25
+    fit, reason = fit_core(por_s, k_s, 0.03)
+    assert fit is not None and reason is None and fit["pairs"] == 15
