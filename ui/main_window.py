@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QDialog,
 )
 from PyQt6.QtCore import Qt, QSettings, QElapsedTimer
+from datetime import datetime, timezone
 import functools
 import logging
 
@@ -1576,6 +1577,7 @@ class MainWindow(QMainWindow):
             return
         ds.error = None
         ds.run_params_hash = params_hash
+        ds.run_time = datetime.now(timezone.utc).isoformat(timespec="seconds")
         ds.stale = self.model.well_params_hash(ds) != params_hash
         if key == project.active_key:
             # Results and summary are stored together so observers see a

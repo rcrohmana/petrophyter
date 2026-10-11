@@ -349,7 +349,8 @@ def test_analysis_results_go_to_the_well_named_by_the_key(two_wells, monkeypatch
 
     a, b = (window.model.project.get(k) for k in ("WELL:BKS-01", "WELL:BKS-02"))
     assert a.results is results and a.summary is summary and a.calculated
-    assert b.results is None and not b.calculated
+    assert a.run_time and a.run_time.endswith("+00:00")  # UTC, P0-UI/UX U3
+    assert b.results is None and not b.calculated and b.run_time is None
     assert window.model.results is None  # active well B is untouched
     assert window.actions_["run_analysis"].isEnabled()
     window.model.set_active_well("WELL:BKS-01")
