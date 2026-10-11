@@ -667,6 +667,9 @@ SW_DIAGNOSTIC_KEYS = (
 INCONSISTENT_POROSITY_SHARE = 0.05
 # Warn when more than this share of a zone's clean samples sits at the upper Sw bound.
 UPPER_BOUND_SHARE = 0.10
+# ...and only when the zone has at least this many clean samples (C8's ``min_samples``),
+# so one clean sample in a shale zone does not raise a warning.
+UPPER_BOUND_MIN_CLEAN = 10
 
 
 def _concat_flags(frames, index):
@@ -682,7 +685,8 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
     ``SW_DIAGNOSTIC_KEYS``; ``no_root`` and ``failed`` are the solver counts of
     Waxman-Smits and Dual-Water. Appends a warning to ``warnings`` per model and
     zone where more than 5 % of the samples have inconsistent porosities or more
-    than 10 % of the clean samples sit at the upper Sw bound (Sw > 1.05 before clipping).
+    than 10 % of the clean samples sit at the upper Sw bound (Sw > 1.05 before clipping),
+    in a zone with at least ``UPPER_BOUND_MIN_CLEAN`` clean samples.
     """
     frames = {}
     for calc in calcs:
@@ -728,7 +732,7 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
                 clean = mask & (vsh_a < cutoff)
             n_clean = int(clean.sum())
             n_upper = int((flags["at_upper_bound"].to_numpy() & clean).sum())
-            if n_clean and n_upper > UPPER_BOUND_SHARE * n_clean:
+            if n_clean >= UPPER_BOUND_MIN_CLEAN and n_upper > UPPER_BOUND_SHARE * n_clean:
                 warnings.add(
                     "SW_AT_BOUND",
                     f"{name}{where}: Sw > 1.05 before clipping in {n_upper} clean samples: "

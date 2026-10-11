@@ -64,7 +64,7 @@ _CHECK_KEYS = {
 _SOLVER_MODELS = ("SW_WS", "SW_DW")
 _CHECK_TIPS = {
     4: "Sw above 1.05 before clipping. Warning above 10 % of the zone's samples "
-       "(the run warning counts clean samples only)",
+       "(the run warning counts clean samples only, in zones with at least 10)",
     6: "Warning above 5 % of the zone's samples: PHIT-based hydrocarbon volume limited to PHIE",
     7: "Warning above 5 % of the zone's samples: effective porosity above total porosity",
 }

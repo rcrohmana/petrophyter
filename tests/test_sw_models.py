@@ -342,6 +342,15 @@ class TestBoundCounts:
         assert "Archie: Sw > 1.05 before clipping in 20 clean samples: check Rw, m, n or Rt." \
             in summary["warnings"]
 
+    def test_no_warning_below_ten_clean_samples(self):
+        params = {**PARAM_DEFAULTS, "sw_methods": ["Archie"], "sw_primary_method": "Archie",
+                  "vsh_baseline_method": "Custom (Manual)"}
+        data = self._clean_well(0.5)
+        data.loc[9:, "GR"] = 110.0   # 9 clean samples, all above the bound
+        _, summary = run_pipeline(data, _MAPPING, params)
+        assert summary["solver_diagnostics"]["SW_ARCHIE"]["at_upper_bound"] >= 9
+        assert not any("before clipping" in w for w in summary["warnings"])
+
     def test_no_warning_for_a_hydrocarbon_well(self):
         params = {**PARAM_DEFAULTS, "sw_methods": ["Archie"], "sw_primary_method": "Archie",
                   "vsh_baseline_method": "Custom (Manual)"}

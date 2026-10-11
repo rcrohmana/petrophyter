@@ -123,7 +123,7 @@ every limited sample is counted per model and per zone in `summary["solver_diagn
 | `bvh_exceeds_phie`, `phie_above_phit` | inconsistent porosities (below) |
 | `no_root`, `failed` | solver counts of Waxman-Smits and Dual-Water |
 
-The run warns when more than 10 % of a zone's clean samples (Vsh below the Vsh cutoff) sit at the upper bound
+The run warns when more than 10 % of a zone's clean samples (Vsh below the Vsh cutoff; at least 10 of them) sit at the upper bound
 ("Sw > 1.05 before clipping in N clean samples: check Rw, m, n or Rt"), and when more than 5 % of a zone's
 samples have inconsistent porosities. Smaller counts are listed as information. The Diagnostics tab shows the
 counts per model and zone.
