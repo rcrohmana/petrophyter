@@ -17,11 +17,9 @@ block_cipher = None
 # Matplotlib - collect data but will exclude tests via excludes list
 mpl_datas, mpl_binaries, mpl_hiddenimports = collect_all('matplotlib')
 
-# pyqtgraph (optional but used for interactive plots)
-try:
-    pg_datas, pg_binaries, pg_hiddenimports = collect_all('pyqtgraph')
-except Exception:
-    pg_datas, pg_binaries, pg_hiddenimports = [], [], []
+# pyqtgraph drives the interactive log display. No try/except: a build without it
+# must fail instead of shipping an app that falls back to the Classic engine.
+pg_datas, pg_binaries, pg_hiddenimports = collect_all('pyqtgraph')
 
 # lasio for LAS file parsing
 try:

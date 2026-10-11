@@ -24,6 +24,14 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+if "--self-test" in sys.argv[1:]:
+    # Smoke test of a build: offscreen, no dialogs, throwaway settings. Must run
+    # before anything creates a QApplication.
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from services.self_test import run_cli
+
+    sys.exit(run_cli(sys.argv[1:]))
+
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt, QLocale

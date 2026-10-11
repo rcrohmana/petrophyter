@@ -155,3 +155,30 @@ def gas_zone_data():
     })
     
     return data
+
+
+def _skip_reason(report):
+    longrepr = report.longrepr
+    if isinstance(longrepr, tuple) and len(longrepr) == 3:
+        return str(longrepr[2])
+    return str(longrepr)
+
+
+def _fail_release_skip(report):
+    if os.environ.get("RELEASE") == "1" and report.skipped and not hasattr(report, "wasxfail"):
+        report.outcome = "failed"
+        report.longrepr = f"RELEASE=1: a skipped test is a failure. {_skip_reason(report)}"
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """With RELEASE=1 (build gate, CI) a skipped test is a failure, not a pass."""
+    outcome = yield
+    _fail_release_skip(outcome.get_result())
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    """Same for a module skipped at import time (pytest.importorskip)."""
+    outcome = yield
+    _fail_release_skip(outcome.get_result())

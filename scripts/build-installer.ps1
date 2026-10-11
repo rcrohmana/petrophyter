@@ -4,8 +4,11 @@
 
 .DESCRIPTION
     This script automates the build process for Petrophyter:
-    1. Runs PyInstaller to create dist/Petrophyter/ (one-folder mode)
-    2. Compiles Inno Setup script to create the Windows installer
+    1. Runs the full test suite in the conda environment (build gate)
+    2. Runs PyInstaller to create dist/Petrophyter/ (one-folder mode)
+    3. Runs the built exe with --self-test (numeric stack, LAPACK, main window, pipeline)
+    4. Compiles Inno Setup script to create the Windows installer
+    5. Writes pip-freeze.txt, conda-explicit.txt and SHA256SUMS.txt next to the installer
 
 .PARAMETER SkipPyInstaller
     Skip PyInstaller build step. Use this when dist folder already exists
@@ -14,6 +17,10 @@
 .PARAMETER SkipInnoSetup
     Skip Inno Setup compilation. Use this when you only want to build
     the PyInstaller distribution without creating the installer.
+
+.PARAMETER SkipTests
+    Skip the test-suite gate that runs before PyInstaller. For iteration only:
+    a release must be built without this switch. A loud warning is printed.
 
 .EXAMPLE
     .\build-installer.ps1
@@ -40,7 +47,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipPyInstaller,
-    [switch]$SkipInnoSetup
+    [switch]$SkipInnoSetup,
+    [switch]$SkipTests
 )
 
 # Strict error handling
@@ -155,7 +163,42 @@ try {
             throw "Conda not found. Please ensure Anaconda/Miniconda is installed and in PATH."
         }
         Write-Info "Conda: $($condaPath.Source)"
-        
+
+        # Build gate: the full suite must pass in the release environment.
+        # RELEASE=1 makes tests/conftest.py turn any skipped test into a failure.
+        if ($SkipTests) {
+            Write-Host ""
+            Write-Host ("!" * 60) -ForegroundColor Red
+            Write-Host "  WARNING: -SkipTests. The test suite was NOT run." -ForegroundColor Red
+            Write-Host "  Do not publish this build as a release." -ForegroundColor Red
+            Write-Host ("!" * 60) -ForegroundColor Red
+            Write-Host ""
+        }
+        else {
+            Write-Info "Running the test suite in '$CondaEnv' (RELEASE=1, offscreen)..."
+            $savedEnv = @{
+                PYTEST_QT_API = $env:PYTEST_QT_API
+                QT_QPA_PLATFORM = $env:QT_QPA_PLATFORM
+                RELEASE = $env:RELEASE
+            }
+            $env:PYTEST_QT_API = "pyqt6"
+            $env:QT_QPA_PLATFORM = "offscreen"
+            $env:RELEASE = "1"
+            try {
+                & conda run -n $CondaEnv --no-capture-output python -m pytest -q -rs
+                $testExit = $LASTEXITCODE
+            }
+            finally {
+                $env:PYTEST_QT_API = $savedEnv.PYTEST_QT_API
+                $env:QT_QPA_PLATFORM = $savedEnv.QT_QPA_PLATFORM
+                $env:RELEASE = $savedEnv.RELEASE
+            }
+            if ($testExit -ne 0) {
+                throw "Test suite failed with exit code $testExit. Fix the tests before building (or use -SkipTests for iteration only)."
+            }
+            Write-Success "Test suite passed."
+        }
+
         # Run PyInstaller via conda run
         Write-Host ""
         & conda run -n $CondaEnv --no-capture-output python -m PyInstaller --noconfirm --clean $SpecFile
@@ -188,6 +231,30 @@ try {
             throw "Dist folder not found: $DistFolder. Run without -SkipPyInstaller first."
         }
     }
+
+    # -------------------------------------------------------------------------
+    # SELF-TEST of the frozen exe (runs for a fresh build and for an existing dist)
+    # -------------------------------------------------------------------------
+    Write-Host ""
+    Write-Step "TEST" "Running Petrophyter.exe --self-test..."
+    $selfTestExe = (Resolve-Path (Join-Path $DistFolder "Petrophyter.exe")).Path
+    New-Item -ItemType Directory -Force -Path "build" | Out-Null
+    $selfTestLog = Join-Path (Resolve-Path "build").Path "selftest.log"
+    if (Test-Path $selfTestLog) { Remove-Item $selfTestLog -Force }
+    # The exe is windowed (no console), so it writes its result to the log file.
+    $proc = Start-Process -FilePath $selfTestExe `
+        -ArgumentList @("--self-test", "--self-test-log", "`"$selfTestLog`"") `
+        -Wait -PassThru
+    if (Test-Path $selfTestLog) {
+        Get-Content $selfTestLog | ForEach-Object { Write-Info $_ }
+    }
+    if ($proc.ExitCode -ne 0) {
+        throw "Self-test of $selfTestExe failed with exit code $($proc.ExitCode). See $selfTestLog"
+    }
+    if (-not (Test-Path $selfTestLog) -or -not ((Get-Content $selfTestLog -Tail 1) -match "^SELFTEST OK")) {
+        throw "Self-test exited 0 but $selfTestLog has no 'SELFTEST OK' line."
+    }
+    Write-Success "Self-test passed."
 
     # -------------------------------------------------------------------------
     # STEP 2: Inno Setup Compilation
@@ -247,6 +314,21 @@ try {
             Write-Success "Inno Setup compilation completed!"
             Write-Info "Installer: $($installerFile.FullName)"
             Write-Info "Size: $([math]::Round($installerSize, 1)) MB"
+
+            # Release manifest next to the installer: what was built from, and checksums.
+            $freezeFile = Join-Path $OutputFolder "pip-freeze.txt"
+            $explicitFile = Join-Path $OutputFolder "conda-explicit.txt"
+            $sumsFile = Join-Path $OutputFolder "SHA256SUMS.txt"
+            & conda run -n $CondaEnv --no-capture-output python -m pip list --format=freeze |
+                Set-Content -Encoding ascii $freezeFile
+            if ($LASTEXITCODE -ne 0) { throw "pip list failed with exit code $LASTEXITCODE" }
+            & conda list -n $CondaEnv --explicit | Set-Content -Encoding ascii $explicitFile
+            if ($LASTEXITCODE -ne 0) { throw "conda list failed with exit code $LASTEXITCODE" }
+            $sums = foreach ($f in @($installerFile.FullName, (Resolve-Path $freezeFile).Path, (Resolve-Path $explicitFile).Path)) {
+                "$((Get-FileHash $f -Algorithm SHA256).Hash.ToLower()) *$(Split-Path -Leaf $f)"
+            }
+            $sums | Set-Content -Encoding ascii $sumsFile
+            Write-Info "Manifest: pip-freeze.txt, conda-explicit.txt, SHA256SUMS.txt in $OutputFolder"
         }
     }
     else {
