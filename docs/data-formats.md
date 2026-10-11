@@ -72,6 +72,16 @@ Text that starts with `=` is never written as a formula *(v1.7.1)*:
 - **Excel.** Every cell, including column headers, is written as a value. Text that starts with `=` is stored as text, so `=1+1` shows as `=1+1`.
 - **CSV.** A text value that starts with `=`, `+`, `-`, `@`, a tab or a carriage return, and is not a number, gets a leading `'`, so a spreadsheet opens it as text (`-5 ft` is written as `'-5 ft`). Numbers, including negative numbers such as `-2.5`, are written unchanged.
 
+### Provenance and the Field total
+
+Every export records what produced its numbers *(v1.7.1)*: the Petrophyter version and build, the run time (UTC), the well's status at export (current, out of date, or latest run failed), the parameter hash of the run, and the issue counts.
+
+- **Excel.** A **Provenance** sheet: one row per well for an all-wells export, key/value rows for one well. The **Summary** sheet lists **Parameter**, **Scope** (well, zone name, or temperature), **Value**, and **Source** for every parameter the run used.
+- **LAS.** An `~OTHER INFORMATION` section before the data, starting with `Exported by Petrophyter <version> (Build <build>)`.
+- **CSV.** A `<name>.provenance.txt` file next to the CSV. The CSV itself keeps one header row and one table.
+
+**Field total.** The Field total of the Wells table and the all-wells Excel adds up wells whose results are current or out of date. Wells whose latest run failed are left out: they keep their row with the error and blank numbers, because their earlier numbers stand for settings that no longer produce a result. The Field status reads, for example, `4 wells (1 out of date)`.
+
 ## TVD curve in a LAS file
 
 Formation temperature can use a true vertical depth curve. In **Curve Mapping**, the **TVD** row lists the curves of the well. The mnemonics `TVD`, `TVDKB`, `TVDRKB`, `TVDRT`, and `TVDBRT` are mapped automatically; `TVDSS` is not, because it is measured from sea level. A TVD curve whose declared unit is meters is converted to feet when the LAS file is loaded, and a note says so. The curve is used only if it never decreases with measured depth and does not exceed it by more than 1 ft. See [Calculation Methods](calculation-methods.md#formation-temperature) for how it is used.

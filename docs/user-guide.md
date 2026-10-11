@@ -133,7 +133,7 @@ The Data Browser is a read-only tree. You cannot edit values in it; use the menu
 | **Curves** | Every curve with its unit; curves mapped to GR, RHOB, NPHI, DT, or RT carry that role tag |
 | **Formation tops** | Formation names with top and bottom depth, or **Not loaded**; a zone with its own parameters is marked, and its tooltip lists them |
 | **Core data** | Sample count and depth unit, or **Not loaded** |
-| **Results** | Calculated curves after a run; reads **out of date** when parameters changed since the last run |
+| **Results** | Calculated curves after a run; reads **out of date** when parameters changed since the last run, or a count such as **2 warnings** with a warning dot when the last run had warnings (hover to read the first five) |
 
 Right-click a row for a context menu of related actions, such as **Open LAS File(s)…**, **Merge LAS Files…**, **Open Formation Tops…**, **Open Core Data…**, **Run Analysis**, and the matching Parameters pages. Double-click **Not loaded** on Formation tops or Core data to open the corresponding file dialog, double-click a curve to open the **Curve Mapping** page, or double-click a formation to edit that zone's parameters for the well (the Parameters window opens on the **Zones** page at **Well** scope with the zone selected). Before any data is loaded, the browser shows **No data loaded** with an **Open LAS File(s)…** link.
 
@@ -216,7 +216,9 @@ Below the fields, a live readout shows the temperature at the top and bottom of 
 A well's results are out of date when its current effective parameters (including its formation tops) differ from the ones used for its last run. For the active well:
 
 - the status bar shows **Parameters changed — press F5 to update results**; and
-- the **Results** row in the Data Browser reads **out of date**, and the well's dot turns to the warning colour.
+- the **Results** row in the Data Browser reads **out of date**, and the well's dot turns to the warning colour;
+- the Summary and Diagnostics tabs still show the parameters used in the last run, with the hint **Current settings differ — Run to update**; and
+- the Export tab's status line counts the well as out of date, and exporting it asks first (see [Export](#export)).
 
 The existing result tabs keep showing the previous run until you run the analysis again. Changing a value back to what was used clears the flag, and so does running the analysis or loading new data.
 
@@ -230,9 +232,11 @@ While the analysis runs:
 
 - a progress bar appears in the status bar, and the status message shows the current step. For one well this is the stage, such as `Calculating water saturation...`. For several wells the bar shows the combined progress, and the message names the well and its stage, for example `Analysing 2 of 4 wells · BKS-01: Calculating Swirr...`;
 - result tabs refresh when the run completes; and
-- a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`.
+- a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`. When the run had warnings (for example, Rw could not be estimated automatically, or part of the interval has no porosity), the banner is a warning, such as `Analysis complete with 2 warnings — …`, with a **Review** button that opens **Diagnostics → Run issues** for that well.
 
-If the analysis fails, an **Analysis Error** dialog opens and the status bar shows **Analysis failed**. When several wells run and only some fail, the others keep their results and one warning banner names each failed well and the reason; a failed well's dot in the Data Browser turns to the error colour. After a multi-well run the banner reads, for example, **Analysis complete for 4 wells (2 unchanged)**.
+**Analysis → Stop analysis**, the **Stop analysis** toolbar button next to Run, or `Esc` while a run is active stops the run. Wells that finished keep their new results, wells that were not run keep their earlier state, and an info banner reports, for example, `Analysis stopped — 3 wells finished, 2 not run`. The action is disabled when nothing is running.
+
+If the analysis fails, an **Analysis Error** dialog opens and the status bar shows **Analysis failed**. When several wells run and only some fail, the others keep their results and one warning banner names each failed well and the reason; a failed well's dot in the Data Browser turns to the error colour. After a multi-well run the banner reads, for example, **Analysis complete for 4 wells (2 unchanged)**, and **· 1 with warnings · Review** when any well had warnings.
 
 ### While files are loading
 
@@ -266,12 +270,13 @@ The same score appears as **Quality Score** on the **Data QC** tab.
 Non-blocking messages appear in a banner above the tabs. A banner has one of three kinds: success, warning, or info. Click the close button on the banner to dismiss it. Typical banners are:
 
 - a warning when a LAS, tops, or core file has an ambiguous depth unit;
-- a success message when an analysis completes;
-- a warning naming the failed wells after **Run All Wells**;
+- a success message when an analysis completes, or a warning with **Review** when it completed with warnings;
+- a warning naming the failed wells after **Run All Wells**, with **Review**;
+- an info message when you stop an analysis;
 - one banner with the notes from loading a session or a tops or core file (unmatched well names, missing files, depth coverage); and
 - a success message with the file path after a CSV or Excel export.
 
-The banner is cleared when a new analysis starts. Errors are never shown as banners; they open a dialog that you must dismiss.
+The banner is cleared when a new analysis starts. A single failed run opens a dialog that you must dismiss; failed wells in a multi-well run, and runs with warnings, are shown in a warning banner with **Review**.
 
 ## Reviewing results
 
@@ -310,11 +315,13 @@ See [Visualization and Export](visualization-and-export.md) for more about plots
 
 ### Diagnostics
 
-Cross-validation of the results: **Shale Parameters Cross-Validation** (current versus statistical values and deviation), **Porosity (PHIE) Cross-Validation** with a selectable method, **Water Saturation (Sw) Cross-Validation**, **Permeability (k) Validation**, and **Net Pay Validation**. When core data is loaded, **Core Data Validation** compares core porosity and permeability with the log-derived curves, with core points plotted on a depth track. Warnings appear under each section when values look suspicious. Use the core-calibrated permeability coefficients from the **Permeability** page when the core comparison supports them.
+**Run issues** comes first: the errors, warnings, and notes of the active well's last run, warnings first. Each row shows the severity, the zone when there is one, and a **Go to** button that opens the related Parameters page (Rw and Rsh, porosity, or the analysis scope) or the Diagnostics section concerned. It reads **No issues in the last run.** when the list is empty, and is hidden before the well has run.
+
+Below it, cross-validation of the results: **Shale Parameters Cross-Validation** (current versus statistical values and deviation), **Porosity (PHIE) Cross-Validation** with a selectable method, **Water Saturation (Sw) Cross-Validation**, **Permeability (k) Validation**, and **Net Pay Validation**. When core data is loaded, **Core Data Validation** compares core porosity and permeability with the log-derived curves, with core points plotted on a depth track. The shale parameters are the ones **used in the last run**; when the current settings differ, a hint says **Current settings differ — Run to update**. Core samples beside a gap in the log are left out of the comparison and counted (`3 core samples in log gaps`). Warnings appear under each section when values look suspicious. Use the core-calibrated permeability coefficients from the **Permeability** page when the core comparison supports them.
 
 ### Summary
 
-Results at a glance: the analysis scope (whole well or the selected formations), **Net Pay Analysis** (gross sand, net reservoir, net pay, N/G reservoir, N/G pay, and the average PHIE, Sw, and Vsh in pay), **HCPV Summary** (gross, net reservoir, and net pay), a **Thickness Summary** chart, and the **Cutoff Parameters Used** (Vsh, PHIE, and Sw).
+Results at a glance: the analysis scope (whole well or the selected formations), **Net Pay Analysis** (gross sand, net reservoir, net pay, N/G reservoir, N/G pay, and the average PHIE, Sw, and Vsh in pay), **HCPV Summary** (gross, net reservoir, and net pay), a **Thickness Summary** chart, and **Used in last run**: the Vsh, PHIE, and Sw cutoffs that run used (not the current settings). When the zones used different cutoffs, the cell reads, for example, **varies by zone (0.25–0.40)**. Before a run it shows **—** and **Run to see the parameters used**; when the current settings differ from the run, a hint says **Current settings differ — Run to update**.
 
 When the active well has formation tops, a **Zones** table gives one row per zone: top and bottom, gross, net, N/G, average PHIE and Sw, HCPV, and the a, m, n, Rw, and cutoffs used; hover a parameter to see its source (for example **well·zone** or **auto (fallback: well)**).
 
@@ -329,18 +336,22 @@ A zone that ends up with no gross, no net reservoir, or no net pay is marked so 
 
 These marks are diagnostic, not errors, and no dialog opens. On the Parameters window **Zones** page, the cutoff cell that caused the result (Vsh, PHIE, or Sw) is marked the same way and carries the same tooltip, at **Well** scope for the active well while its results are up to date.
 
-With two or more wells, a **Wells** table lists every well with its status and pay summary, plus a **Field total** row (thickness and HCPV summed, averages weighted by net pay). Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
+With two or more wells, a **Wells** table lists every well with its status, pay summary, and **Issues** (the number of warnings, or the error of a failed well), plus a **Field total** row (thickness and HCPV summed, averages weighted by net pay). The Field total counts wells whose results are current or out of date and leaves out wells whose latest run failed; its status reads, for example, **4 wells (1 out of date)**. Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
 
 ### Export
 
-Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** below can be limited with **Top MD**, **Bottom MD**, and **Update View**. A success banner reports the saved path. Merged data is saved as LAS with **File → Save Merged LAS…**.
+Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** below can be limited with **Top MD**, **Bottom MD**, and **Update View**. A success banner reports the saved path.
+
+A status line above the preview reads **Ready — results current**, or for example **2 wells out of date · 1 latest run failed**. Before exporting wells that are out of date or whose latest run failed, a dialog offers **Run out-of-date wells** (runs them and returns to the Export tab; it does not export), **Export last successful results** (the status is written in the file), or **Cancel**. Failed wells without earlier results are left out and named. Every export records the Petrophyter version, the run time, the status, and the parameter hash: a **Provenance** sheet in Excel, an `~OTHER` section in LAS, and a `<name>.provenance.txt` file next to a CSV. See [Data Formats](data-formats.md#exported-files). Merged data is saved as LAS with **File → Save Merged LAS…**.
 
 ## Sessions
 
 A session is a JSON file that stores the project, so you can reopen it later.
 
-- **Session → Save Session…** (`Ctrl+S`) writes the project to a `.json` file: the project parameters and project zone parameters, and for every well its LAS file paths, curve mapping, analysis scope, well and well-zone parameters, and the paths of its tops and core files. The same command is on the toolbar.
+- **Session → Save Session…** (`Ctrl+S`) writes the project to the current session file, and asks for a file the first time; **Session → Save Session As…** (`Ctrl+Shift+S`) always asks. The session holds the project parameters and project zone parameters, and for every well its LAS file paths, curve mapping, analysis scope, well and well-zone parameters, and the paths of its tops and core files. **Save Session** is also on the toolbar.
 - **Session → Load Session…** (`Ctrl+Shift+O`) replaces the loaded wells with the saved ones: it reads the LAS, tops, and core files again from their saved paths, restores every parameter scope, and re-activates the saved active well. A well whose files are missing is skipped; one banner lists everything that could not be restored. The wells are rebuilt in the background with the progress in the status bar (`Restoring 3 of 10: BKS-03`); **New Project** or another **Load Session…** cancels it.
+
+An asterisk at the start of the window title (`*BKS-01 — Petrophyter`) means there are unsaved changes: loaded or removed wells, tops, core data, merges, parameters, or curve mapping. Running an analysis does not count. Closing the window, loading a session, or starting a new project with unsaved changes asks **Save**, **Discard**, or **Cancel**; **Cancel**, or cancelling the Save's file dialog, keeps everything as it is.
 
 Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. See [Session Management](session-management.md) for the complete list of saved parameters.
 
@@ -361,6 +372,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 | `Ctrl+Shift+O` | Load session | **Session → Load Session…** |
 | `F5` | Run analysis | **Analysis → Run Analysis** |
 | `Ctrl+Shift+R` | Run all wells | **Analysis → Run All Wells** |
+| `Esc` | Stop the running analysis (only while a run is active) | **Analysis → Stop analysis** |
 | `Ctrl+P` | Open the Parameters window | **View → Parameters Window** |
 | `Ctrl+B` | Show or hide the Data Browser | **View → Data Browser** |
 

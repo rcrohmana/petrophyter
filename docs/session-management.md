@@ -4,7 +4,8 @@
 
 Session management was introduced in v1.1 for project continuity. Since format 2.0 a session stores the whole multi-well project; format 2.1 adds the record of how each well's tops and core data were imported.
 
-- **Session → Save Session…:** Export the project to a JSON file.
+- **Session → Save Session…** (`Ctrl+S`): write the project to the current session file (the one last saved or loaded); the first time, it asks for a file.
+- **Session → Save Session As…** (`Ctrl+Shift+S`): choose a new file, which becomes the current one *(v1.7.1)*.
 - **Session → Load Session…:** Re-open the saved wells and restore every parameter scope.
 - **Version Compatibility:** Track the session format version.
 
@@ -36,6 +37,8 @@ Project parameters include:
 The current session format version is **2.1**. Format 2.0 files still load, with name matching for tops and core data. Format 1.x files still load: they hold parameters only, which are applied to the project (and, when a well is loaded, to its Rw, Rsh, and GR baseline as well values), and the loaded wells stay in place. Version 1.4 added `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
 
 **Lithology presets.** A named lithology preset at a well, zone, or well · zone scope now supplies a, m, and n at that scope. When an older session holds explicit a, m, and n entries equal to the preset's values at the same scope, loading removes those entries and keeps the preset, so later changes of the preset flow down. A note in the load banner reports it. Entries that differ from the preset stay explicit, and the project-level values are not touched.
+
+**Unsaved changes** *(v1.7.1)*. An asterisk at the start of the window title marks changes since the last save or load. Closing the window, loading a session, or starting a new project with unsaved changes asks Save, Discard, or Cancel. Loading a session clears the mark; New Project clears it and forgets the current file. Loading a format 1.x session (parameters only) leaves the project unsaved with no current file, so Save asks for a new file instead of overwriting the old one. The mark and the current file are not stored in the session.
 
 A session never restores results. After loading a 1.x session, wells whose effective parameters changed are marked stale until you run the analysis again.
 
