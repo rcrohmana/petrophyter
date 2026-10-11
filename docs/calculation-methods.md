@@ -9,10 +9,9 @@
 | **GR Linear** | `Vsh = (GR - GRmin) / (GRmax - GRmin)` | v1.0 |
 | **Larionov Tertiary** | `Vsh = 0.083 × (2^(3.7×IGR) - 1)` | v1.0 |
 | **Larionov Older** | `Vsh = 0.33 × (2^(2×IGR) - 1)` | v1.0 |
-| **Clavier** | GR-index shale-volume correlation | — |
-| **Stieber** | GR-index shale-volume correlation | — |
-| **SP** | Spontaneous Potential method | v1.0 |
-| **Neutron-Density** | Crossplot-separation method | v1.0 |
+
+`IGR = (GR - GRmin) / (GRmax - GRmin)`, clipped to 0–1. These three are the only Vsh methods; there is no
+Clavier, Stieber, SP or neutron-density Vsh.
 
 ### GR baseline modes *(v1.0)*
 
@@ -35,6 +34,10 @@
 | **Sonic (PHIS)** | Wyllie time-average equation | v1.0 |
 | **Neutron-Density (PHIT)** | RMS average from the crossplot | v1.0 |
 
+A sample where no selected porosity method gives a value has no PHIE: it is left empty (NaN) and drops out of
+Sw, pay and HCPV. The run lists how much of the interval has porosity; a fixed porosity is never substituted
+*(v1.7.1)*.
+
 ### Gas correction *(v1.1)*
 
 - Enable or disable gas correction for PHIE.
@@ -47,10 +50,48 @@
 | Model | Description | Version |
 |---|---|---|
 | **Archie** | Clean-sand equation: `Sw = (a × Rw / (φ^m × Rt))^(1/n)` | v1.0 |
-| **Indonesian** | Iterative solver for shaly sands | v1.0 |
-| **Simandoux** | Quadratic solution for shaly sands | v1.0 |
+| **Indonesian** | Closed form for shaly sands (below) | v1.0 |
+| **Simandoux** | `1/Rt = φe^m × Sw^n / (a × Rw) + Vsh × Sw / Rsh` (below) | v1.0 |
 | **Waxman-Smits** | Uses Qv and B parameters | v1.2 |
 | **Dual-Water** | Uses Swb and Rwb parameters | v1.2 |
+
+### Indonesian
+
+The Indonesian (Poupon-Leveaux) equation
+
+`1/√Rt = [ √(φe^m / (a × Rw)) + Vsh^(1 − Vsh/2) / √Rsh ] × Sw^(n/2)`
+
+is solved in closed form, `Sw = ( (1/√Rt) / (√(φe^m / (a × Rw)) + Vsh^(1 − Vsh/2) / √Rsh) )^(2/n)`, with Vsh
+clipped to 0–1 and Sw clipped to 0–1. A sample with no RT, no PHIE or PHIE ≤ 0.001 gives no Sw. No iterative
+solver is involved.
+
+### Simandoux
+
+The form used is
+
+`1/Rt = φe^m × Sw^n / (a × Rw) + Vsh × Sw / Rsh`
+
+(the shale term carries no (1 − Vsh) factor). With n = 2 it is the quadratic `A × Sw² + B × Sw − C = 0` with
+`A = φe^m / (a × Rw)`, `B = Vsh / Rsh`, `C = 1 / Rt`, and `Sw = (−B + √(B² + 4AC)) / (2A)`. For any other n the
+single root of `A × Sw^n + B × Sw − C` in 0–1 is found numerically per sample (Brent's method); a sample whose
+root lies above 1 gets Sw = 1. Sw is clipped to 0–1.
+
+### Automatic Rw and Rsh
+
+When Rw or Rsh is set to automatic, the run estimates it from the well's own logs *(v1.7.0–v1.7.1; the method
+is revised in v1.7.2)*:
+
+- **Rw (apparent water resistivity).** Candidate samples are clean (Vsh < 0.3), porous (PHIE > 0.15; PHIT when
+  there is no PHIE) and have RT > 0. For each, `Rwa = RT × φ^m / a`. Rw is the median of the Rwa values at or
+  below their 25th percentile, the water-bearing end of the distribution, limited to 0.01–5 ohm·m. Fewer than
+  10 candidates means no estimate.
+- **Rsh.** The median RT of the shale samples (Vsh > 0.8), limited to 0.5–50 ohm·m. No shale sample means no
+  estimate.
+
+When an estimate is not available, the entered value is used and the run reports it as a warning
+("Rw could not be estimated automatically; using the entered Rw of …"). With the formation-temperature
+correction on, both estimates are made at the Rw reference temperature (see
+[Formation temperature](#formation-temperature)).
 
 ### Archie presets
 
@@ -154,6 +195,12 @@ For an `ok` zone, the limiting cutoff is the one with the lowest pass fraction a
 - Import TXT or CSV core data.
 - Match depths automatically with configurable interpolation.
 - Report Bias, MAE, RMSE, R², and Spearman ρ.
+- A core sample is compared with the log only when valid log samples lie within the matching distance on
+  both sides of it (an exact depth match counts), so a core is never matched across a gap in the log. Cores
+  beside a gap are left out of the statistics and counted ("N core samples in log gaps") *(v1.7.1)*.
+- Core null values (such as −999.25, in porosity, permeability and grain density) and non-physical values
+  (negative porosity, permeability ≤ 0) are excluded and counted with a reason, before statistics or
+  calibration *(v1.7.1)*.
 - Display porosity core-versus-log crossplots with a 1:1 reference line.
 - Display permeability core-versus-log crossplots in the log10 domain.
 - Display depth tracks with core overlays.
@@ -161,7 +208,9 @@ For an `ok` zone, the limiting cutoff is the one with the lowest pass fraction a
 ## Quality Control *(v1.0)*
 
 - **Curve QC:** Valid percentage, minimum, maximum, mean, standard deviation, and quality score
-- **Bad-hole detection:** Derived from the caliper log
+- **Non-positive values:** At load, resistivity, RHOB and DT samples ≤ 0 are set to empty (NaN) and counted
+  in the load notes, since logarithms and the Sw equations are undefined there. NPHI is not masked (slightly
+  negative neutron porosity is real) *(v1.7.1)*.
 - **Data-gap detection:** Evaluated per curve
 - **Outlier detection:** IQR method
 - **Triple-combo preview:** GR, RT, RHOB/NPHI/DT with gas-crossover shading
