@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QPushButton,
     QHeaderView,
+    QComboBox,
 )
 from PyQt6.QtCore import Qt
 import pandas as pd
@@ -22,6 +23,7 @@ import pandas as pd
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot
 from ..widgets.table_model import PandasTableModel
+from ..widgets import track_specs as ts
 
 
 class PetrophysicsTab(QWidget):
@@ -131,11 +133,21 @@ class PetrophysicsTab(QWidget):
         self.sw_hist = HistogramPlot()
         self.perm_hist = HistogramPlot()
 
-        # 2x2 grid layout
+        # Method selectors for the Sw and permeability histograms
+        self.sw_method_combo = QComboBox()
+        self.sw_method_combo.setToolTip("Water saturation curve shown in the histogram")
+        self.sw_method_combo.currentIndexChanged.connect(self._update_sw_hist)
+        self.perm_method_combo = QComboBox()
+        self.perm_method_combo.setToolTip("Permeability curve shown in the histogram")
+        self.perm_method_combo.currentIndexChanged.connect(self._update_perm_hist)
+
+        # 2x2 grid of histograms, selectors above the lower pair
         dist_layout.addWidget(self.vsh_hist, 0, 0)
         dist_layout.addWidget(self.phie_hist, 0, 1)
-        dist_layout.addWidget(self.sw_hist, 1, 0)
-        dist_layout.addWidget(self.perm_hist, 1, 1)
+        dist_layout.addWidget(self.sw_method_combo, 1, 0)
+        dist_layout.addWidget(self.perm_method_combo, 1, 1)
+        dist_layout.addWidget(self.sw_hist, 2, 0)
+        dist_layout.addWidget(self.perm_hist, 2, 1)
 
         content_layout.addWidget(dist_group)
 
@@ -215,41 +227,79 @@ class PetrophysicsTab(QWidget):
         else:
             self.phie_hist.setVisible(False)
 
-        # Sw histogram
-        if "SW_INDO" in results.columns and results["SW_INDO"].dropna().shape[0] > 0:
-            self.sw_hist.setVisible(True)
-            self.sw_hist.plot_histogram(
-                results["SW_INDO"].dropna(), "Sw (Indonesian)", x_label="Sw"
-            )
-        elif (
-            "SW_ARCHIE" in results.columns
-            and results["SW_ARCHIE"].dropna().shape[0] > 0
-        ):
-            self.sw_hist.setVisible(True)
-            self.sw_hist.plot_histogram(
-                results["SW_ARCHIE"].dropna(), "Sw (Archie)", x_label="Sw"
-            )
-        else:
-            self.sw_hist.setVisible(False)
+        self._fill_sw_combo(results)
+        self._update_sw_hist()
+        self._fill_perm_combo(results)
+        self._update_perm_hist()
 
-        # Permeability histogram
+    def _primary_sw_model(self, results):
+        hint = getattr(self.model, "sw_primary_method", None)
+        return ts.primary_sw_model(results, hint=hint)
+
+    def _fill_sw_combo(self, results):
+        """List the primary Sw first, then every SW_* method present."""
+        combo = self.sw_method_combo
+        previous = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        if "SW" in results.columns:
+            combo.addItem(ts.sw_primary_label(self._primary_sw_model(results)), "SW")
+        for col in ts.sw_method_columns(results.columns):
+            combo.addItem(f"Sw \u2014 {ts.sw_method_name(col)}", col)
+        index = combo.findData(previous) if previous else -1
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _fill_perm_combo(self, results):
+        combo = self.perm_method_combo
+        previous = combo.currentData()
+        combo.blockSignals(True)
+        combo.clear()
+        for col in ts.perm_columns(results.columns):
+            combo.addItem(f"Permeability ({ts.perm_method_name(col)})", col)
+        index = combo.findData(previous) if previous else -1
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _update_sw_hist(self, *_):
+        """Sw histogram: the primary SW by default, or the selected SW_* method."""
+        results = self.model.results
+        column = self.sw_method_combo.currentData()
         if (
-            "PERM_TIMUR" in results.columns
-            and results["PERM_TIMUR"].dropna().shape[0] > 0
+            results is None
+            or column not in getattr(results, "columns", [])
+            or results[column].dropna().shape[0] == 0
         ):
-            self.perm_hist.setVisible(True)
-            self.perm_hist.plot_histogram(
-                results["PERM_TIMUR"].dropna(),
-                "Permeability (Timur)",
-                x_label="Perm (mD)",
-            )
-        elif "PERM_WR" in results.columns and results["PERM_WR"].dropna().shape[0] > 0:
-            self.perm_hist.setVisible(True)
-            self.perm_hist.plot_histogram(
-                results["PERM_WR"].dropna(), "Permeability (WR)", x_label="Perm (mD)"
-            )
-        else:
+            self.sw_hist.setVisible(False)
+            self.sw_method_combo.setVisible(False)
+            return
+        self.sw_method_combo.setVisible(True)
+        self.sw_hist.setVisible(True)
+        self.sw_hist.plot_histogram(
+            results[column].dropna(),
+            self.sw_method_combo.currentText(),
+            x_label="Sw",
+        )
+
+    def _update_perm_hist(self, *_):
+        """Permeability histogram over the selected PERM_* curve."""
+        results = self.model.results
+        column = self.perm_method_combo.currentData()
+        if (
+            results is None
+            or column not in getattr(results, "columns", [])
+            or results[column].dropna().shape[0] == 0
+        ):
             self.perm_hist.setVisible(False)
+            self.perm_method_combo.setVisible(False)
+            return
+        self.perm_method_combo.setVisible(True)
+        self.perm_hist.setVisible(True)
+        self.perm_hist.plot_histogram(
+            results[column].dropna(),
+            self.perm_method_combo.currentText(),
+            x_label="Perm (mD)",
+        )
 
     def _update_table_view(self):
         """Update the table view based on filters."""
@@ -269,9 +319,9 @@ class PetrophysicsTab(QWidget):
             "PHIE_S",
             "PHIE_DN",
             "PHIE",
-            "SW_ARCHIE",
-            "SW_INDO",
-            "SW_SIMAN",
+            "SW",
+            *ts.sw_method_columns(results.columns),
+            *ts.swt_columns(results.columns),
             "PERM_TIMUR",
             "PERM_WR",
         ]
@@ -334,6 +384,10 @@ class PetrophysicsTab(QWidget):
         self.phie_hist.clear()
         self.sw_hist.clear()
         self.perm_hist.clear()
+        for combo in (self.sw_method_combo, self.perm_method_combo):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.blockSignals(False)
 
         # Show placeholder
         self.placeholder.setVisible(True)

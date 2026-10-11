@@ -18,6 +18,9 @@ from typing import Optional, List, Tuple, Dict
 
 from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 from themes.icon_loader import get_icon
+from themes.tokens import PLOT_COLORS
+
+from . import track_specs as ts
 
 _TOOLBAR_ICONS = {
     "home": "house",
@@ -572,73 +575,113 @@ class CompositeLogPlot(PlotWidget):
         for ax in axes:
             ax.tick_params(axis="both", labelsize=6)
 
-        # Track 1: GR + Vsh
-        if "VSH" in filtered.columns:
+        # Track 1: GR (primary axis, API) + Vsh (secondary axis, v/v)
+        gr_spec = ts.TRACK_SPECS["gr_vsh"]
+        if "GR" in filtered.columns:
+            gr_cs = ts.curve_spec("gr_vsh", "GR")
             axes[0].plot(
+                filtered["GR"].values,
+                depth,
+                color=get_plot_color("GR"),
+                linewidth=0.8,
+                label=f"GR ({gr_cs.unit})",
+            )
+        axes[0].set_xlim(gr_spec.lo, gr_spec.hi)
+        axes[0].set_title(gr_spec.title, fontsize=TITLE_SIZE)
+        axes[0].set_xlabel(gr_spec.axis_label, fontsize=LABEL_SIZE)
+        if "VSH" in filtered.columns:
+            vsh_cs = ts.curve_spec("gr_vsh", "VSH")
+            vsh_ax = axes[0].twiny()
+            vsh_ax.patch.set_visible(False)
+            self._style_axes(vsh_ax)
+            vsh_ax.patch.set_visible(False)
+            vsh_ax.tick_params(axis="both", labelsize=6)
+            vsh_ax.plot(
                 filtered["VSH"].values,
                 depth,
                 color=get_plot_color("VSH"),
                 linewidth=0.8,
-                label="Vsh",
+                label=f"Vsh ({vsh_cs.unit})",
             )
-            axes[0].fill_betweenx(
+            vsh_ax.fill_betweenx(
                 depth, 0, filtered["VSH"].values, color=get_plot_color("VSH"), alpha=0.3
             )
-        axes[0].set_xlim(0, 1)
-        axes[0].set_title("GR / Vsh", fontsize=TITLE_SIZE)
-        axes[0].set_xlabel("Vsh (v/v)", fontsize=LABEL_SIZE)
+            vsh_ax.set_xlim(vsh_cs.lo, vsh_cs.hi)
+            vsh_ax.set_xlabel(
+                ts.axis_label("Vsh", vsh_cs.unit), fontsize=LABEL_SIZE
+            )
+            vsh_ax.grid(False)
+        if "GR" in filtered.columns or "VSH" in filtered.columns:
+            gr_lines, gr_labels = axes[0].get_legend_handles_labels()
+            if "VSH" in filtered.columns:
+                v_lines, v_labels = vsh_ax.get_legend_handles_labels()
+                gr_lines, gr_labels = gr_lines + v_lines, gr_labels + v_labels
+            axes[0].legend(gr_lines, gr_labels, loc="upper right", fontsize=6)
 
         # Track 2: Porosity
-        porosity_curves = ["PHIE", "PHID", "PHIN", "PHIT"]
-        colors = [get_plot_color(curve) for curve in porosity_curves]
-        for curve, color in zip(porosity_curves, colors):
-            if curve in filtered.columns:
-                axes[1].plot(
-                    filtered[curve].values,
-                    depth,
-                    color=color,
-                    linewidth=0.8,
-                    label=curve,
-                )
-        axes[1].set_xlim(0, 0.4)
-        axes[1].set_title("Porosity", fontsize=TITLE_SIZE)
-        axes[1].set_xlabel("φ (v/v)", fontsize=LABEL_SIZE)
+        por_spec = ts.TRACK_SPECS["porosity"]
+        for curve in ts.porosity_plot_curves(filtered.columns):
+            if ts.curve_spec("porosity", curve).secondary:
+                continue
+            axes[1].plot(
+                filtered[curve].values,
+                depth,
+                color=get_plot_color(curve),
+                linewidth=0.8,
+                label=curve,
+            )
+        axes[1].set_xlim(por_spec.lo, por_spec.hi)
+        axes[1].set_title(por_spec.title, fontsize=TITLE_SIZE)
+        axes[1].set_xlabel(por_spec.axis_label, fontsize=LABEL_SIZE)
         axes[1].legend(loc="upper right", fontsize=6)
 
-        # Track 3: Water Saturation. Plot every calculated method that is
-        # present; this widget has no model dependency.
-        sw_curves = ["SW", "SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
-        for curve in sw_curves:
-            if curve in filtered.columns:
-                axes[2].plot(
-                    filtered[curve].values,
-                    depth,
-                    color=get_plot_color(curve),
-                    linewidth=0.8,
-                    label=curve.replace("SW_", ""),
-                )
-        axes[2].set_xlim(0, 1)
-        axes[2].set_title("Sw", fontsize=TITLE_SIZE)
-        axes[2].set_xlabel("Sw (v/v)", fontsize=LABEL_SIZE)
+        # Track 3: Water Saturation. SW is the effective (primary) curve, drawn
+        # solid; every other SW_* method present is dashed.
+        sw_spec = ts.TRACK_SPECS["sw"]
+        if "SW" in filtered.columns:
+            axes[2].plot(
+                filtered["SW"].values,
+                depth,
+                color=get_plot_color("SW"),
+                linewidth=1.0,
+                label=ts.sw_primary_label(ts.primary_sw_model(filtered)),
+            )
+        for curve in ts.sw_method_columns(filtered.columns):
+            if "SW" in filtered.columns and np.allclose(
+                filtered[curve].values.astype(float),
+                filtered["SW"].values.astype(float),
+                equal_nan=True,
+            ):
+                continue  # the primary's source column repeats the solid line
+            color_key = curve if curve in PLOT_COLORS else "SW_DEFAULT"
+            axes[2].plot(
+                filtered[curve].values,
+                depth,
+                color=get_plot_color(color_key),
+                linewidth=0.8,
+                linestyle="--",
+                label=curve.replace("SW_", ""),
+            )
+        axes[2].set_xlim(sw_spec.lo, sw_spec.hi)
+        axes[2].set_title(sw_spec.title, fontsize=TITLE_SIZE)
+        axes[2].set_xlabel(sw_spec.axis_label, fontsize=LABEL_SIZE)
         axes[2].legend(loc="upper right", fontsize=6)
 
         # Track 4: Permeability (log scale)
-        perm_curves = ["PERM_TIMUR", "PERM_WR"]
-        perm_colors = [get_plot_color("PERM_TIMUR"), get_plot_color("PERM_WR")]
-        for curve, color in zip(perm_curves, perm_colors):
-            if curve in filtered.columns:
-                perm_data = np.clip(filtered[curve].values, 0.001, 100000)
-                axes[3].plot(
-                    perm_data,
-                    depth,
-                    color=color,
-                    linewidth=0.8,
-                    label=curve.replace("PERM_", ""),
-                )
+        perm_spec = ts.TRACK_SPECS["permeability"]
+        for curve in ts.present_curves("permeability", filtered.columns):
+            perm_data = np.clip(filtered[curve].values, 0.001, 100000)
+            axes[3].plot(
+                perm_data,
+                depth,
+                color=get_plot_color(curve),
+                linewidth=0.8,
+                label=curve.replace("PERM_", ""),
+            )
         axes[3].set_xscale("log")
-        axes[3].set_xlim(0.01, 10000)
-        axes[3].set_title("Permeability", fontsize=TITLE_SIZE)
-        axes[3].set_xlabel("K (mD)", fontsize=LABEL_SIZE)
+        axes[3].set_xlim(perm_spec.lo, perm_spec.hi)
+        axes[3].set_title(perm_spec.title, fontsize=TITLE_SIZE)
+        axes[3].set_xlabel(perm_spec.axis_label, fontsize=LABEL_SIZE)
         axes[3].legend(loc="upper right", fontsize=6)
 
         # Track 5: Pay flags (if available)

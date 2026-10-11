@@ -124,33 +124,32 @@ class TestDepthLookup:
 
 
 class TestDefaultCurveConfig:
-    """Tests for default curve configuration logic."""
-    
-    def test_curve_assignment(self):
-        """Test curve assignment to tracks."""
-        columns = ['DEPTH', 'GR', 'VSH', 'PHIE', 'NPHI', 'SW', 'PERM']
-        
-        # Simulate _default_curve_config logic
-        config = {}
-        
-        # Track 0: GR/Vsh
-        track0 = []
-        if 'GR' in columns:
-            track0.append(('GR', '#00AA00', False))
-        if 'VSH' in columns:
-            track0.append(('VSH', '#8B4513', False))
-        config[0] = track0
-        
-        # Track 1: Porosity
-        track1 = []
-        for c in ['PHIE', 'PHID', 'PHIN', 'PHIT']:
-            if c in columns:
-                track1.append((c, '#1E90FF', False))
-        config[1] = track1
-        
-        assert len(config[0]) == 2  # GR and VSH
-        assert len(config[1]) == 1  # Only PHIE present
-        assert config[0][0][0] == 'GR'
+    """The real InteractiveLogPlot default configuration (items, not pixels)."""
+
+    @pytest.fixture
+    def plot(self, qtbot):
+        pytest.importorskip("pyqtgraph")
+        from ui.widgets.interactive_log import InteractiveLogPlot
+
+        widget = InteractiveLogPlot(n_tracks=6)
+        qtbot.addWidget(widget)
+        return widget
+
+    def test_curve_assignment(self, plot):
+        columns = ["DEPTH", "GR", "VSH", "PHIE", "NPHI", "SW", "PERM_WR"]
+        config = plot._default_curve_config(columns)
+
+        assert [c[0] for c in config[0]] == ["GR", "VSH"]
+        assert [c[0] for c in config[1]] == ["PHIE"]
+        assert [c[0] for c in config[2]] == ["SW"]
+        assert [c[0] for c in config[3]] == ["PERM_WR"]
+
+    def test_plotted_items_follow_config(self, plot):
+        data = create_dummy_log_data()
+        plot.plot_curves(data)
+
+        assert set(plot.curve_items) == {"GR", "VSH", "PHIE"}
+        assert plot.plot_widgets[0].getAxis("bottom").labelText == "GR (API)"
 
 
 if __name__ == "__main__":

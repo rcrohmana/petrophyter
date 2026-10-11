@@ -406,9 +406,12 @@ def test_composite_log_plots_all_available_saturation_curves(qtbot):
 
     plot.plot_petrophysics_summary(data)
 
-    assert {line.get_label() for line in plot.figure.axes[2].lines} == {
-        "SW", "ARCHIE", "INDO", "SIMAN", "WS", "DW"
+    lines = {line.get_label(): line.get_linestyle() for line in plot.figure.axes[2].lines}
+    assert set(lines) == {
+        "Sw (primary)", "ARCHIE", "INDO", "SIMAN", "WS", "DW"
     }
+    assert lines["Sw (primary)"] == "-"
+    assert all(lines[k] == "--" for k in ("ARCHIE", "INDO", "SIMAN", "WS", "DW"))
 
 
 def test_core_validation_uses_configured_max_distance(qtbot, monkeypatch):

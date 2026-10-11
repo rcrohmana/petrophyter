@@ -24,6 +24,9 @@ from PyQt6.QtGui import QColor, QPen
 from themes.colors import get_plot_chrome, get_plot_color
 from themes.helpers import set_status
 from themes.icon_loader import get_icon
+from themes.tokens import PLOT_COLORS
+
+from . import track_specs as ts
 
 try:
     import pyqtgraph as pg
@@ -33,6 +36,58 @@ except Exception as e:
     print(f"Warning: Failed to import pyqtgraph: {e}")
     HAS_PYQTGRAPH = False
     pg = None
+
+
+if HAS_PYQTGRAPH:
+
+    class RealValueAxis(pg.AxisItem):
+        """Axis of a normalised track whose ticks read in real curve values.
+
+        The curves are plotted on a 0-1 display range for speed; ``set_real_ticks``
+        gives the axis the ``(position, label)`` pairs of the real scale (for a
+        log track 0.1, 1, 10, 100, 1000). With no ticks set it behaves like a
+        normal axis.
+        """
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._real_ticks = None
+
+        def set_real_ticks(self, ticks):
+            self._real_ticks = list(ticks) if ticks else None
+            self.picture = None
+            self.update()
+
+        def real_ticks(self):
+            return list(self._real_ticks) if self._real_ticks else []
+
+        def tickValues(self, minVal, maxVal, size):
+            if self._real_ticks is None:
+                return super().tickValues(minVal, maxVal, size)
+            lo, hi = min(minVal, maxVal), max(minVal, maxVal)
+            eps = 1e-9
+            return [(1.0, [p for p, _ in self._real_ticks if lo - eps <= p <= hi + eps])]
+
+        def tickStrings(self, values, scale, spacing):
+            if self._real_ticks is None:
+                return super().tickStrings(values, scale, spacing)
+            labels = []
+            for v in values:
+                text = ""
+                for pos, label in self._real_ticks:
+                    if abs(pos - v) < 1e-6:
+                        text = label
+                        break
+                labels.append(text)
+            return labels
+
+else:  # pragma: no cover - pyqtgraph missing
+    RealValueAxis = None
+
+
+# Interactive track index -> track spec (track 3 shows resistivity on the bottom
+# axis and permeability on the top axis).
+TRACK_SPEC_KEYS = {0: "gr_vsh", 1: "porosity", 2: "sw", 3: "resistivity"}
 
 
 # Deprecated module aliases retained for callers that imported these names.
@@ -61,7 +116,14 @@ def _selection_brush():
 
 def _current_curve_color(curve_name: str) -> str:
     """Resolve a curve color against the current theme at draw time."""
+    if curve_name not in PLOT_COLORS:
+        return get_plot_color("SW_DEFAULT")
     return get_plot_color(curve_name)
+
+
+def _curve_pen(curve_name: str, dashed: bool = False):
+    style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
+    return pg.mkPen(_current_curve_color(curve_name), width=1.5, style=style)
 
 
 class InteractiveLogPlot(QWidget):
@@ -89,6 +151,9 @@ class InteractiveLogPlot(QWidget):
         self.plot_widgets = []
         self.curves_data = {}
         self.curve_items = {}
+        self.curve_units = {}  # curve name -> unit, for the crosshair readout
+        self.curve_labels = {}  # curve name -> legend label
+        self._dashed = set()  # curves drawn dashed (non-primary Sw)
         self.crosshairs = []
         self.depth_region = None  # LinearRegionItem for selection
         self.formation_lines = []  # InfiniteLine items for tops
@@ -155,10 +220,11 @@ class InteractiveLogPlot(QWidget):
         # Value readout
         self.value_label = QLabel("")
         self.value_label.setObjectName("SubsectionLabel")
-        self.value_label.setMinimumWidth(300)
-        controls_layout.addWidget(self.value_label)
-
-        controls_layout.addStretch()
+        self.value_label.setWordWrap(True)
+        self.value_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        controls_layout.addWidget(self.value_label, stretch=1)
 
         # Reset view button
         from PyQt6.QtWidgets import QPushButton
@@ -187,6 +253,10 @@ class InteractiveLogPlot(QWidget):
                 axis.setTextPen(pg.mkPen(self._chrome["text"]))
         for plot in self.plot_widgets:
             plot.titleLabel.setText(plot.titleLabel.text, color=self._chrome["text"])
+            legend = getattr(plot, "legend", None)
+            if legend is not None:
+                legend.setBrush(pg.mkBrush(self._chrome["axes"]))
+                legend.setLabelTextColor(self._chrome["text"])
         for line in self.formation_lines:
             line.setPen(
                 pg.mkPen(
@@ -206,7 +276,7 @@ class InteractiveLogPlot(QWidget):
             self.depth_region.setBrush(_selection_brush())
         for curve_name, curve_item in self.curve_items.items():
             if curve_name in CURVE_COLORS or curve_name == "RT":
-                curve_item.setPen(pg.mkPen(_current_curve_color(curve_name), width=1.5))
+                curve_item.setPen(_curve_pen(curve_name, curve_name in self._dashed))
 
     def _create_tracks(self):
         """Create the plot tracks."""
@@ -220,7 +290,16 @@ class InteractiveLogPlot(QWidget):
 
         for i in range(self.n_tracks):
             # Add plot to layout
-            plot = self.graphics_layout.addPlot(row=0, col=i)
+            plot = self.graphics_layout.addPlot(
+                row=0,
+                col=i,
+                axisItems={
+                    "bottom": RealValueAxis("bottom"),
+                    "top": RealValueAxis("top"),
+                },
+            )
+            plot.hideAxis("top")
+            plot.addLegend(offset=(4, 4))
 
             # Configure plot
             plot.setTitle(
@@ -310,13 +389,14 @@ class InteractiveLogPlot(QWidget):
                 # Get values at this depth
                 values = self._get_values_at_depth(depth)
                 if values:
-                    val_str = " | ".join(
-                        [f"{k}: {v:.3f}" for k, v in values.items() if not np.isnan(v)]
-                    )
-                    self.value_label.setText(val_str[:80])  # Truncate if too long
+                    self.value_label.setText(self.format_readout(values))
 
                 self.cursor_moved.emit(depth, values)
                 break
+
+    def format_readout(self, values: dict) -> str:
+        """Readout of every curve with its unit; the label wraps, nothing is cut."""
+        return ts.readout_text(values, self.curve_units)
 
     def plot_curves(self, data: pd.DataFrame, curve_config: dict = None):
         """
@@ -324,7 +404,13 @@ class InteractiveLogPlot(QWidget):
 
         Args:
             data: DataFrame with DEPTH and curve columns
-            curve_config: dict mapping track_index -> [(curve_name, color, log_scale, [range]), ...]
+            curve_config: dict mapping track_index ->
+                [(curve_name, color, log_scale, [range], [opts]), ...]
+                ``opts`` (dict, optional) carries what the track specs define:
+                ``label``, ``unit``, ``lo``, ``hi``, ``scale``, ``axis``
+                ("bottom"/"top"), ``axis_label``, ``dashed``, ``sw_primary``,
+                ``sw_other``. Curves with ``lo``/``hi`` are normalised to 0-1
+                and their axis shows the real values.
         """
         if not HAS_PYQTGRAPH or "DEPTH" not in data.columns:
             return
@@ -339,46 +425,76 @@ class InteractiveLogPlot(QWidget):
         if curve_config is None:
             curve_config = self._default_curve_config(data.columns.tolist())
 
+        sw_model = ts.primary_sw_model(data)
+
         # Plot each track
         for track_idx, curves in curve_config.items():
             if track_idx >= len(self.plot_widgets):
                 continue
 
             plot = self.plot_widgets[track_idx]
+            axes_used = {}  # "bottom"/"top" -> (lo, hi, scale, label)
+            spec_normalised = False
 
             for curve_info in curves:
-                # Handle both 3-tuple and 4-tuple formats
-                if len(curve_info) == 4:
-                    curve_name, color, log_scale, value_range = curve_info
-                else:
-                    curve_name, color, log_scale = curve_info[:3]
+                curve_name, color, log_scale = curve_info[:3]
+                value_range = curve_info[3] if len(curve_info) > 3 else None
+                opts = curve_info[4] if len(curve_info) > 4 else {}
 
                 if curve_name in CURVE_COLORS or curve_name == "RT":
                     color = _current_curve_color(curve_name)
 
-                if curve_name in data.columns:
-                    curve_data = data[curve_name].values.copy()
+                if curve_name not in data.columns:
+                    continue
+                if opts.get("sw_other") and "SW" in data.columns:
+                    # The primary's own source column would only repeat the solid line.
+                    if np.allclose(
+                        data[curve_name].values.astype(float),
+                        data["SW"].values.astype(float),
+                        equal_nan=True,
+                    ):
+                        continue
 
-                    # Store original data for crosshair lookup
-                    self.curves_data[curve_name] = (depth, data[curve_name].values)
+                raw = data[curve_name].values
+                curve_data = raw.astype(float).copy()
+                dashed = bool(opts.get("dashed"))
+                label = opts.get("label") or curve_name
+                if opts.get("sw_primary"):
+                    label = ts.sw_primary_label(sw_model)
 
-                    # Create pen
-                    pen = pg.mkPen(color, width=1.5)
+                # Store original data for crosshair lookup
+                self.curves_data[curve_name] = (depth, raw)
+                self.curve_units[curve_name] = opts.get("unit", "")
+                self.curve_labels[curve_name] = label
 
-                    # Apply transformations
-                    if log_scale:
-                        # Use log scale for resistivity/perm
-                        curve_data = np.log10(np.maximum(curve_data, 0.001))
-                    elif value_range is not None:
-                        # Normalize to 0-1 range for display
-                        vmin, vmax = value_range
-                        curve_data = (curve_data - vmin) / (vmax - vmin)
+                if "lo" in opts and "hi" in opts:
+                    # Normalised display; the axis carries the real scale.
+                    scale = opts.get("scale", "linear")
+                    curve_data = ts.normalize(curve_data, opts["lo"], opts["hi"], scale)
+                    spec_normalised = True
+                    axes_used.setdefault(
+                        opts.get("axis", "bottom"),
+                        (opts["lo"], opts["hi"], scale, opts.get("axis_label", label)),
+                    )
+                elif log_scale:
+                    # Legacy log display (curves without a track spec)
+                    curve_data = np.log10(np.maximum(curve_data, 0.001))
+                elif value_range is not None:
+                    # Normalize to 0-1 range for display
+                    vmin, vmax = value_range
+                    curve_data = (curve_data - vmin) / (vmax - vmin)
 
-                    curve_item = plot.plot(curve_data, depth, pen=pen, name=curve_name)
-                    self.curve_items[curve_name] = curve_item
+                style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
+                pen = pg.mkPen(color, width=1.5, style=style)
+                if dashed:
+                    self._dashed.add(curve_name)
+                curve_item = plot.plot(curve_data, depth, pen=pen, name=label)
+                self.curve_items[curve_name] = curve_item
 
-            # Set X range for normalized tracks (0-1), skip log scale tracks
-            if track_idx in [0, 1, 2, 4]:  # All normalized tracks
+            self._apply_track_axes(plot, axes_used)
+
+            # Set X range for normalized tracks (0-1)
+            if spec_normalised or track_idx in [0, 1, 2, 4]:
                 plot.setXRange(0, 1, padding=0.02)
 
         # Auto-range Y only on first track (others are linked)
@@ -388,44 +504,92 @@ class InteractiveLogPlot(QWidget):
             for plot in self.plot_widgets[1:]:
                 plot.disableAutoRange(axis="y")
 
+    def _apply_track_axes(self, plot, axes_used: dict):
+        """Give a track's axes real-value ticks and labels (or reset them)."""
+        for side in ("bottom", "top"):
+            axis = plot.getAxis(side)
+            if not isinstance(axis, RealValueAxis):
+                continue
+            if side in axes_used:
+                lo, hi, scale, label = axes_used[side]
+                axis.set_real_ticks(ts.axis_ticks(lo, hi, scale))
+                plot.setLabel(side, label)
+                if side == "top":
+                    plot.showAxis("top", True)
+            else:
+                axis.set_real_ticks(None)
+                plot.setLabel(side, "")
+                if side == "top":
+                    plot.hideAxis("top")
+
+    @staticmethod
+    def _spec_curve(track: str, name: str, **extra):
+        """Curve-config entry for ``name`` of the track spec ``track``."""
+        spec = ts.TRACK_SPECS[track]
+        cs = ts.curve_spec(track, name)
+        opts = {
+            "label": f"{name} ({cs.unit})",
+            "unit": cs.unit,
+            "lo": cs.lo,
+            "hi": cs.hi,
+            "scale": cs.scale,
+            "axis": "top" if cs.secondary else "bottom",
+            "axis_label": (
+                ts.axis_label(name, cs.unit, cs.scale) if cs.secondary else spec.axis_label
+            ),
+        }
+        opts.update(extra)
+        return (name, _current_curve_color(name), cs.scale == "log", (cs.lo, cs.hi), opts)
+
     def _default_curve_config(self, columns: list) -> dict:
-        """Generate default curve configuration."""
+        """Generate the default curve configuration from the shared track specs."""
         config = {}
+        cols = list(columns)
 
-        # Track 0: GR (normalized to 0-1) and Vsh
-        # Note: GR is normalized to 0-1 range for display with VSH
-        track0 = []
-        if "GR" in columns:
-            track0.append(
-                ("GR", _current_curve_color("GR"), False, (0, 150))
-            )  # GR normalized 0-150 → 0-1
-        if "VSH" in columns:
-            track0.append(("VSH", _current_curve_color("VSH"), False, (0, 1)))
-        config[0] = track0
+        # Track 0: GR (bottom axis, API) and Vsh (top axis, v/v)
+        config[0] = [self._spec_curve("gr_vsh", n) for n in ts.present_curves("gr_vsh", cols)]
 
-        # Track 1: Porosity (0-0.5 range)
-        track1 = []
-        for c in ["PHIE", "PHID", "PHIN", "PHIT"]:
-            if c in columns:
-                track1.append((c, _current_curve_color(c), False, (0, 0.5)))
-        config[1] = track1
+        # Track 1: Porosity, reversed 0.5-0 v/v
+        config[1] = [
+            self._spec_curve("porosity", n) for n in ts.porosity_plot_curves(cols)
+        ]
 
-        # Track 2: Water Saturation (0-1 range)
+        # Track 2: Sw. SW is the effective (primary) curve; other SW_* are dashed.
         track2 = []
-        for c in ["SW", "SW_ARCHIE", "SW_INDO"]:
-            if c in columns:
-                track2.append((c, _current_curve_color(c), False, (0, 1)))
-                break
+        if "SW" in cols:
+            track2.append(self._spec_curve("sw", "SW", sw_primary=True))
+        for c in ts.sw_method_columns(cols):
+            track2.append(
+                (
+                    c,
+                    _current_curve_color(c),
+                    False,
+                    (0.0, 1.0),
+                    {
+                        "label": f"Sw — {ts.sw_method_name(c)}",
+                        "unit": "v/v",
+                        "lo": 0.0,
+                        "hi": 1.0,
+                        "scale": "linear",
+                        "axis": "bottom",
+                        "axis_label": ts.TRACK_SPECS["sw"].axis_label,
+                        "dashed": True,
+                        "sw_other": True,
+                    },
+                )
+            )
         config[2] = track2
 
-        # Track 3: Resistivity/permeability (log scale, no normalization)
-        track3 = []
-        if "RT" in columns:
-            track3.append(("RT", _current_curve_color("RT"), True, None))
-        for c in ["PERM", "PERM_TIMUR", "PERM_COATES"]:
-            if c in columns:
-                track3.append((c, _current_curve_color(c), True, None))
-                break
+        # Track 3: Resistivity (bottom axis, log) and permeability (top axis, log)
+        track3 = [
+            self._spec_curve("resistivity", n)
+            for n in ts.present_curves("resistivity", cols)
+        ]
+        perm_label = ts.TRACK_SPECS["permeability"].axis_label
+        for c in ts.present_curves("permeability", cols):
+            track3.append(
+                self._spec_curve("permeability", c, axis="top", axis_label=perm_label)
+            )
         config[3] = track3
 
         # Track 4: Pay Flags (0-1 range) - use correct column names
@@ -488,8 +652,17 @@ class InteractiveLogPlot(QWidget):
             if i == 0 and self.depth_region is not None:
                 plot.addItem(self.depth_region, ignoreBounds=True)
 
+        for plot in self.plot_widgets:
+            for side in ("bottom", "top"):
+                axis = plot.getAxis(side)
+                if isinstance(axis, RealValueAxis):
+                    axis.set_real_ticks(None)
+            plot.hideAxis("top")
         self.curves_data.clear()
         self.curve_items.clear()
+        self.curve_units.clear()
+        self.curve_labels.clear()
+        self._dashed.clear()
         self._depth_array = None
         self.clear_formation_tops()
 

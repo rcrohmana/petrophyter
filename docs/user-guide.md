@@ -288,7 +288,7 @@ Data quality for the loaded well: well name, depth range, total points, and qual
 
 ### Petrophysics
 
-Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated Results Preview** table that you can restrict with **Top MD** and **Bottom MD** and **Update View**, and histograms of the main properties: Vshale, PHIE, Sw, and permeability.
+Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated Results Preview** table that you can restrict with **Top MD** and **Bottom MD** and **Update View**, and histograms of the main properties: Vshale, PHIE, Sw, and permeability. The Sw histogram shows the primary Sw (titled, for example, **Sw — Simandoux (primary)**); the selector above it lists every other Sw method present in the run. The permeability histogram has a selector over the permeability curves present (Timur, Wyllie-Rose). The results table shows Sw, every Sw method present, PHIT, and permeability; a curve the run did not produce is not shown.
 
 ### Log Display
 
@@ -307,7 +307,9 @@ The two engines differ as follows:
 | **Interactive (pyqtgraph)** | GPU-accelerated and the default when pyqtgraph is installed. Zoom and pan with the mouse wheel and drag, read depth and values at the crosshair cursor, and drag the depth region to select an interval. |
 | **Classic (matplotlib)** | Static, export-quality plots with a navigation toolbar for pan, zoom, and save. |
 
-In the Interactive engine, **Reset View** returns every track to its automatic range after you have zoomed or panned.
+Both engines draw the same tracks on the same ranges: GR (0–150 API) with Vsh (0–1) on a second axis, porosity from 0.5 to 0 v/v, Sw from 0 to 1 with the primary Sw solid (**Sw — <model> (primary)**) and the other Sw methods dashed, resistivity on a log axis (0.2–2000 ohm·m), and permeability on a log axis (0.01–10 000 mD). A Wyllie-Rose-only run shows the Wyllie-Rose permeability.
+
+In the Interactive engine every track has axes with real values and units (for example **GR (API)** and **RT (ohm·m, log)**) and a legend. The readout under the log lists every curve at the cursor depth with its unit and wraps instead of cutting off. **Reset View** returns every track to its automatic range after you have zoomed or panned.
 
 Below the log, the **Crossplots** section is collapsed by default; click it to expand a neutron-density crossplot and a porosity-permeability crossplot. Use its depth filter and **Update Crossplots**, or leave **Sync with Log Depth** checked to follow the log's depth range: zooming or panning either engine, or dragging the depth region in the Interactive engine, moves the crossplots to the same interval.
 

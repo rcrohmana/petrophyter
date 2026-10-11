@@ -106,8 +106,10 @@ def test_classic_zoom_updates_the_crossplots(tab):
 def test_classic_zoom_does_not_redraw_or_drift(tab):
     lo, hi = _depths(tab)
     figure = tab.classic_log.figure
-    tab.classic_log.figure.axes[0].set_ylim(hi, lo + (hi - lo) * 0.5)
-    assert tab.classic_log.figure is figure and len(figure.axes) == 6   # no re-plot from a zoom
+    axes = list(figure.axes)
+    axes[0].set_ylim(hi, lo + (hi - lo) * 0.5)
+    # no re-plot from a zoom: a redraw clears the figure and builds new axes
+    assert tab.classic_log.figure is figure and list(figure.axes) == axes
 
 
 def test_crossplot_title_shows_the_synced_range(tab):
