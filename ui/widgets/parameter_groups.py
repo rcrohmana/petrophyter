@@ -171,6 +171,9 @@ class VShaleParamsGroup(QWidget):
 
     params_changed = pyqtSignal()
 
+    METHODS = ("Linear", "Larionov Tertiary", "Larionov Older")
+    PRIMARY_DEFAULT = "First selected"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._setup_ui()
@@ -225,11 +228,24 @@ class VShaleParamsGroup(QWidget):
         self.method_list.item(0).setSelected(True)
         layout.addWidget(self.method_list)
 
+        self.primary_combo = QComboBox()
+        self.primary_combo.addItem(self.PRIMARY_DEFAULT, None)
+        for method in self.METHODS:
+            self.primary_combo.addItem(method, method)
+        self.primary_combo.setToolTip(
+            "The Vsh curve that masks shale and feeds the shale point, Rw/Rsh "
+            "estimates and porosity. The other selected methods stay as comparison curves."
+        )
+        primary_form = QFormLayout()
+        primary_form.addRow("Primary Vsh:", self.primary_combo)
+        layout.addLayout(primary_form)
+
         # Connect signals
         self.baseline_combo.currentTextChanged.connect(self._on_baseline_changed)
         self.gr_min_spin.valueChanged.connect(self._emit_changed)
         self.gr_max_spin.valueChanged.connect(self._emit_changed)
         self.method_list.itemSelectionChanged.connect(self._emit_changed)
+        self.primary_combo.currentIndexChanged.connect(self._emit_changed)
 
     def _on_baseline_changed(self, text: str):
         is_manual = text == "Custom (Manual)"
@@ -246,12 +262,15 @@ class VShaleParamsGroup(QWidget):
             "gr_min": self.gr_min_spin.value(),
             "gr_max": self.gr_max_spin.value(),
             "methods": [item.text() for item in self.method_list.selectedItems()],
+            "primary_method": self.primary_combo.currentData(),
         }
 
     def set_params(
-        self, baseline_method: str, gr_min: float, gr_max: float, methods: List[str]
+        self, baseline_method: str, gr_min: float, gr_max: float, methods: List[str],
+        primary_method: Optional[str] = None,
     ):
         """Restore all VShale controls from persisted parameters."""
+        self.set_primary_method(primary_method)
         self.baseline_combo.setCurrentText(baseline_method)
         self.gr_min_spin.setValue(gr_min)
         self.gr_max_spin.setValue(gr_max)
@@ -260,6 +279,13 @@ class VShaleParamsGroup(QWidget):
             item = self.method_list.item(index)
             item.setSelected(item.text() in methods)
         self.method_list.blockSignals(False)
+
+    def set_primary_method(self, method: Optional[str]):
+        """Show the stored primary method (None or an unknown name: first selected)."""
+        index = self.primary_combo.findData(method)
+        self.primary_combo.blockSignals(True)
+        self.primary_combo.setCurrentIndex(max(index, 0))
+        self.primary_combo.blockSignals(False)
 
 
 class MatrixParamsGroup(QWidget):
@@ -807,6 +833,12 @@ class ResistivityParamsGroup(QWidget):
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
 
+        # Samples behind the estimate (water leg, shale); hidden until a result
+        self.counts_label = QLabel("")
+        self.counts_label.setWordWrap(True)
+        self.counts_label.setVisible(False)
+        layout.addWidget(self.counts_label)
+
         # Estimate warnings (why a value fell back); hidden when there are none
         self.message_label = QLabel("")
         self.message_label.setWordWrap(True)
@@ -837,6 +869,20 @@ class ResistivityParamsGroup(QWidget):
         self.message_label.setVisible(bool(text))
         set_status(self.message_label, status if text else None)
 
+    def show_counts(self, water_samples=None, shale_samples=None, quality=None):
+        """Show how many samples the estimate rests on (None counts are left out)."""
+        parts = []
+        if water_samples is not None:
+            parts.append(f"{int(water_samples)} water-leg samples for Rw")
+        if shale_samples is not None:
+            parts.append(f"{int(shale_samples)} shale samples for Rsh")
+        text = "; ".join(parts)
+        if text and quality:
+            text += f" (Rw quality: {quality})"
+        self.counts_label.setText(text)
+        self.counts_label.setVisible(bool(text))
+        set_status(self.counts_label, "muted" if text else None)
+
     def show_calculated_result(self, rw: float, rsh: float):
         """Show calculated values."""
         self.result_label.setText(f"Calculated: Rw={rw:.4f}, Rsh={rsh:.2f}")
@@ -855,6 +901,7 @@ class ResistivityParamsGroup(QWidget):
             self.rsh_auto_cb.setChecked(False)
             self.result_label.setText("")
             self.show_message("")
+            self.show_counts()
             self.apply_btn.setVisible(False)
 
     def calculated(self):
@@ -867,6 +914,7 @@ class ResistivityParamsGroup(QWidget):
         """Clear the calculated result after it was applied elsewhere."""
         self.result_label.setText("")
         self.show_message("")
+        self.show_counts()
         self.apply_btn.setVisible(False)
 
     def get_params(self) -> Dict:
@@ -952,6 +1000,12 @@ class PermParamsGroup(QWidget):
         self.result_label.setWordWrap(True)
         layout.addWidget(self.result_label)
 
+        # Notes that go with a result (failed calibration, Swirr mismatch, clipped plugs)
+        self.message_label = QLabel("")
+        self.message_label.setWordWrap(True)
+        self.message_label.setVisible(False)
+        layout.addWidget(self.message_label)
+
         self.apply_btn = QPushButton("Apply Calculated Values")
         self.apply_btn.setIcon(get_icon("check"))
         self.apply_btn.clicked.connect(self._do_apply)
@@ -980,17 +1034,33 @@ class PermParamsGroup(QWidget):
         self.p_spin.setValue(P)
         self.q_spin.setValue(Q)
 
-    def show_calculated_result(self, C: float, P: float, Q: float):
-        """Show calculated values."""
-        self.result_label.setText(f"Calculated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}")
+    def show_calculated_result(self, C: float, P: float, Q: float, source: str = ""):
+        """Show calculated values (and clear the notes of an earlier run)."""
+        text = f"Calculated: C={C:.0f}, P={P:.2f}, Q={Q:.2f}"
+        self.result_label.setText(f"{text} ({source})" if source else text)
+        self._set_note("")
         self.apply_btn.setVisible(True)
         self._calculated_C = C
         self._calculated_P = P
         self._calculated_Q = Q
 
-    def show_message(self, text: str):
-        """Show why there is no result, dropping any earlier unapplied one."""
+    def _set_note(self, text: str, kind: str = "warning"):
+        self.message_label.setText(text)
+        self.message_label.setVisible(bool(text))
+        set_status(self.message_label, kind if text else None)
+
+    def show_message(self, text: str, kind: str = "warning", keep_result: bool = False):
+        """Show a message on the page.
+
+        By default it says why there is no result and drops any earlier unapplied
+        one. With ``keep_result`` it goes in the note under the result and the
+        pending result and its Apply button stay (``kind`` is the status style).
+        """
+        if keep_result:
+            self._set_note(text, kind)
+            return
         self.result_label.setText(text)
+        self._set_note("")
         self.apply_btn.setVisible(False)
         for name in ("_calculated_C", "_calculated_P", "_calculated_Q"):
             self.__dict__.pop(name, None)
@@ -1002,6 +1072,7 @@ class PermParamsGroup(QWidget):
             self.p_spin.setValue(self._calculated_P)
             self.q_spin.setValue(self._calculated_Q)
             self.result_label.setText("Values applied")
+            self._set_note("")
             self.apply_btn.setVisible(False)
 
     def _do_apply(self):
@@ -1010,6 +1081,7 @@ class PermParamsGroup(QWidget):
                 and self.scoped_apply(self._calculated_C, self._calculated_P,
                                       self._calculated_Q)):
             self.result_label.setText("Values applied")
+            self._set_note("")
             self.apply_btn.setVisible(False)
             return
         self.apply_calculated()
@@ -1253,6 +1325,26 @@ class GasCorrectionGroup(QWidget):
         self.rhob_spin.setToolTip("Density correction factor (0.1-0.2 typical)")
         params_layout.addRow("RHOB Factor:", self.rhob_spin)
 
+        # Gas flag thresholds (PHID - PHIN crossover and the Vsh ceiling)
+        self.crossover_spin = QDoubleSpinBox()
+        self.crossover_spin.setRange(0.0, 0.30)
+        self.crossover_spin.setValue(0.02)
+        self.crossover_spin.setSingleStep(0.01)
+        self.crossover_spin.setDecimals(3)
+        self.crossover_spin.setToolTip(
+            "A sample is gas when PHID - PHIN is at least this (v/v) and Vsh is "
+            "at or below the Vsh limit"
+        )
+        params_layout.addRow("Crossover min:", self.crossover_spin)
+
+        self.gas_vsh_spin = QDoubleSpinBox()
+        self.gas_vsh_spin.setRange(0.0, 1.0)
+        self.gas_vsh_spin.setValue(0.40)
+        self.gas_vsh_spin.setSingleStep(0.05)
+        self.gas_vsh_spin.setDecimals(2)
+        self.gas_vsh_spin.setToolTip("No gas flag above this Vsh")
+        params_layout.addRow("Gas Vsh max:", self.gas_vsh_spin)
+
         self.params_frame.setVisible(False)
         layout.addWidget(self.params_frame)
 
@@ -1260,6 +1352,8 @@ class GasCorrectionGroup(QWidget):
         self.enable_check.toggled.connect(self._on_enabled_changed)
         self.nphi_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.rhob_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.crossover_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.gas_vsh_spin.valueChanged.connect(lambda: self.params_changed.emit())
 
     def _on_enabled_changed(self, checked: bool):
         self.params_frame.setVisible(checked)
@@ -1270,15 +1364,20 @@ class GasCorrectionGroup(QWidget):
             "enabled": self.enable_check.isChecked(),
             "nphi_factor": self.nphi_spin.value(),
             "rhob_factor": self.rhob_spin.value(),
+            "gas_crossover_min": self.crossover_spin.value(),
+            "gas_vsh_max": self.gas_vsh_spin.value(),
         }
 
     def set_params(
-        self, enabled: bool, nphi_factor: float = 0.30, rhob_factor: float = 0.15
+        self, enabled: bool, nphi_factor: float = 0.30, rhob_factor: float = 0.15,
+        crossover_min: float = 0.02, vsh_max: float = 0.40,
     ):
         """Set parameter values."""
         self.enable_check.setChecked(enabled)
         self.nphi_spin.setValue(nphi_factor)
         self.rhob_spin.setValue(rhob_factor)
+        self.crossover_spin.setValue(crossover_min)
+        self.gas_vsh_spin.setValue(vsh_max)
 
 
 class SwModelsGroup(QWidget):
@@ -1469,6 +1568,7 @@ class PorosityMethodGroup(QWidget):
         ("PHIE_S", "Sonic"),
         ("PHIE_GAS", "Gas Corrected"),
     ]
+    DN_COMBINATIONS = ("Average", "RMS")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1490,6 +1590,19 @@ class PorosityMethodGroup(QWidget):
 
         layout.addLayout(combo_layout)
 
+        # PHIT / PHIE_DN density-neutron combination
+        dn_layout = QHBoxLayout()
+        dn_layout.addWidget(QLabel("D-N combination:"))
+        self.dn_combo = QComboBox()
+        for name in self.DN_COMBINATIONS:
+            self.dn_combo.addItem(name, name)
+        self.dn_combo.setToolTip(
+            "How density and neutron porosity combine in PHIT and PHIE_DN: "
+            "arithmetic average, or root mean square (RMS). Gas samples always use RMS."
+        )
+        dn_layout.addWidget(self.dn_combo, stretch=1)
+        layout.addLayout(dn_layout)
+
         # Info label
         self.info_label = QLabel("Used for Sw, Perm, HCPV calculations")
         self.info_label.setObjectName("PlaceholderLabel")
@@ -1504,13 +1617,17 @@ class PorosityMethodGroup(QWidget):
 
         # Connect signals
         self.combo.currentIndexChanged.connect(self._on_method_changed)
+        self.dn_combo.currentIndexChanged.connect(self._on_method_changed)
 
     def _on_method_changed(self):
         self.params_changed.emit()
 
     def get_params(self) -> Dict:
         """Get current parameters."""
-        return {"primary_phie_method": self.combo.currentData()}
+        return {
+            "primary_phie_method": self.combo.currentData(),
+            "dn_combination": self.dn_combo.currentData(),
+        }
 
     def set_params(self, params: Dict):
         """Set parameters from dictionary."""
@@ -1520,6 +1637,10 @@ class PorosityMethodGroup(QWidget):
             self.combo.blockSignals(True)
             self.combo.setCurrentIndex(index)
             self.combo.blockSignals(False)
+        dn = self.dn_combo.findData(params.get("dn_combination", "Average"))
+        self.dn_combo.blockSignals(True)
+        self.dn_combo.setCurrentIndex(max(dn, 0))
+        self.dn_combo.blockSignals(False)
 
     def show_fallback_info(self, selected: str, actual: str):
         """Show info when fallback method is used."""
@@ -1651,10 +1772,14 @@ class TemperatureGroup(QWidget):
             self.enable_check.isChecked() and self._rsh_manual and self.rsh_ref_value() is None
         )
 
-    def set_readout(self, lines):
-        """Show the live temperature readout (plain text, one line per entry)."""
+    def set_readout(self, lines, warning: bool = False):
+        """Show the live temperature readout (plain text, one line per entry).
+
+        ``warning`` styles it as a warning (a TD/BHT the gradient could not use).
+        """
         self.readout.setText("\n".join(lines))
         self.readout.setVisible(bool(lines))
+        set_status(self.readout, "warning" if warning and lines else "muted")
 
     def _on_auto_toggled(self, checked: bool):
         self.gradient_spin.setEnabled(not checked)

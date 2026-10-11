@@ -21,7 +21,8 @@ from PyQt6.QtWidgets import (
 
 from modules.param_scopes import (
     ARCHIE_KEYS, AUTO, AUTO_PARAMS, GR_MANUAL, INHERIT, LITHOLOGY_CUSTOM, LITHOLOGY_PRESETS,
-    MANUAL, SPECS, flat_value, temperature_readout, validate_entry,
+    MANUAL, SPECS, flat_value, gradient_from_header, gradient_header_notes,
+    header_with_tvd_td, temperature_readout, validate_entry,
 )
 from .widgets.parameter_groups import (
     AnalysisModeGroup, ArchieParamsGroup, CurveMappingGroup, CutoffParamsGroup,
@@ -288,15 +289,49 @@ class ParametersWindow(QDialog):
         """Update formation list in analysis mode widget."""
         self.analysis_mode_widget.set_formations(formations)
 
-    def show_calculated_rw_rsh(self, rw: float, rsh: float, warnings=()):
-        """Show calculated Rw/Rsh values, with the estimate's warnings in warning style."""
+    def show_calculated_rw_rsh(self, rw: float, rsh: float, warnings=(),
+                               water_samples=None, shale_samples=None, quality=None):
+        """Show calculated Rw/Rsh values, the samples behind them and the estimate's
+        warnings (clamps and fallbacks) in warning style."""
         self.res_params_widget.show_calculated_result(rw, rsh)
+        self.res_params_widget.show_counts(water_samples, shale_samples, quality)
         if warnings:
             self.res_params_widget.show_message("\n".join(str(w) for w in warnings))
 
     def show_calculated_shale(self, result: dict):
         """Show calculated shale parameters."""
         self.shale_params_widget.show_calculated_result(result)
+
+    # Model key -> (page, widget) for focus_field. A second widget is the fallback
+    # when the first one cannot take focus (disabled or hidden).
+    def _focus_targets(self):
+        res, gas = self.res_params_widget, self.gas_correction_widget
+        return {
+            "rw_value": ("sat", res.rw_spin, res.rw_auto_cb),
+            "rw": ("sat", res.rw_spin, res.rw_auto_cb),
+            "rsh_value": ("sat", res.rsh_spin, res.rsh_auto_cb),
+            "rsh": ("sat", res.rsh_spin, res.rsh_auto_cb),
+            "dn_combination": ("porosity", self.porosity_method_widget.dn_combo, None),
+            "gas_crossover_min": ("gas", gas.crossover_spin, gas.enable_check),
+            "gas_vsh_max": ("gas", gas.gas_vsh_spin, gas.enable_check),
+            "vsh_primary_method": ("vshale", self.vsh_params_widget.primary_combo, None),
+        }
+
+    def focus_field(self, field: str):
+        """Open the page of a model key and focus its widget (unknown keys are ignored).
+
+        Call after ``open_page``. A control that cannot take focus (Auto mode, gas
+        correction off) hands it to the control that enables it.
+        """
+        target = self._focus_targets().get(field)
+        if target is None:
+            return
+        page, widget, fallback = target
+        if self.current_page() != page:
+            self.open_page(page, show=False)
+        if not (widget.isEnabled() and widget.isVisibleTo(self)) and fallback is not None:
+            widget = fallback
+        widget.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _apply_perm_values(self):
         """Apply calculated permeability coefficients."""
@@ -314,6 +349,7 @@ class ParametersWindow(QDialog):
         a, m, n = (self.archie_params_widget.a_spin, self.archie_params_widget.m_spin,
                    self.archie_params_widget.n_spin)
         res, vsh, sw = self.res_params_widget, self.vsh_params_widget, self.sw_models_widget
+        por, gas = self.porosity_method_widget, self.gas_correction_widget
         perm, cut, tmp = self.perm_params_widget, self.cutoff_params_widget, self.temperature_widget
         mat, flu, sha = self.matrix_params_widget, self.fluid_params_widget, self.shale_params_widget
         field = {}
@@ -332,6 +368,8 @@ class ParametersWindow(QDialog):
         field["gas_correction_enabled"] = (self.gas_correction_widget.enable_check,
                                            [self.gas_correction_widget.enable_check],
                                            self.gas_correction_widget.enable_check.isChecked)
+        field["dn_combination"] = (por.dn_combo, [por.dn_combo], por.dn_combo.currentData)
+        spin("gas_crossover_min", gas.crossover_spin), spin("gas_vsh_max", gas.gas_vsh_spin)
         field["gr_baseline"] = (vsh.baseline_combo,
                                 [vsh.baseline_combo, vsh.gr_min_spin, vsh.gr_max_spin],
                                 lambda: [vsh.gr_min_spin.value(), vsh.gr_max_spin.value()])
@@ -360,6 +398,7 @@ class ParametersWindow(QDialog):
         sha, gas = self.shale_params_widget, self.gas_correction_widget
         return [
             self.porosity_method_widget.combo, self.vsh_params_widget.method_list,
+            self.vsh_params_widget.primary_combo,
             sha.approach_combo, sha.selection_mode_combo, sha.vsh_threshold_spin,
             sha.vsh_quantile_spin, sha.sweep_tmin_spin, sha.sweep_tmax_spin,
             sha.sweep_step_spin, sha.min_points_spin, sha.gate_logs_check,
@@ -385,8 +424,10 @@ class ParametersWindow(QDialog):
         for name in ("rho_matrix", "dt_matrix", "rho_fluid", "dt_fluid", "rho_shale",
                      "dt_shale", "nphi_shale", "ws_qv", "ws_b", "dw_swb", "dw_rwb",
                      "perm_C", "perm_P", "perm_Q", "surface_temp", "rw_ref_temp",
-                     "temp_datum_depth", "rsh_ref_temp"):
+                     "temp_datum_depth", "rsh_ref_temp", "gas_crossover_min", "gas_vsh_max"):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
+        self._on_edit(self.porosity_method_widget.dn_combo.currentIndexChanged,
+                      "dn_combination")
         self._on_edit(swir.k_buckles_spin.valueChanged, "k_buckles", swir)
         for name in ("vsh_cutoff", "phi_cutoff", "sw_cutoff"):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
@@ -670,6 +711,11 @@ class ParametersWindow(QDialog):
         vsh.baseline_combo.setCurrentText(num("vsh_baseline_method", vsh.baseline_combo.currentText()))
         vsh.gr_min_spin.setValue(num("gr_min_manual", vsh.gr_min_spin.value()))
         vsh.gr_max_spin.setValue(num("gr_max_manual", vsh.gr_max_spin.value()))
+        vsh.set_primary_method(flat.get("vsh_primary_method"))
+        por, gas = self.porosity_method_widget, self.gas_correction_widget
+        por.dn_combo.setCurrentIndex(max(por.dn_combo.findData(flat.get("dn_combination")), 0))
+        gas.crossover_spin.setValue(num("gas_crossover_min", gas.crossover_spin.value()))
+        gas.gas_vsh_spin.setValue(num("gas_vsh_max", gas.gas_vsh_spin.value()))
         res.set_params(num("rw", res.rw_spin.value()), num("rsh", res.rsh_spin.value()),
                        flat.get("rw_mode", "manual"), flat.get("rsh_mode", "manual"))
         sw = self.sw_models_widget
@@ -705,9 +751,21 @@ class ParametersWindow(QDialog):
             return
         header = ds.well_info
         flat, _info = self.model.effective_params()
-        tmp.set_readout(temperature_readout(
-            ds.las_data, ds.curve_mapping.get("TVD"), header.get("depth_reference"), header, flat
-        ))
+        tvd_curve, reference = ds.curve_mapping.get("TVD"), header.get("depth_reference")
+        lines = temperature_readout(ds.las_data, tvd_curve, reference, header, flat)
+        warn = False
+        if isinstance(header.get("bht"), (int, float)) and isinstance(header.get("td"), (int, float)):
+            used = header_with_tvd_td(header, ds.las_data, tvd_curve, reference)
+            gradient = gradient_from_header(
+                used, float(flat.get("surface_temp") or 0.0),
+                float(flat.get("temp_datum_depth") or 0.0))
+            if gradient is None:
+                lines.append("header BHT and TD not used for the gradient: BHT must exceed "
+                             "the surface temperature and TD lie below the temperature datum")
+                warn = True
+            else:
+                warn = bool(gradient_header_notes(used, gradient))
+        tmp.set_readout(lines, warning=warn)
 
     @staticmethod
     def _source_tip(source: str, here: bool, mode: str) -> str:
@@ -799,10 +857,13 @@ class ParametersWindow(QDialog):
             self.model.gr_min_manual = vsh["gr_min"]
             self.model.gr_max_manual = vsh["gr_max"]
         self.model.vsh_methods = vsh["methods"]
+        self.model.vsh_primary_method = vsh["primary_method"]
 
         # Porosity method
         porosity = self.porosity_method_widget.get_params()
         self.model.primary_phie_method = porosity["primary_phie_method"]
+        if flat:
+            self.model.dn_combination = porosity["dn_combination"]
 
         # Matrix params
         matrix = self.matrix_params_widget.get_params()
@@ -900,6 +961,8 @@ class ParametersWindow(QDialog):
         gas = self.gas_correction_widget.get_params()
         if flat:
             self.model.gas_correction_enabled = gas["enabled"]
+            self.model.gas_crossover_min = gas["gas_crossover_min"]
+            self.model.gas_vsh_max = gas["gas_vsh_max"]
         self.model.gas_nphi_factor = gas["nphi_factor"]
         self.model.gas_rhob_factor = gas["rhob_factor"]
 

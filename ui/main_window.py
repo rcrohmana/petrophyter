@@ -1836,7 +1836,10 @@ class MainWindow(QMainWindow):
 
         if result:
             self.params_window.show_calculated_rw_rsh(
-                result["rw"], result["rsh"], result.get("warnings") or []
+                result["rw"], result["rsh"], result.get("warnings") or [],
+                water_samples=result.get("rw_water_samples"),
+                shale_samples=result.get("rsh_shale_samples"),
+                quality=result.get("rw_quality"),
             )
         else:
             QMessageBox.warning(self, "Warning", "Could not calculate Rw/Rsh from data")
@@ -1921,7 +1924,10 @@ class MainWindow(QMainWindow):
                 )
                 fit = calibrate_from_core(matched_por, matched_perm, k_buckles, q=perm_q)
                 if fit is not None:
-                    widget.show_calculated_result(fit["C"], fit["P"], fit["Q"])
+                    where = f" in {zone}" if zone else ""
+                    widget.show_calculated_result(
+                        fit["C"], fit["P"], fit["Q"],
+                        source=f"core calibration{where}, {fit['pairs']} pairs")
                     notes = [apply_warning(fit, swirr_method, k_buckles)]
                     if fit.get("clipped_swirr"):
                         notes.append(
@@ -1930,10 +1936,7 @@ class MainWindow(QMainWindow):
                             "porosity exponent.")
                     notes = " ".join(n for n in notes if n)
                     if notes:
-                        # show_message would drop the pending result and its Apply button
-                        widget.result_label.setText(
-                            "\n".join((widget.result_label.text(), notes)))
-                    where = f" in {zone}" if zone else ""
+                        widget.show_message(notes, "warning", keep_result=True)
                     self.statusBar.showMessage(
                         f"Core-calibrated{where} ({fit['pairs']} pairs): "
                         f"C={fit['C']:.0f}, P={fit['P']:.2f}, Q={fit['Q']:.2f}"
@@ -1964,8 +1967,11 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Warning", "Insufficient data for regression")
             return
         C, P, Q = estimate["C"], estimate["P"], estimate["Q"]
-        widget.show_calculated_result(C, P, Q)
         where = f" in {zone}" if zone else ""
+        widget.show_calculated_result(
+            C, P, Q, source=f"estimated from porosity{where}, mean {estimate['phi_mean']:.3f}")
+        if core_failure:
+            widget.show_message(core_failure + ".", "warning", keep_result=True)
         head = f"{core_failure}{where}" if core_failure else f"Estimated from porosity{where}"
         self.statusBar.showMessage(
             f"{head} "
@@ -2325,12 +2331,14 @@ class MainWindow(QMainWindow):
                     self.model.gr_min_manual,
                     self.model.gr_max_manual,
                     self.model.vsh_methods,
+                    getattr(self.model, "vsh_primary_method", None),
                 ),
             ),
             (
                 "porosity method",
                 lambda: self.params_window.porosity_method_widget.set_params(
-                    {"primary_phie_method": self.model.primary_phie_method}
+                    {"primary_phie_method": self.model.primary_phie_method,
+                     "dn_combination": self.model.dn_combination}
                 ),
             ),
             (
@@ -2439,6 +2447,8 @@ class MainWindow(QMainWindow):
                     self.model.gas_correction_enabled,
                     self.model.gas_nphi_factor,
                     self.model.gas_rhob_factor,
+                    self.model.gas_crossover_min,
+                    self.model.gas_vsh_max,
                 ),
             ),
         ]

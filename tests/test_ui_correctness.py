@@ -57,6 +57,9 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
     model.core_depth_unit, model.core_max_dist = "FT", 4.5
     model.gas_correction_enabled = True
     model.gas_nphi_factor, model.gas_rhob_factor = 0.4, 0.2
+    model.gas_crossover_min, model.gas_vsh_max = 0.045, 0.35
+    model.dn_combination = "RMS"
+    model.vsh_primary_method = "Larionov Older"
 
     window._update_ui_from_model()
     pw = window.params_window
@@ -68,6 +71,7 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
         "gr_min": 31.0,
         "gr_max": 141.0,
         "methods": ["Larionov Older"],
+        "primary_method": "Larionov Older",
     }
     assert pw.matrix_params_widget.get_params() == {"rho_matrix": 2.71, "dt_matrix": 49.0}
     assert pw.fluid_params_widget.get_params() == {"rho_fluid": 1.08, "dt_fluid": 175.0}
@@ -97,14 +101,18 @@ def test_session_ui_restores_all_supported_parameter_groups(window):
         "sw_primary_method": "Dual-Water",
         "ws_qv": 0.44, "ws_b": 1.7, "dw_swb": 0.18, "dw_rwb": 0.33,
     }
-    assert pw.porosity_method_widget.get_params()["primary_phie_method"] == "PHIE_S"
+    assert pw.porosity_method_widget.get_params() == {
+        "primary_phie_method": "PHIE_S", "dn_combination": "RMS"
+    }
     assert window.merge_dialog.step_spin.value() == 1.0
     assert window.merge_dialog.gap_spin.value() == 8.0
     assert pw.core_unit_combo.currentText() == "FT"
     assert pw.core_dist_spin.value() == 4.5
     assert pw.gas_correction_widget.get_params() == {
-        "enabled": True, "nphi_factor": 0.4, "rhob_factor": 0.2
+        "enabled": True, "nphi_factor": 0.4, "rhob_factor": 0.2,
+        "gas_crossover_min": 0.045, "gas_vsh_max": 0.35,
     }
+    assert (model.dn_combination, model.vsh_primary_method) == ("RMS", "Larionov Older")
 
 
 def test_session_ui_restore_continues_after_one_widget_failure(window, monkeypatch, caplog):
