@@ -2,7 +2,45 @@
 
 # Version History
 
-## v1.7.0 (Build 20261010) — Current Release
+## v1.7.1 (Build 20261011) — Current Release
+
+See the [release notes](releases/v1.7.1.md) for details.
+
+### Trust and safety
+
+- **Run issues.** Runs with warnings show a warning banner with **Review**, which opens **Diagnostics → Run issues** (severity, zone, and **Go to** for each issue). The Data Browser shows the warning count of a well's last run, and the Summary Wells table has an **Issues** column. Calculate Rw/Rsh shows the estimate's warnings.
+- **Used in last run.** The Summary cutoffs and the Diagnostics shale parameters show the values the last run used, with "Current settings differ — Run to update" when they changed, and "varies by zone" when zones differ.
+- **Export freshness and provenance.** The Export tab shows whether results are current, and exporting out-of-date or failed wells asks first (Run out-of-date wells, Export last successful results, Cancel). Excel exports get a Provenance sheet and a Parameter / Scope / Value / Source summary table, LAS an `~OTHER` section, and CSV a `.provenance.txt` sidecar.
+- **Field total** leaves out wells whose latest run failed; out-of-date wells count and are flagged ("4 wells (1 out of date)").
+- **Stop analysis** in the Analysis menu, on the toolbar, and with `Esc` while a run is active.
+- **Unsaved changes.** An asterisk in the window title, Save to the current file (`Ctrl+S`), **Save Session As…** (`Ctrl+Shift+S`), and a Save / Discard / Cancel prompt on Close, Load Session, and New Project.
+
+### Intake and robustness
+
+- Resistivity, RHOB, and DT samples ≤ 0 are set to NaN at load and in the run, and counted. A resistivity ≤ 0 no longer crashes the run.
+- Core null sentinels and non-physical values are excluded and counted; a failed core calibration reports why.
+- Declared curve units are checked against the values, depths outside −1 000 to 60 000 ft are refused, and a header TD or BHT without a unit is flagged in the temperature readout with an unusual-gradient warning.
+- A tops column with `TVD` in its header is flagged and needs confirmation in the import dialog.
+- A porosity of 0.15 is no longer substituted where no method gives a value.
+- Input curves named like result columns are kept as `<NAME>_IN`; exports refuse duplicate column names with a clear error.
+- A Per-Formation selection that matches no formation of a well fails that well instead of analysing all of it.
+- Core samples are matched to the log only with valid log samples on both sides within the matching distance; cores beside log gaps are counted.
+- Files over 500 MB, and merges over 2 000 000 depth points or about 1 GB, are refused before they start. Merge step and gap limit from sessions are clamped to the dialog's ranges.
+- Exported text never becomes a spreadsheet formula (Excel literal text; CSV `'` prefix for `= + - @`).
+
+### Merging and sessions
+
+- Merging no longer extrapolates past a file's ends, keeps measured samples at gap edges, interpolates resistivity in log10, and accepts TVD and MD curves.
+- Sessions store each merged well's own step, gap limit, and merge-rules version, and the Petrophyter version that saved them. Merged wells from v1.7.0 sessions are merged again under the new rules with a note.
+- A session load that fails or skips every well keeps the open project.
+
+### Build and documentation
+
+- `requirements-lock.txt`, a test gate and `--self-test` check in the build script, `SHA256SUMS.txt` and environment manifest written by the build, and a GitHub Actions workflow.
+- `docs/calculation-methods.md` matches the code (Vsh methods, Indonesian closed form, Simandoux form, automatic Rw and Rsh).
+- 1077 tests; `pytest -n 8 -m "not slow"` runs them in about a minute.
+
+## v1.7.0 (Build 20261010)
 
 ### Multi-well projects
 
