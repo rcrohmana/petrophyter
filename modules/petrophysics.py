@@ -196,6 +196,17 @@ class PetrophysicsCalculator:
             raise ValueError(f"{name} must contain finite values greater than 0")
 
     @staticmethod
+    def _validate_nonnegative_parameter(name: str, value):
+        """Reject negative or non-finite parameters where 0 is a valid limit (e.g. Qv of a clean sand)."""
+        try:
+            values = np.asarray(value, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must contain finite values of 0 or more") from exc
+
+        if values.size == 0 or np.any(~np.isfinite(values) | (values < 0)):
+            raise ValueError(f"{name} must contain finite values of 0 or more")
+
+    @staticmethod
     def _validate_gas_factor(name: str, value):
         """Require gas correction factors in the formula-safe range [0, 1)."""
         try:
@@ -1141,7 +1152,7 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
         self._validate_positive_parameter("rt", rt, allow_nan=True)
-        self._validate_positive_parameter("qv", qv, allow_nan=False)
+        self._validate_nonnegative_parameter("qv", qv)  # Qv 0 is a clean sand: Waxman-Smits = Archie
         self._validate_positive_parameter("B", B, allow_nan=False)
         if np.ndim(B):
             B = self._per_sample(B, "B")      # e.g. B from temperature, one value per row

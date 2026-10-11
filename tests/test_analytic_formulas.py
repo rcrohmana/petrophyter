@@ -160,17 +160,21 @@ class TestSwHandValues:
         # Sw = (1/sqrt(10) / sqrt(0.04/0.1))^(2/2) = sqrt(1/(10*0.4)) = 0.5
         assert _sw("indo", 10.0, 0.2, vsh=0.0)[0] == pytest.approx(0.5, rel=TIGHT)
 
-    def test_waxman_smits_tiny_qv_equals_archie(self):
-        # Qv = 0 is rejected by the validator (must be > 0), so use Qv = 1e-12.
-        # Then B*Qv/F* is ~1e-12 relative to Cw/F*; the iterative solve
-        # (xtol 2e-12) is the limiting tolerance, hence rel=1e-6 not 1e-9.
+    def test_waxman_smits_qv0_equals_archie(self):
+        # Qv = 0 (clean sand): Ct = Cw*Sw^n/F*, i.e. Archie -> 0.5.
+        # The iterative solve (xtol 2e-12) is the limiting tolerance, hence rel=1e-6.
         rt = np.array([10.0])
         calc = _calc(RT=rt)
         phi = pd.Series([0.2])
         sw = np.asarray(
-            calc.calculate_sw_waxman_smits("RT", phi, 0.1, 1.0, 2.0, 2.0, 1e-12, 1.0)
+            calc.calculate_sw_waxman_smits("RT", phi, 0.1, 1.0, 2.0, 2.0, 0.0, 1.0)
         )
         assert sw[0] == pytest.approx(0.5, rel=1e-6)
+
+    def test_waxman_smits_rejects_negative_qv(self):
+        calc = _calc(RT=[10.0])
+        with pytest.raises(ValueError, match="qv"):
+            calc.calculate_sw_waxman_smits("RT", pd.Series([0.2]), 0.1, 1.0, 2.0, 2.0, -0.1, 1.0)
 
 
 # ---------------------------------------------------------------------------
