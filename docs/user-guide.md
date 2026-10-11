@@ -296,9 +296,9 @@ A six-track composite log with a shared depth axis. Controls above the log:
 
 - **Plot Engine:** **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
 - **Top Depth** and **Bottom Depth:** the visible depth range.
-- **Show Formation Tops:** toggles the formation overlay.
+- **Show Formation Tops:** toggles the formation overlay in either engine; it is disabled, with a tooltip, when the well has no tops.
 - **Zone shading:** shades each zone in the log tracks.
-- **HCPV Show** and the HCPV mode: **Net Pay**, **Net Reservoir**, **Gross**, or **Fraction Only**.
+- **HCPV Show** and the HCPV mode: **Net Pay**, **Net Reservoir**, **Gross**, or **Fraction Only**. Both engines draw the track you choose. The controls are disabled, with a tooltip saying why, before the results hold HCPV curves, and the mode is disabled while **Show** is off.
 
 The two engines differ as follows:
 
@@ -309,7 +309,7 @@ The two engines differ as follows:
 
 In the Interactive engine, **Reset View** returns every track to its automatic range after you have zoomed or panned.
 
-Below the log, the **Crossplots** section is collapsed by default; click it to expand a neutron-density crossplot and a porosity-permeability crossplot. Use its depth filter and **Update Crossplots**, or leave **Sync with Log Depth** checked to follow the log's depth range.
+Below the log, the **Crossplots** section is collapsed by default; click it to expand a neutron-density crossplot and a porosity-permeability crossplot. Use its depth filter and **Update Crossplots**, or leave **Sync with Log Depth** checked to follow the log's depth range: zooming or panning either engine, or dragging the depth region in the Interactive engine, moves the crossplots to the same interval.
 
 See [Visualization and Export](visualization-and-export.md) for more about plots and output formats.
 
@@ -340,7 +340,7 @@ With two or more wells, a **Wells** table lists every well with its status, pay 
 
 ### Export
 
-Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** below can be limited with **Top MD**, **Bottom MD**, and **Update View**. A success banner reports the saved path.
+Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** title says what it shows, for example **Preview — showing 500 of 4,812 rows (well Alpha)**; the preview always shows the active well, and with **All wells** a note reads, for example, **Export contains 3 wells, 12,340 rows**. **Depth interval** is an explicit choice: **All depths**, or **Selected interval (1000–1019 ft)** using **Top MD** and **Bottom MD**. The choice applies to the preview and to every export (CSV, Excel and LAS, for one well or all wells), and is written in the provenance as **Depth interval**. The Excel **Summary** sheet still describes the whole run. A success banner reports the saved path.
 
 A status line above the preview reads **Ready — results current**, or for example **2 wells out of date · 1 latest run failed**. Before exporting wells that are out of date or whose latest run failed, a dialog offers **Run out-of-date wells** (runs them and returns to the Export tab; it does not export), **Export last successful results** (the status is written in the file), or **Cancel**. Failed wells without earlier results are left out and named. Every export records the Petrophyter version, the run time, the status, and the parameter hash: a **Provenance** sheet in Excel, an `~OTHER` section in LAS, and a `<name>.provenance.txt` file next to a CSV. See [Data Formats](data-formats.md#exported-files). Merged data is saved as LAS with **File → Save Merged LAS…**.
 

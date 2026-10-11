@@ -458,3 +458,134 @@ def test_single_well_export_writes_provenance(export_tab, tmp_path, monkeypatch)
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (path, ""))
     export_tab._on_export_csv()
     assert (tmp_path / "one.csv").exists() and (tmp_path / "one.provenance.txt").exists()
+
+
+# ---- U9: the preview says what it shows; the interval applies to the export ----------
+def _choose_interval(tab, top=1000.0, bottom=1019.0):
+    tab.top_md_spin.setValue(top)
+    tab.bottom_md_spin.setValue(bottom)
+    tab.interval_combo.setCurrentIndex(1)
+
+
+def _rows_in(model, key, top, bottom):
+    depth = model.project.get(key).results["DEPTH"]
+    return int(((depth >= top) & (depth <= bottom)).sum())
+
+
+def _save_to(monkeypatch, path):
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(path), ""))
+
+
+def test_preview_title_says_rows_shown_and_total(export_tab, model):
+    total = len(model.project.get("W:A").results)
+    assert export_tab.preview_group.title() == (
+        f"Preview — showing {min(total, 500):,} of {total:,} rows (well Alpha)")
+    assert export_tab.depth_range() is None
+    assert export_tab.interval_combo.itemText(0) == "All depths"
+
+
+def test_preview_title_counts_the_chosen_interval(export_tab, model):
+    _choose_interval(export_tab)
+    n = _rows_in(model, "W:A", 1000.0, 1019.0)
+    assert 0 < n < len(model.project.get("W:A").results)
+    assert export_tab.interval_combo.itemText(1) == "Selected interval (1000–1019 ft)"
+    assert export_tab.preview_group.title() == (
+        f"Preview — showing {n:,} of {n:,} rows (well Alpha)")
+    assert export_tab.preview_model.rowCount() == n
+
+
+def test_preview_caps_at_500_rows_but_says_the_total(export_tab, model):
+    ds = model.project.get("W:A")
+    big = pd.concat([ds.results] * 60, ignore_index=True)
+    ds.results = big
+    export_tab._update_table_view()
+    assert export_tab.preview_model.rowCount() == 500
+    assert export_tab.preview_group.title() == (
+        f"Preview — showing 500 of {len(big):,} rows (well Alpha)")
+
+
+def test_invalid_interval_is_not_selectable(export_tab):
+    export_tab.top_md_spin.setValue(1050.0)
+    export_tab.bottom_md_spin.setValue(1050.0)
+    assert not export_tab.interval_combo.model().item(1).isEnabled()
+    assert export_tab.depth_range() is None
+
+
+@pytest.mark.parametrize("kind", ["csv", "xlsx", "las"])
+def test_interval_applies_to_single_well_export(export_tab, model, tmp_path, monkeypatch, kind):
+    _choose_interval(export_tab)
+    n = _rows_in(model, "W:A", 1000.0, 1019.0)
+    path = tmp_path / f"one.{kind}"
+    _save_to(monkeypatch, path)
+    {"csv": export_tab._on_export_csv, "xlsx": export_tab._on_export_excel,
+     "las": export_tab._on_export_las}[kind]()
+    assert path.exists()
+    if kind == "csv":
+        assert len(pd.read_csv(path)) == n
+        assert "Depth interval: Selected interval (1000–1019 ft)" in (
+            tmp_path / "one.provenance.txt").read_text(encoding="utf-8")
+    elif kind == "xlsx":
+        assert len(pd.read_excel(path, sheet_name="Results")) == n
+        prov = pd.read_excel(path, sheet_name=PROVENANCE_SHEET)
+        row = prov[prov["Item"] == "Depth interval"].iloc[0]
+        assert row["Value"] == "Selected interval (1000–1019 ft)"
+    else:
+        text = path.read_text(encoding="utf-8")
+        data = [ln for ln in text.split("~A")[1].splitlines()[1:] if ln.strip()]
+        assert len(data) == n
+        assert "Depth interval Selected interval (1000–1019 ft)" in text
+
+
+def test_all_depths_export_is_unfiltered_and_recorded(export_tab, model, tmp_path, monkeypatch):
+    path = tmp_path / "full.csv"
+    _save_to(monkeypatch, path)
+    export_tab._on_export_csv()
+    assert len(pd.read_csv(path)) == len(model.project.get("W:A").results)
+    assert "Depth interval: All depths" in (
+        tmp_path / "full.provenance.txt").read_text(encoding="utf-8")
+
+
+def test_interval_applies_to_all_wells_exports(export_tab, model, tmp_path, monkeypatch):
+    export_tab.scope_combo.setCurrentIndex(1)
+    _choose_interval(export_tab, 1000.0, 1019.0)
+    expected = {"Alpha": _rows_in(model, "W:A", 1000.0, 1019.0),
+                "Beta/Two": _rows_in(model, "W:B", 1000.0, 1019.0)}
+    csv_path = tmp_path / "all.csv"
+    _save_to(monkeypatch, csv_path)
+    export_tab._on_export_csv()
+    frame = pd.read_csv(csv_path)
+    assert frame["WELL"].value_counts().to_dict() == expected
+    xlsx = tmp_path / "all.xlsx"
+    _save_to(monkeypatch, xlsx)
+    export_tab._on_export_excel()
+    assert len(pd.read_excel(xlsx, sheet_name="Alpha")) == expected["Alpha"]
+    prov = pd.read_excel(xlsx, sheet_name=PROVENANCE_SHEET)
+    assert set(prov["Depth interval"]) == {"Selected interval (1000–1019 ft)"}
+    out = tmp_path / "las"
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(out))
+    export_tab._on_export_las()
+    text = (out / "Alpha.las").read_text(encoding="utf-8")
+    data = [ln for ln in text.split("~A")[1].splitlines()[1:] if ln.strip()]
+    assert len(data) == expected["Alpha"]
+
+
+def test_all_wells_scope_shows_active_well_and_a_note(export_tab, model):
+    assert export_tab.scope_note.isHidden()
+    export_tab.scope_combo.setCurrentIndex(1)
+    rows = sum(len(model.project.get(k).results) for k in ("W:A", "W:B"))
+    assert export_tab.scope_note.text() == f"Export contains 2 wells, {rows:,} rows"
+    assert "(well Alpha)" in export_tab.preview_group.title()
+    _choose_interval(export_tab)
+    n = _rows_in(model, "W:A", 1000.0, 1019.0) + _rows_in(model, "W:B", 1000.0, 1019.0)
+    assert export_tab.scope_note.text() == f"Export contains 2 wells, {n:,} rows"
+    export_tab.scope_combo.setCurrentIndex(0)
+    assert export_tab.scope_note.isHidden()
+
+
+def test_scope_change_refreshes_the_preview(export_tab, model, monkeypatch):
+    calls = []
+    original = export_tab._update_table_view
+    monkeypatch.setattr(export_tab, "_update_table_view",
+                        lambda: (calls.append(1), original())[1])
+    export_tab.scope_combo.setCurrentIndex(1)
+    assert calls

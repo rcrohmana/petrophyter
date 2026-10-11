@@ -518,6 +518,7 @@ class CompositeLogPlot(PlotWidget):
         results: pd.DataFrame,
         depth_range: Tuple[float, float] = None,
         formation_tops=None,
+        hcpv_curves: list = None,
     ):
         """
         Create a 5-track petrophysics summary log:
@@ -531,6 +532,9 @@ class CompositeLogPlot(PlotWidget):
             results: DataFrame with petrophysics results
             depth_range: Optional tuple (top, bottom) for depth filtering
             formation_tops: Optional FormationTops object for overlay
+            hcpv_curves: Optional HCPV track curves as (column, colour, log,
+                x_range) tuples; ``[]`` leaves the track empty and ``None``
+                keeps the Net Pay default.
         """
         self.figure.clear()
 
@@ -659,40 +663,30 @@ class CompositeLogPlot(PlotWidget):
         if "NET_PAY_FLAG" in filtered.columns or "NET_RES_FLAG" in filtered.columns:
             axes[4].legend(loc="upper right", fontsize=6)
 
-        # Track 6: HCPV (Net Pay default)
-        # CONSOLIDATED SINGLE SCALE
-        if (
-            "dHCPV_NET_PAY" in filtered.columns
-            or "HCPV_CUM_NET_PAY" in filtered.columns
-        ):
-            if "dHCPV_NET_PAY" in filtered.columns:
-                d_hcpv_data = filtered["dHCPV_NET_PAY"].values
-                axes[5].plot(
-                    d_hcpv_data,
-                    depth,
-                    color=get_plot_color("dHCPV_NET_PAY"),
-                    linewidth=0.8,
-                    label="dHCPV Pay",
-                )
-
-            if "HCPV_CUM_NET_PAY" in filtered.columns:
-                hcpv_cum_data = filtered["HCPV_CUM_NET_PAY"].values
-                axes[5].plot(
-                    hcpv_cum_data,
-                    depth,
-                    color=get_plot_color("HCPV_CUM_NET_PAY"),
-                    linewidth=1.0,
-                    linestyle="--",
-                    label="HCPV Cum",
-                )
+        # Track 6: HCPV (Net Pay by default; the Log Display tab passes its mode)
+        if hcpv_curves is None:
+            hcpv_curves = [("dHCPV_NET_PAY", None, False, None),
+                           ("HCPV_CUM_NET_PAY", None, False, None)]
+        hcpv_drawn = False
+        for name, color, _log, x_range in hcpv_curves:
+            if name not in filtered.columns:
+                continue
+            cumulative = name.startswith("HCPV_CUM")
+            axes[5].plot(
+                filtered[name].values,
+                depth,
+                color=color or get_plot_color(name),
+                linewidth=1.0 if cumulative else 0.8,
+                linestyle="--" if cumulative else "-",
+                label=name,
+            )
+            if x_range:
+                axes[5].set_xlim(*x_range)
+            hcpv_drawn = True
 
         axes[5].set_title("HCPV", fontsize=TITLE_SIZE)
         axes[5].set_xlabel("Volume (ft)", fontsize=LABEL_SIZE)
-        # axes[5].tick_params(axis="x", colors="#FF4500")
-        if (
-            "dHCPV_NET_PAY" in filtered.columns
-            or "HCPV_CUM_NET_PAY" in filtered.columns
-        ):
+        if hcpv_drawn:
             axes[5].legend(loc="upper right", fontsize=6)
 
         # Add formation tops overlay

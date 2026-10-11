@@ -23,8 +23,9 @@ from ..widgets.table_model import PandasTableModel
 from themes.icon_loader import get_icon
 from themes.helpers import set_status
 from services.export_service import (
-    ExportService, FIELD_TOTAL_RULE, blockers_text, default_file_stem, export_blockers,
-    las_frame, provenance_block, well_label, wells_with_results,
+    ALL_DEPTHS, ExportService, FIELD_TOTAL_RULE, apply_depth_range, blockers_text,
+    default_file_stem, depth_interval_label, export_blockers, las_frame,
+    provenance_block, well_label, wells_with_results,
 )
 
 # Answers of the freshness confirmation.
@@ -32,6 +33,8 @@ CONFIRM_RUN, CONFIRM_EXPORT, CONFIRM_CANCEL = "run", "export", "cancel"
 
 SCOPE_ACTIVE = "Active well"
 SCOPE_ALL = "All wells"
+PREVIEW_ROWS = 500
+PREVIEW_TITLE = "Results Preview"
 
 
 class ExportTab(QWidget):
@@ -66,7 +69,7 @@ class ExportTab(QWidget):
         download_layout.addWidget(QLabel("Scope:"))
         self.scope_combo = QComboBox()
         self.scope_combo.addItems([SCOPE_ACTIVE, SCOPE_ALL])
-        self.scope_combo.currentIndexChanged.connect(lambda _i: self._sync_buttons())
+        self.scope_combo.currentIndexChanged.connect(self._on_scope_changed)
         download_layout.addWidget(self.scope_combo)
 
         self.csv_btn = QPushButton("Download CSV")
@@ -93,7 +96,8 @@ class ExportTab(QWidget):
         # =====================================================================
         # RESULTS PREVIEW
         # =====================================================================
-        preview_group = QGroupBox("Results Preview")
+        self.preview_group = QGroupBox(PREVIEW_TITLE)
+        preview_group = self.preview_group
         preview_layout = QVBoxLayout(preview_group)
 
         # Freshness of the wells in the export scope
@@ -101,8 +105,19 @@ class ExportTab(QWidget):
         self.status_line.setWordWrap(True)
         preview_layout.addWidget(self.status_line)
 
-        # Filter controls
+        # All-wells scope: the preview shows the active well; this says what the export holds
+        self.scope_note = QLabel("")
+        self.scope_note.setWordWrap(True)
+        preview_layout.addWidget(self.scope_note)
+
+        # Filter controls: the interval choice applies to the preview and the export
         filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Depth interval:"))
+        self.interval_combo = QComboBox()
+        self.interval_combo.addItems([ALL_DEPTHS, depth_interval_label((0, 0))])
+        self.interval_combo.setToolTip(
+            "Applies to the preview and to the exported files (CSV, Excel and LAS)")
+        filter_layout.addWidget(self.interval_combo)
         filter_layout.addWidget(QLabel("Top MD:"))
         self.top_md_spin = QDoubleSpinBox()
         self.top_md_spin.setRange(0, 100000)
@@ -116,6 +131,11 @@ class ExportTab(QWidget):
         self.bottom_md_spin.setDecimals(1)
         self.bottom_md_spin.setSuffix(" ft")
         filter_layout.addWidget(self.bottom_md_spin)
+
+        self.interval_combo.currentIndexChanged.connect(lambda _i: self._update_table_view())
+        self.top_md_spin.valueChanged.connect(self._on_interval_edited)
+        self.bottom_md_spin.valueChanged.connect(self._on_interval_edited)
+        self._refresh_interval_item()
 
         self.update_table_btn = QPushButton("Update View")
         self.update_table_btn.clicked.connect(self._update_table_view)
@@ -177,6 +197,40 @@ class ExportTab(QWidget):
         # Icons are cached per theme; re-fetch so they recolor.
         for button in self.buttons:
             button.setIcon(get_icon("download"))
+
+    # ---- depth interval (U9) ----
+    def _interval_valid(self) -> bool:
+        return self.bottom_md_spin.value() > self.top_md_spin.value()
+
+    def _refresh_interval_item(self):
+        """Keep the "Selected interval" entry in step with the Top/Bottom MD boxes."""
+        valid = self._interval_valid()
+        self.interval_combo.setItemText(1, depth_interval_label(
+            (self.top_md_spin.value(), self.bottom_md_spin.value())))
+        item = self.interval_combo.model().item(1)
+        if item is not None:
+            item.setEnabled(valid)
+        self.interval_combo.setItemData(
+            1, "" if valid else "Set a Bottom MD below the Top MD to use an interval",
+            Qt.ItemDataRole.ToolTipRole)
+
+    def _on_interval_edited(self, _value=None):
+        self._refresh_interval_item()
+        if self.interval_combo.currentIndex() == 1 and not self._interval_valid():
+            self.interval_combo.setCurrentIndex(0)   # re-enters through the signal
+            return
+        if self.interval_combo.currentIndex() == 1:
+            self._update_table_view()
+
+    def depth_range(self):
+        """``(top, bottom)`` when "Selected interval" is chosen, else ``None`` (all depths)."""
+        if self.interval_combo.currentIndex() == 1 and self._interval_valid():
+            return (self.top_md_spin.value(), self.bottom_md_spin.value())
+        return None
+
+    def _on_scope_changed(self, _index=None):
+        self._sync_buttons()
+        self._update_table_view()
 
     # ---- scope ----
     def export_scope(self) -> str:
@@ -282,11 +336,13 @@ class ExportTab(QWidget):
         )
         if not file_path:
             return
+        depth_range = self.depth_range()
         if self.export_scope() == "all":
-            self._service.export_csv_wells(self.model.project.wells, file_path)
+            self._service.export_csv_wells(self.model.project.wells, file_path, depth_range)
         elif self.model.calculated and self.model.results is not None:
-            self._service.export_csv(self.model.results, file_path,
-                                     provenance_block(self.model.project.active))
+            self._service.export_csv(
+                apply_depth_range(self.model.results, depth_range), file_path,
+                provenance_block(self.model.project.active, depth_range))
 
     def _on_export_excel(self):
         """Handle Excel export."""
@@ -300,22 +356,25 @@ class ExportTab(QWidget):
         )
         if not file_path:
             return
+        depth_range = self.depth_range()
         if self.export_scope() == "all":
-            self._service.export_excel_wells(self.model.project.wells, file_path)
+            self._service.export_excel_wells(self.model.project.wells, file_path, depth_range)
         elif (self.model.calculated and self.model.results is not None
               and self.model.summary is not None):
-            self._service.export_excel(self.model.results, self.model.summary, file_path,
-                                       provenance_block(self.model.project.active))
+            self._service.export_excel(
+                apply_depth_range(self.model.results, depth_range), self.model.summary,
+                file_path, provenance_block(self.model.project.active, depth_range))
 
     def _on_export_las(self):
         """Handle LAS export: one file (active well) or a folder of files (all wells)."""
         if not self._proceed():
             return
         project = self.model.project
+        depth_range = self.depth_range()
         if self.export_scope() == "all":
             directory = QFileDialog.getExistingDirectory(self, "Choose Folder for LAS Files")
             if directory:
-                self._service.export_las_wells(project.wells, directory)
+                self._service.export_las_wells(project.wells, directory, depth_range)
             return
         ds = project.active
         if ds is None or ds.las_data is None:
@@ -327,8 +386,9 @@ class ExportTab(QWidget):
             "LAS Files (*.las);;All Files (*)",
         )
         if file_path:
-            self._service.export_las(las_frame(ds), ds.well_info, file_path,
-                                     provenance_block(ds))
+            self._service.export_las(apply_depth_range(las_frame(ds), depth_range),
+                                     ds.well_info, file_path,
+                                     provenance_block(ds, depth_range))
 
     def update_display(self):
         """Update display with analysis results."""
@@ -362,21 +422,12 @@ class ExportTab(QWidget):
         if not self.model.calculated or self.model.results is None:
             return
 
-        results = self.model.results
+        # The preview shows the active well, filtered by the same interval as the export
+        filtered_df = apply_depth_range(self.model.results, self.depth_range())
 
-        # Filter by depth
-        top = self.top_md_spin.value()
-        bottom = self.bottom_md_spin.value()
-
-        if "DEPTH" in results.columns and bottom > top:
-            filtered_df = results[
-                (results["DEPTH"] >= top) & (results["DEPTH"] <= bottom)
-            ]
-        else:
-            filtered_df = results
-
-        # Update preview table (limit to 500 rows)
-        preview_df = filtered_df.head(500).copy()
+        # Update preview table (limit to PREVIEW_ROWS rows)
+        preview_df = filtered_df.head(PREVIEW_ROWS).copy()
+        self._update_preview_title(len(preview_df), len(filtered_df))
         # print(f"[DEBUG ExportTab] preview_df.shape = {preview_df.shape}")
         # print(
         #     f"[DEBUG ExportTab] preview_df.columns[:5] = {list(preview_df.columns)[:5]}"
@@ -388,6 +439,23 @@ class ExportTab(QWidget):
         header.setStretchLastSection(False)
         for i in range(self.preview_model.columnCount()):
             self.preview_table.setColumnWidth(i, 120)
+
+    def _update_preview_title(self, shown: int, total: int):
+        """Say what the preview shows, and for all wells what the export holds."""
+        active = self.model.project.active
+        well = f" (well {well_label(active)})" if active is not None else ""
+        self.preview_group.setTitle(
+            f"Preview \u2014 showing {shown:,} of {total:,} rows{well}")
+        if self.export_scope() == "all":
+            depth_range = self.depth_range()
+            ready = wells_with_results(self.model.project.wells)
+            rows = sum(len(apply_depth_range(ds.results, depth_range)) for ds in ready)
+            wells = f"{len(ready)} well" if len(ready) == 1 else f"{len(ready)} wells"
+            self.scope_note.setText(f"Export contains {wells}, {rows:,} rows")
+            self.scope_note.setVisible(True)
+        else:
+            self.scope_note.setText("")
+            self.scope_note.setVisible(False)
 
     def show_export_success(self, message: str):
         """Report export success through the main window banner."""
@@ -404,6 +472,9 @@ class ExportTab(QWidget):
         self.bottom_md_spin.setValue(0)
 
         # Clear table
+        self.preview_group.setTitle(PREVIEW_TITLE)
+        self.scope_note.setText("")
+        self.interval_combo.setCurrentIndex(0)
         self.preview_model.set_dataframe(pd.DataFrame())
         self.preview_table.setVisible(False)
 

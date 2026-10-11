@@ -305,11 +305,31 @@ PROVENANCE_STATUS = {
 }
 
 
-def provenance_block(ds) -> dict:
+ALL_DEPTHS = "All depths"
+
+
+def depth_interval_label(depth_range=None) -> str:
+    """``"All depths"`` or ``"Selected interval (1000\u20131019 ft)"`` (U9)."""
+    if not depth_range:
+        return ALL_DEPTHS
+    top, bottom = depth_range
+    return f"Selected interval ({top:g}\u2013{bottom:g} ft)"
+
+
+def apply_depth_range(df: pd.DataFrame, depth_range=None) -> pd.DataFrame:
+    """Rows of ``df`` inside ``depth_range`` (inclusive); ``df`` itself when no interval."""
+    if not depth_range or "DEPTH" not in df.columns:
+        return df
+    top, bottom = depth_range
+    return df[(df["DEPTH"] >= top) & (df["DEPTH"] <= bottom)]
+
+
+def provenance_block(ds, depth_range=None) -> dict:
     """What produced a well's exported numbers (P0-UI/UX U3), as ordered key/value pairs.
 
     App version and build, the run time (UTC), the well's status at export,
-    the parameter hash of the run and the issue counts of the last run.
+    the parameter hash of the run, the issue counts of the last run and the
+    depth interval of the exported rows (``depth_range`` or all depths).
     """
     counts = issue_counts(collect_issues(ds))
     return {
@@ -322,6 +342,7 @@ def provenance_block(ds) -> dict:
         "Errors": counts["error"],
         "Warnings": counts["warning"],
         "Info": counts["info"],
+        "Depth interval": depth_interval_label(depth_range),
     }
 
 
@@ -337,6 +358,7 @@ def _las_other_lines(block: dict) -> list:
         f"Status {block['Status at export']}",
         f"Param hash {block['Parameter hash']}",
         f"Issues {block['Errors']} errors, {block['Warnings']} warnings, {block['Info']} info",
+        f"Depth interval {block.get('Depth interval', ALL_DEPTHS)}",
     ]
 
 
@@ -468,11 +490,14 @@ def zones_frame(wells) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=ZONE_COLUMNS)
 
 
-def combined_results(wells) -> pd.DataFrame:
-    """All wells' results stacked, with the well's display name as first column ``WELL``."""
+def combined_results(wells, depth_range=None) -> pd.DataFrame:
+    """All wells' results stacked, with the well's display name as first column ``WELL``.
+
+    ``depth_range`` keeps only rows inside the interval (U9).
+    """
     frames = []
     for ds in wells_with_results(wells):
-        frame = ds.results.copy()
+        frame = apply_depth_range(ds.results, depth_range).copy()
         frame.insert(0, "WELL", well_label(ds))
         frames.append(frame)
     if not frames:
@@ -499,14 +524,15 @@ def default_file_stem(ds, prefix: str = "petrophyter_results") -> str:
     return f"{prefix}_{sanitize_name(well_label(ds), 60, 'well')}"
 
 
-def _export_wells_excel(wells, file_path):
+def _export_wells_excel(wells, file_path, depth_range=None):
     ready = wells_with_results(wells)
     if not ready:
         raise ValueError("no well has results to export")
     names = unique_names([well_label(ds) for ds in ready], 31,
                          reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET))
     zones = zones_frame(ready)
-    provenance = pd.DataFrame([provenance_block(ds) for ds in wells_with_results(wells)])
+    provenance = pd.DataFrame(
+        [provenance_block(ds, depth_range) for ds in wells_with_results(wells)])
     with _atomic_target(file_path, ".xlsx") as temporary_path:
         with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
             _write_excel_sheet(writer, wells_summary_frame(wells), SUMMARY_SHEET)
@@ -514,7 +540,7 @@ def _export_wells_excel(wells, file_path):
                 _write_excel_sheet(writer, zones, ZONES_SHEET)
             _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
             for ds, sheet in zip(ready, names):
-                _write_excel_sheet(writer, ds.results, sheet)
+                _write_excel_sheet(writer, apply_depth_range(ds.results, depth_range), sheet)
 
 
 class ExportService(QObject):
@@ -604,13 +630,14 @@ class ExportService(QObject):
             self.export_error.emit(f"LAS export failed: {str(e)}")
             return False
 
-    def export_csv_wells(self, wells, file_path: str) -> bool:
+    def export_csv_wells(self, wells, file_path: str, depth_range=None) -> bool:
         """One CSV with every well's results stacked and a ``WELL`` column first."""
         try:
-            frame = combined_results(wells)
+            frame = combined_results(wells, depth_range)
             with _atomic_target(file_path) as temporary_path:
                 spreadsheet_safe(frame, csv=True).to_csv(temporary_path, index=False)
-            _write_sidecar(file_path, [provenance_block(ds) for ds in wells_with_results(wells)])
+            _write_sidecar(file_path, [provenance_block(ds, depth_range)
+                                       for ds in wells_with_results(wells)])
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -622,10 +649,10 @@ class ExportService(QObject):
             self.export_error.emit(f"CSV export failed: {str(e)}")
             return False
 
-    def export_excel_wells(self, wells, file_path: str) -> bool:
+    def export_excel_wells(self, wells, file_path: str, depth_range=None) -> bool:
         """Workbook: Summary sheet, Zones sheet (when present), one sheet per well."""
         try:
-            _export_wells_excel(wells, file_path)
+            _export_wells_excel(wells, file_path, depth_range)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -637,7 +664,7 @@ class ExportService(QObject):
             self.export_error.emit(f"Excel export failed: {str(e)}")
             return False
 
-    def export_las_wells(self, wells, directory: str) -> bool:
+    def export_las_wells(self, wells, directory: str, depth_range=None) -> bool:
         """One LAS file per well in ``directory``, each with that well's own header.
 
         A well's file holds its results (input and computed curves) when it has
@@ -651,7 +678,9 @@ class ExportService(QObject):
             names = unique_names([well_label(ds) for ds in ready])
             for ds, name in zip(ready, names):
                 las_content = _las_with_provenance(
-                    export_merged_las(las_frame(ds), ds.well_info), provenance_block(ds))
+                    export_merged_las(apply_depth_range(las_frame(ds), depth_range),
+                                      ds.well_info),
+                    provenance_block(ds, depth_range))
                 with _atomic_target(os.path.join(directory, f"{name}.las")) as tmp:
                     with open(tmp, "w", encoding="utf-8") as handle:
                         handle.write(las_content)

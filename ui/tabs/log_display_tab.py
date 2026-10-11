@@ -34,8 +34,10 @@ class LogDisplayTab(QWidget):
     def __init__(self, model, parent=None):
         super().__init__(parent)
         self.model = model
-        self._updating_depth = False  # Guard for bi-directional sync
+        self._updating_depth = False  # Guard for the depth widgets only (not the crossplot sync)
+        self._classic_drawing = False  # True while Classic redraws itself (ignore its zoom events)
         self._setup_ui()
+        self._refresh_control_states()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -311,24 +313,40 @@ class LogDisplayTab(QWidget):
         else:
             self._update_classic_log()
 
-        # Sync crossplot depth if checkbox is checked
-        if hasattr(self, "xplot_sync_check") and self.xplot_sync_check.isChecked():
-            self.xplot_top_spin.setValue(top)
-            self.xplot_bottom_spin.setValue(bottom)
-            if self.xplot_group.isChecked():
-                self._update_crossplots()
+        self._sync_crossplot(top, bottom)
 
         self.depth_selection_changed.emit(top, bottom)
+
+    def _sync_crossplot(self, top: float, base: float):
+        """Point the crossplots at ``top``-``base`` when "Sync with Log Depth" is on.
+
+        Called from every view change (Classic zoom, Interactive zoom and
+        region selection, the depth boxes). The ``_updating_depth`` guard
+        protects the depth widgets only, never this sync.
+        """
+        if not self.xplot_sync_check.isChecked():
+            return
+        self.xplot_top_spin.setValue(top)
+        self.xplot_bottom_spin.setValue(base)
+        if self.xplot_group.isChecked():
+            self._update_crossplots()
+
+    def _set_depth_boxes(self, top: float, bottom: float):
+        """Show ``top``-``bottom`` in the depth boxes without re-plotting the log."""
+        self._updating_depth = True
+        try:
+            self.top_spin.setValue(top)
+            self.bottom_spin.setValue(bottom)
+        finally:
+            self._updating_depth = False
 
     def _on_interactive_depth_changed(self, top: float, bottom: float):
         """Handle depth changes from interactive viewer."""
         if self._updating_depth:
             return
 
-        self._updating_depth = True
-        self.top_spin.setValue(top)
-        self.bottom_spin.setValue(bottom)
-        self._updating_depth = False
+        self._set_depth_boxes(top, bottom)
+        self._sync_crossplot(top, bottom)
 
         self.depth_selection_changed.emit(top, bottom)
 
@@ -337,27 +355,66 @@ class LogDisplayTab(QWidget):
         if self._updating_depth:
             return
 
-        self._updating_depth = True
-        self.top_spin.setValue(top)
-        self.bottom_spin.setValue(bottom)
-        self._updating_depth = False
+        self._set_depth_boxes(top, bottom)
+        self._sync_crossplot(top, bottom)
 
         self.depth_selection_changed.emit(top, bottom)
 
+    def _on_classic_ylim_changed(self, axes):
+        """Classic zoom, pan or home: follow the visible depth range."""
+        if self._updating_depth or self._classic_drawing:
+            return
+        lo, hi = sorted(axes.get_ylim())
+        if hi <= lo:
+            return
+        self._set_depth_boxes(lo, hi)
+        top, bottom = self.top_spin.value(), self.bottom_spin.value()
+        self._sync_crossplot(top, bottom)
+        self.depth_selection_changed.emit(top, bottom)
+
     def _on_show_tops_changed(self, state: int):
-        """Toggle formation tops overlay."""
-        if HAS_PYQTGRAPH and hasattr(self.interactive_log, "set_formation_tops"):
-            if state:
-                if self.model.formation_tops:
-                    self.interactive_log.set_formation_tops(self.model.formation_tops)
+        """Toggle formation tops overlay in whichever engine is showing."""
+        if self.plot_stack.currentIndex() == 0 and HAS_PYQTGRAPH:
+            if state and self.model.formation_tops:
+                self.interactive_log.set_formation_tops(self.model.formation_tops)
             else:
-                if hasattr(self.interactive_log, "clear_formation_tops"):
-                    self.interactive_log.clear_formation_tops()
+                self.interactive_log.clear_formation_tops()
+        elif self.model.calculated and self.model.results is not None:
+            self._update_classic_log()
+            self._apply_zone_shading()
 
     def _on_show_hcpv_changed(self, state: int):
         """Toggle HCPV track visibility."""
+        self._refresh_control_states()
         if self.model.calculated and self.model.results is not None:
             self._update_plot()
+
+    def _refresh_control_states(self):
+        """Disable a control that cannot act, with a tooltip saying why."""
+        results = self.model.results
+        columns = [] if results is None else list(getattr(results, "columns", []))
+        has_hcpv = any(str(c).startswith(("dHCPV", "HCPV")) for c in columns)
+        has_tops = bool(self.model.formation_tops)
+
+        self.show_tops_check.setEnabled(has_tops)
+        self.show_tops_check.setToolTip(
+            "Overlay the formation tops on the log" if has_tops
+            else "No formation tops are loaded for this well")
+
+        self.show_hcpv_check.setEnabled(has_hcpv)
+        self.show_hcpv_check.setToolTip(
+            "Show or hide the HCPV track" if has_hcpv
+            else "The results have no HCPV curves yet - run the analysis first")
+
+        mode_on = has_hcpv and self.show_hcpv_check.isChecked()
+        self.hcpv_mode_combo.setEnabled(mode_on)
+        if mode_on:
+            self.hcpv_mode_combo.setToolTip("Select HCPV display mode")
+        elif not has_hcpv:
+            self.hcpv_mode_combo.setToolTip(
+                "The results have no HCPV curves yet - run the analysis first")
+        else:
+            self.hcpv_mode_combo.setToolTip("Turn on HCPV Show to choose a mode")
 
     def _on_hcpv_mode_changed(self, index: int):
         """Handle HCPV mode change."""
@@ -514,6 +571,7 @@ class LogDisplayTab(QWidget):
             axes = self.classic_log.figure.axes
             if not axes:
                 return
+            self._classic_drawing = True
             limits = [ax.get_ylim() for ax in axes]
             for i, (name, top, bottom) in enumerate(spans):
                 if i % 2 == 0:
@@ -525,6 +583,7 @@ class LogDisplayTab(QWidget):
                              transform=axes[0].get_yaxis_transform())
             for ax, lim in zip(axes, limits):
                 ax.set_ylim(lim)
+            self._classic_drawing = False
             self.classic_log.canvas.draw()
 
     def _update_interactive_log(self):
@@ -552,11 +611,9 @@ class LogDisplayTab(QWidget):
 
         # Add formation tops if enabled
         if self.show_tops_check.isChecked() and self.model.formation_tops:
-            if hasattr(self.interactive_log, "set_formation_tops"):
-                self.interactive_log.set_formation_tops(self.model.formation_tops)
-            else:
-                if hasattr(self.interactive_log, "clear_formation_tops"):
-                    self.interactive_log.clear_formation_tops()
+            self.interactive_log.set_formation_tops(self.model.formation_tops)
+        else:
+            self.interactive_log.clear_formation_tops()
 
     def _update_classic_log(self):
         """Update classic matplotlib viewer."""
@@ -571,16 +628,29 @@ class LogDisplayTab(QWidget):
         if self.show_tops_check.isChecked() and self.model.formation_tops:
             formation_tops = self.model.formation_tops
 
-        if top < bottom:
-            self.classic_log.plot_petrophysics_summary(
-                self.model.results,
-                depth_range=(top, bottom),
-                formation_tops=formation_tops,
-            )
-        else:
-            self.classic_log.plot_petrophysics_summary(
-                self.model.results, formation_tops=formation_tops
-            )
+        # Same HCPV show and mode as the interactive engine
+        hcpv_curves = self._get_hcpv_curve_config(self.model.results.columns.tolist())
+
+        self._classic_drawing = True
+        try:
+            if top < bottom:
+                self.classic_log.plot_petrophysics_summary(
+                    self.model.results,
+                    depth_range=(top, bottom),
+                    formation_tops=formation_tops,
+                    hcpv_curves=hcpv_curves,
+                )
+            else:
+                self.classic_log.plot_petrophysics_summary(
+                    self.model.results,
+                    formation_tops=formation_tops,
+                    hcpv_curves=hcpv_curves,
+                )
+            axes = self.classic_log.figure.axes
+            if axes:
+                axes[0].callbacks.connect("ylim_changed", self._on_classic_ylim_changed)
+        finally:
+            self._classic_drawing = False
 
     def update_display(self):
         """Update display with analysis results."""
@@ -611,6 +681,7 @@ class LogDisplayTab(QWidget):
             self._updating_depth = False
 
         # Update current plot engine
+        self._refresh_control_states()
         self._update_plot()
 
         # Update crossplots if expanded
@@ -737,3 +808,4 @@ class LogDisplayTab(QWidget):
 
         # Show placeholder
         self.placeholder.setVisible(True)
+        self._refresh_control_states()
