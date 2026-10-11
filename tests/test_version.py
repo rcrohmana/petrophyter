@@ -38,6 +38,20 @@ def test_about_dialog_uses_shared_release_metadata(qtbot):
     assert f"Version {APP_VERSION}" in citation_text
 
 
+def test_about_history_lists_every_changelog_release(qtbot):
+    from ui.widgets.about_dialog import AboutDialog
+
+    changelog = (ROOT / "docs" / "changelog.md").read_text(encoding="utf-8")
+    releases = re.findall(r"^## (v\d+(?:\.\d+)*)\b", changelog, re.MULTILINE)
+    assert releases and releases[0] == f"v{APP_VERSION}"
+
+    dialog = AboutDialog()
+    qtbot.addWidget(dialog)
+    history = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+    missing = [v for v in releases if not re.search(rf"<b>{re.escape(v)}[ (]", history)]
+    assert not missing, f"About history lacks: {missing}"
+
+
 def test_inno_setup_version_matches_shared_metadata():
     source = (ROOT / "installer" / "Petrophyter.iss").read_text(encoding="utf-8")
     assert f'#define AppVersion      "{APP_VERSION_DISPLAY}"' in source
