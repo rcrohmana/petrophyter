@@ -128,9 +128,9 @@ def test_worker_completion_installs_the_wells_once(window, sessions, monkeypatch
     original = window._refresh_active_well_ui
     monkeypatch.setattr(window, "_refresh_active_well_ui",
                         lambda *a, **k: (refreshes.append(1), original(*a, **k))[1])
-    start = window._start_restore          # the reset before it refreshes once, as it always did
-    monkeypatch.setattr(window, "_start_restore",
-                        lambda *a, **k: (refreshes.clear(), start(*a, **k))[1])
+    reset = window.model.reset             # the reset before the install refreshes once, as it always did
+    monkeypatch.setattr(window.model, "reset",
+                        lambda *a, **k: (reset(*a, **k), refreshes.clear())[0])
     load(window, monkeypatch, sessions["two"])
     qtbot.waitUntil(lambda: idle(window), timeout=TIMEOUT)
     assert names(window) == ["BKS-01", "BKS-02"]
@@ -150,6 +150,7 @@ def test_cancelled_restore_leaves_an_empty_project_and_no_banner(window, session
     assert idle(window) and worker.cancelled
     gate.set()                                    # a worker that missed the cancel must not land
     qtbot.waitUntil(lambda: not window._restore_retired, timeout=TIMEOUT)
+    # New Project cleared the project by the user's choice (a restore itself no longer does).
     assert len(window.model.project) == 0
     assert not window.banner.isVisibleTo(window)
     assert window.actions_["open_las"].isEnabled()
@@ -219,16 +220,75 @@ def test_actions_are_disabled_while_restoring(window, sessions, monkeypatch, qtb
         assert window.actions_[key].isEnabled(), key
 
 
-def test_a_failing_restore_shows_one_warning_and_an_empty_project(window, sessions, monkeypatch, qtbot):
+def test_a_failing_restore_shows_one_warning_and_keeps_the_open_project(
+        window, sessions, tmp_path, monkeypatch, qtbot):
+    window._load_single_las(_write(tmp_path, "open.las", well="OPEN-1"))
+    assert names(window) == ["OPEN-1"]
+
     def boom(self, *args, **kwargs):
         raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(SessionService, "build_wells_from_session", boom)
     load(window, monkeypatch, sessions["two"])
     qtbot.waitUntil(lambda: idle(window), timeout=TIMEOUT)
-    assert len(window.model.project) == 0
-    assert "disk on fire" in window.banner.message_label.text()
+    assert names(window) == ["OPEN-1"]
+    text = window.banner.message_label.text()
+    assert "disk on fire" in text and "open project is unchanged" in text
     assert window.actions_["load_session"].isEnabled()
+
+
+def test_invalid_shape_is_refused_before_the_worker_starts(window, sessions, tmp_path, monkeypatch):
+    import json
+    from PyQt6.QtWidgets import QMessageBox
+
+    window._load_single_las(_write(tmp_path, "open.las", well="OPEN-1"))
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"_session_version": "2.1", "wells": "nope"}), encoding="utf-8")
+    shown = []
+    monkeypatch.setattr(QMessageBox, "critical",
+                        staticmethod(lambda *a, **k: shown.append(a[2])))
+    load(window, monkeypatch, str(bad))
+    assert idle(window) and not window._restore_retired
+    assert names(window) == ["OPEN-1"]
+    assert shown and "wells is not a list" in shown[0]
+
+
+def test_a_restore_with_every_source_missing_keeps_the_open_project(
+        window, sessions, tmp_path, monkeypatch, qtbot):
+    import json
+
+    window._load_single_las(_write(tmp_path, "open.las", well="OPEN-1"))
+    data = json.loads(Path(sessions["two"]).read_text(encoding="utf-8"))
+    for entry in data["wells"]:
+        entry["sources"] = [str(tmp_path / "gone.las")]
+    gone = tmp_path / "gone.json"
+    gone.write_text(json.dumps(data), encoding="utf-8")
+    load(window, monkeypatch, str(gone))
+    qtbot.waitUntil(lambda: idle(window), timeout=TIMEOUT)
+    assert names(window) == ["OPEN-1"]
+    text = window.banner.message_label.text()
+    assert "no well could be restored" in text and "source file not found" in text
+
+
+def test_a_session_without_wells_still_loads(window, sessions, tmp_path, monkeypatch, qtbot):
+    import json
+
+    window._load_single_las(_write(tmp_path, "open.las", well="OPEN-1"))
+    data = json.loads(Path(sessions["two"]).read_text(encoding="utf-8"))
+    data["wells"], data["active_key"] = [], None
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps(data), encoding="utf-8")
+    load(window, monkeypatch, str(empty))
+    qtbot.waitUntil(lambda: idle(window), timeout=TIMEOUT)
+    assert names(window) == []
+
+
+def test_a_successful_restore_replaces_the_open_project(window, sessions, tmp_path, monkeypatch, qtbot):
+    window._load_single_las(_write(tmp_path, "open.las", well="OPEN-1"))
+    load(window, monkeypatch, sessions["one"])
+    assert names(window) == ["OPEN-1"]          # untouched while the worker builds
+    qtbot.waitUntil(lambda: idle(window), timeout=TIMEOUT)
+    assert names(window) == ["BKS-01"]
 
 
 def test_the_synchronous_wrapper_still_restores(sessions):

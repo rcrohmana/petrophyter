@@ -37,7 +37,9 @@ from services.load_service import (
     sanitize_error_detail,
 )
 from services.export_service import ExportService
-from services.session_service import SessionService, is_v2_session
+from services.session_service import (
+    SessionService, is_v2_session, session_level_notes, validate_session,
+)
 from services.restore_service import RestoreWorker
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
@@ -1894,22 +1896,24 @@ class MainWindow(QMainWindow):
         if not session_data:
             QMessageBox.critical(self, "Error", "Failed to load session")
             return
-        # Restoring writes the saved values where they belong; it must never
-        # create entries at whatever scope the user happened to be editing.
-        self.model.set_edit_scope("project")
+        problems = validate_session(session_data)
+        if problems:
+            QMessageBox.critical(self, "Error", f"Failed to load session: {problems[0]}")
+            return
         if is_v2_session(session_data):
-            # A v2.0 session is a whole project: it replaces the loaded wells.
-            # The wells are rebuilt on a worker thread; _on_restore_completed
-            # installs them and shows the one banner.
+            # A v2.0 session is a whole project: it replaces the loaded wells, but only
+            # once every well is built. Here nothing of the open project is touched; the
+            # swap (batch cancel, reset, parameters, wells) is in _on_restore_completed.
             self._cancel_restore()
-            self.batch_runner.cancel()
-            self.model.reset()
-            self.session_service.apply_session_to_model(self.model, session_data)
             self._start_restore(session_data, file_path)
             return
         else:
+            # Restoring writes the saved values where they belong; it must never
+            # create entries at whatever scope the user happened to be editing.
+            self.model.set_edit_scope("project")
             self.session_service.apply_session_to_model(self.model, session_data)
-            notes = self.session_service.restore_wells(self.model, session_data)
+            notes = session_level_notes(session_data)
+            notes += self.session_service.restore_wells(self.model, session_data)
             self._update_ui_from_model()
         # Results in memory (v1.x) were computed with the old parameters;
         # restored wells (v2.0) have none and need a run.
@@ -1927,6 +1931,7 @@ class MainWindow(QMainWindow):
         self._restore_worker = worker
         self._restore_active_key = session_data.get("active_key")
         self._restore_path = file_path
+        self._restore_session = session_data
         self._set_busy("restore")
         self._set_progress(1, "Restoring session...")
         worker.signals.progress.connect(
@@ -1971,22 +1976,36 @@ class MainWindow(QMainWindow):
         if not self._is_current_restore(worker):
             return
         self._end_restore()
-        self.model.reset()
-        self.show_banner("warning", message)    # banners are never "error" kind
+        # The open project is untouched: nothing was reset before the wells were built.
+        self.show_banner("warning", f"Session not loaded: {message}; your open project is unchanged")
         self.statusBar.showMessage("Failed to load session")
 
     def _on_restore_completed(self, worker, datasets, notes):
         if not self._is_current_restore(worker):
             return
+        session_data = getattr(self, "_restore_session", None) or {}
+        if not datasets and session_data.get("wells"):
+            # Every source was missing or unreadable: a failed restore, not an empty project.
+            self._end_restore()
+            lines = ["Session not loaded: no well could be restored; your open project is unchanged"]
+            self.show_banner("warning", "\n".join(lines + list(notes)))
+            self.statusBar.showMessage("Failed to load session")
+            return
         self._restore_worker = None
+        self._set_busy(None)
+        self._set_progress(0, "")
+        # The swap: every well is built, so the old project can go.
+        self.batch_runner.cancel()
+        self.model.reset()
+        self.model.set_edit_scope("project")
+        self.session_service.apply_session_to_model(self.model, session_data)
+        notes = session_level_notes(session_data) + list(notes)
         self._bulk_loading = True
         try:
             notes = self.session_service.install_wells(
                 self.model, datasets, self._restore_active_key, notes)
         finally:
             self._bulk_loading = False
-        self._set_busy(None)
-        self._set_progress(0, "")
         self._update_ui_from_model()
         self._refresh_active_well_ui()
         # Restored wells have no results and need a run.

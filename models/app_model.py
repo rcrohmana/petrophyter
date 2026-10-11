@@ -12,6 +12,21 @@ from models.project import Project, WellDataset, default_curve_mapping, make_wel
 
 SCOPE_PROJECT, SCOPE_WELL = "project", "well"
 
+# The merge dialog's ranges (ft); every other path (session JSON, setters) is clamped to them.
+MERGE_STEP_RANGE = (0.1, 1.0)
+MERGE_GAP_RANGE = (1.0, 50.0)
+
+
+def clamp_merge_value(value, limits, fallback):
+    """``value`` limited to ``limits``; ``fallback`` when it is not a finite number."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    if number != number or number in (float("inf"), float("-inf")):
+        return fallback
+    return min(max(number, limits[0]), limits[1])
+
 
 class AppModel(QObject):
     """
@@ -810,7 +825,7 @@ class AppModel(QObject):
 
     @merge_step.setter
     def merge_step(self, value: float):
-        self._merge_step = value
+        self._merge_step = clamp_merge_value(value, MERGE_STEP_RANGE, self._merge_step)
 
     @property
     def merge_gap_limit(self) -> float:
@@ -818,7 +833,7 @@ class AppModel(QObject):
 
     @merge_gap_limit.setter
     def merge_gap_limit(self, value: float):
-        self._merge_gap_limit = value
+        self._merge_gap_limit = clamp_merge_value(value, MERGE_GAP_RANGE, self._merge_gap_limit)
 
     # =========================================================================
     # PROPERTIES - CORE DATA SETTINGS

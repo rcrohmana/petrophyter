@@ -13,7 +13,14 @@ import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
+from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
+from version import APP_VERSION, version_tuple
+
 logger = logging.getLogger(__name__)
+
+# First release whose calculations differ from what older sessions displayed (P0 I10).
+# A session saved before it gets a notice, but only once the running app is at least this version.
+CALC_CHANGE_VERSION = "1.7.2"
 
 
 class RestoreCancelled(Exception):
@@ -115,6 +122,95 @@ def is_v2_session(session_data: Dict) -> bool:
 _is_v2 = is_v2_session
 
 
+def session_app_version(data) -> Optional[str]:
+    """The ``_app_version`` a session was saved by, or None (v1.7.0 and older write none)."""
+    value = data.get("_app_version") if isinstance(data, dict) else None
+    return str(value) if value not in (None, "") else None
+
+
+def app_version_notes(data) -> List[str]:
+    """Non-modal notice for a session saved before the calculation changes (P0 I10).
+
+    Empty while the running app is older than ``CALC_CHANGE_VERSION``, so v1.7.1 shows nothing.
+    """
+    if version_tuple(APP_VERSION) < version_tuple(CALC_CHANGE_VERSION):
+        return []
+    saved = session_app_version(data)
+    if saved is not None and version_tuple(saved) >= version_tuple(CALC_CHANGE_VERSION):
+        return []
+    return [
+        f"Saved by Petrophyter {saved or '1.7.0 or older'}. Calculations changed in "
+        f"{CALC_CHANGE_VERSION} (porosity, Dual-Water and Waxman-Smits Sw, auto Rw, pay thickness "
+        f"and averages); Run to see the corrected results. See the {CALC_CHANGE_VERSION} release notes."
+    ]
+
+
+def _is_number(value) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and value == value and abs(value) != float("inf"))
+
+
+def validate_session(data) -> List[str]:
+    """Shape problems that would make a restore fail midway; empty when the session is usable.
+
+    Run before anything is cancelled or reset, so a malformed file leaves the open project alone.
+    """
+    if not isinstance(data, dict):
+        return ["the session file does not hold a JSON object"]
+    problems: List[str] = []
+    for key in ("merge_step", "merge_gap_limit"):
+        if key in data and data[key] is not None and not _is_number(data[key]):
+            problems.append(f"{key} is not a finite number")
+    wells = data.get("wells")
+    if wells is None:
+        return problems
+    if not isinstance(wells, list):
+        return problems + ["wells is not a list"]
+    for index, entry in enumerate(wells, 1):
+        if not isinstance(entry, dict):
+            problems.append(f"well entry {index} is not an object")
+            continue
+        sources = entry.get("sources", [])
+        if sources is None:
+            sources = []
+        if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources):
+            problems.append(f"well entry {index}: sources is not a list of file paths")
+        for key in ("merge_step", "merge_gap_limit"):
+            if entry.get(key) is not None and not _is_number(entry[key]):
+                problems.append(f"well entry {index}: {key} is not a finite number")
+    return problems
+
+
+def clamp_merge(step, gap, label: Optional[str] = None):
+    """``(step, gap, notes)`` limited to the merge dialog's ranges (H5); a change adds a note."""
+    notes: List[str] = []
+    prefix = f"{label}: " if label else ""
+    new_step = clamp_merge_value(step, MERGE_STEP_RANGE, 0.5)
+    new_gap = clamp_merge_value(gap, MERGE_GAP_RANGE, 5.0)
+    if new_step != step:
+        notes.append(f"{prefix}merge step {step} ft is outside {MERGE_STEP_RANGE[0]}-"
+                     f"{MERGE_STEP_RANGE[1]} ft; used {new_step} ft.")
+    if new_gap != gap:
+        notes.append(f"{prefix}merge gap limit {gap} ft is outside {MERGE_GAP_RANGE[0]:g}-"
+                     f"{MERGE_GAP_RANGE[1]:g} ft; used {new_gap} ft.")
+    return new_step, new_gap, notes
+
+
+def session_level_notes(data) -> List[str]:
+    """Load notes about the session as a whole: clamped project merge values, old app version."""
+    notes: List[str] = []
+    if isinstance(data, dict):
+        flat = dict(data.get("global_params") or {}) if is_v2_session(data) else dict(data)
+        for source in (flat, data):
+            if source.get("merge_step") is not None or source.get("merge_gap_limit") is not None:
+                _, _, found = clamp_merge(source.get("merge_step", 0.5),
+                                          source.get("merge_gap_limit", 5.0))
+                for note in found:
+                    if note not in notes:
+                        notes.append(note)
+    return notes + app_version_notes(data)
+
+
 def attach_tops(well, path: str) -> List[str]:
     """Read a tops file for ``well`` and attach it; returns notes (empty when fine).
 
@@ -190,7 +286,8 @@ def _log_bounds(well):
         return None
 
 
-def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict] = None) -> bool:
+def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict] = None,
+                  notes: Optional[list] = None) -> bool:
     """Re-run a stored multi-well import for ``well`` exactly as it was made (session 2.1).
 
     Uses the record's columns, depth unit, sheet, fill-down and porosity scale, and forces
@@ -198,6 +295,11 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
     mapping such as "BKS-1" to "BKS-01" survives). ``cache`` holds parsed files for one
     restore. Returns False, changing nothing, when the file no longer holds any stored
     spelling or the replay fails; the caller then falls back to identity matching.
+
+    The stored ``tvd_confirmed`` decision is replayed, not assumed: when the file's depth
+    column is TVD and the record does not hold a confirmation (False, or absent in older
+    sessions) the import is refused: False is returned and a reason is appended to
+    ``notes``, which tells the caller not to fall back to a plain re-import.
     """
     import types
 
@@ -215,7 +317,8 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
             kind=kind, depth_unit=record.get("depth_unit"), fill_down=bool(record.get("fill_down")),
             last_bottom=record.get("last_bottom") or "log_bottom",
             sheet=record.get("sheet") or 0, columns=dict(record.get("columns") or {}) or None,
-            porosity_scales=scales, tvd_confirmed=True)
+            porosity_scales=scales,
+            tvd_confirmed=bool(record.get("tvd_confirmed")))
         cache_key = (os.path.normcase(os.path.abspath(path)), kind, str(options.sheet),
                      options.fill_down, json.dumps(options.columns, sort_keys=True),
                      json.dumps(scales, sort_keys=True))
@@ -224,6 +327,11 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
             parsed = parse_import_file(path, options)
             if cache is not None:
                 cache[cache_key] = parsed
+        if getattr(parsed, "depth_is_tvd", False) and not options.tvd_confirmed:
+            if notes is not None:
+                notes.append(f"the {kind} file now has a TVD depth column; "
+                             f"import it again to confirm.")
+            return False
         wells = well_refs(types.SimpleNamespace(wells=[well], zone_params={}), kind)
         plan = build_import_plan(parsed, path, wells, options)
         wanted = {group_key(s, parsed.well_kind) for s in record.get("spellings") or []}
@@ -249,8 +357,11 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
 
 
 def _restore_tops(ds, path: str, record: Optional[dict], cache: dict) -> List[str]:
-    if record and replay_import(ds, "tops", path, record, cache):
+    refused: List[str] = []
+    if record and replay_import(ds, "tops", path, record, cache, refused):
         return []
+    if refused:
+        return refused          # a refused TVD import is not retried by well name
     notes = []
     if record:
         notes.append("the stored import no longer matches the tops file; matched by well name instead.")
@@ -258,8 +369,11 @@ def _restore_tops(ds, path: str, record: Optional[dict], cache: dict) -> List[st
 
 
 def _restore_core(ds, path: str, record: Optional[dict], depth_unit: str, cache: dict) -> List[str]:
-    if record and replay_import(ds, "core", path, record, cache):
+    refused: List[str] = []
+    if record and replay_import(ds, "core", path, record, cache, refused):
         return []
+    if refused:
+        return refused
     notes = []
     if record:
         notes.append("the stored import no longer matches the core file; matched by well name instead.")
@@ -603,8 +717,10 @@ class SessionService(QObject):
         if not _is_v2(session_data):
             return datasets, notes
         entries = session_data.get("wells") or []
-        step = session_data.get("merge_step", default_merge[0])
-        gap = session_data.get("merge_gap_limit", default_merge[1])
+        # Defaults for entries that carry no recipe of their own; the note for a clamped
+        # project value comes from session_level_notes.
+        step, gap, _ = clamp_merge(session_data.get("merge_step", default_merge[0]),
+                                   session_data.get("merge_gap_limit", default_merge[1]))
         parse_cache: dict = {}      # parsed tops / core files, shared by the wells of one restore
         total = len(entries)
         for index, entry in enumerate(entries):
@@ -658,6 +774,8 @@ class SessionService(QObject):
     @staticmethod
     def _restore_one_well(entry, step, gap, notes, parse_file, build_well, LASHandler,
                           parse_cache=None):
+        from modules.las_handler import MERGE_POLICY
+
         if parse_cache is None:
             parse_cache = {}
         label = entry.get("display_name") or entry.get("key") or "well"
@@ -677,13 +795,33 @@ class SessionService(QObject):
             notes.append(f"{label}: could not read {bad[0].name} ({bad[0].error}); skipped.")
             return None
         merge_result = None
+        recipe = None
         if len(files) > 1:
+            # The well's own recipe (H1); the project-wide values only stand in for a well
+            # whose entry has none. Both are limited to the merge dialog's ranges (H5).
+            own_step = entry.get("merge_step")
+            own_gap = entry.get("merge_gap_limit")
+            use_step, use_gap, clamp_notes = clamp_merge(
+                step if own_step is None else own_step,
+                gap if own_gap is None else own_gap, label)
+            notes.extend(clamp_notes)
             merge_result = LASHandler().merge_las_files(
                 [f.parser for f in files], file_identifiers=[f.name for f in files],
-                step_ft=entry.get("merge_step", step),
-                gap_limit_ft=entry.get("merge_gap_limit", gap),
+                step_ft=use_step, gap_limit_ft=use_gap,
             )
+            recipe = {"step": use_step, "gap_limit": use_gap, "policy": MERGE_POLICY}
         ds = build_well(files, merge_result)
+        if recipe is not None and ds.merge_recipe is None:
+            ds.merge_recipe = recipe    # build_well sets it from the merge report when it can
+        stored_policy = entry.get("merge_policy")
+        if not isinstance(stored_policy, int) or isinstance(stored_policy, bool):
+            stored_policy = 0       # absent (v1.7.0 and older) or unreadable
+        if recipe is not None and stored_policy < MERGE_POLICY:
+            notes.append(
+                f"{label}: Merged again with the 1.7.1 merge rules (no edge extrapolation, "
+                f"resistivity interpolated in log10). The step recorded by the older version "
+                f"({use_step:g} ft) may be the step of a later merge rather than this well's; "
+                f"check the row count ({len(ds.las_data)} rows) against your merge.")
         if entry.get("key"):
             ds.key = entry["key"]
         if entry.get("display_name"):
@@ -756,13 +894,26 @@ class SessionService(QObject):
             paths = [s_.get("path") for s_ in ds.sources if s_.get("path")]
             if not paths and ds.las_filename and os.path.isfile(str(ds.las_filename)):
                 paths = [ds.las_filename]
+            # Per-well settings come from the dataset, never from global state (H1).
+            recipe = getattr(ds, "merge_recipe", None)
+            merge_keys = {}
+            if recipe:
+                merge_keys = {"merge_step": recipe.get("step"),
+                              "merge_gap_limit": recipe.get("gap_limit"),
+                              "merge_policy": recipe.get("policy")}
+            elif ds.merged:
+                # Only for a merged well built before the recipe existed: the model's last
+                # merge values are the best available guess for it.
+                from modules.las_handler import MERGE_POLICY
+                merge_keys = {"merge_step": getattr(model, "merge_step", 0.5),
+                              "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
+                              "merge_policy": MERGE_POLICY}
             wells.append({
                 "key": ds.key,
                 "display_name": ds.display_name,
                 "sources": paths,
                 "merged": bool(ds.merged),
-                "merge_step": getattr(model, "merge_step", 0.5),
-                "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
+                **merge_keys,
                 "curve_mapping": dict(ds.curve_mapping),
                 "analysis_mode": ds.analysis_mode,
                 "selected_formations": list(ds.selected_formations),
@@ -772,11 +923,11 @@ class SessionService(QObject):
                 "core_path": getattr(ds, "core_path", None),
                 "tops_import": getattr(ds, "tops_import", None),
                 "core_import": getattr(ds, "core_import", None),
-                "core_depth_unit": getattr(ds, "core_depth_unit", None)
-                or getattr(model, "core_depth_unit", "Auto"),
+                "core_depth_unit": getattr(ds, "core_depth_unit", None),
             })
         data = {
             "_session_version": self.SESSION_VERSION,
+            "_app_version": APP_VERSION,
             "global_params": global_params,
             "zone_params": getattr(project, "zone_params", {}) if project is not None else {},
             "wells": wells,
