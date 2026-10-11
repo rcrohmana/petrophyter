@@ -81,6 +81,18 @@ CASES = {
         "params": {"analysis_mode": "Per-Formation", "selected_formations": ["Lower"]},
         "tops": True,
     },
+    "dual_water_primary": {
+        "data": "dual_water_data",
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 20.0,
+            "gr_max_manual": 120.0,
+            "primary_phie_method": "PHIE_DN",
+            "sw_methods": ["Archie", "Waxman-Smits", "Dual-Water"],
+            "sw_primary_method": "Dual-Water",
+            "swirr_method": "Buckles Number",
+        },
+    },
     "no_rt_no_dt": {"data": "sample_log_data", "drop": ["RT", "DT"], "params": {}},
     "mixed_depth_step": {"builder": mixed_depth_step_data, "params": {}},
 }

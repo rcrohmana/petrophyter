@@ -173,6 +173,24 @@ def gas_zone_data():
     return data
 
 
+@pytest.fixture
+def dual_water_data():
+    """Moderately shaly sand (Vsh 0.2-0.4 on a 20/120 API baseline) with density-neutron porosity."""
+    np.random.seed(7)
+    n_samples = 60
+
+    data = pd.DataFrame({
+        'DEPTH': np.linspace(2000, 2060, n_samples),
+        'GR': 40 + 20 * np.random.random(n_samples),
+        'RHOB': 2.28 + 0.12 * np.random.random(n_samples),
+        'NPHI': 0.20 + 0.08 * np.random.random(n_samples),
+        'DT': 85 + 15 * np.random.random(n_samples),
+        'RT': 1.5 * 27 ** np.random.random(n_samples),  # 1.5-40 ohm.m, log-uniform
+    })
+
+    return data
+
+
 def _skip_reason(report):
     longrepr = report.longrepr
     if isinstance(longrepr, tuple) and len(longrepr) == 3:

@@ -164,11 +164,24 @@
  "rw": 0.05,
  "rw_source": "manual",
  "selected_formations": [],
- "solver_diagnostics": {},
- "swirr_mean": 0.33136920993567365,
+ "solver_diagnostics": {
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 12,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 8,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
+ "swirr_mean": 0.3320393428612109,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
-  "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used."
+  "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+  "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+  "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum."
  ],
  "zones": []
 }

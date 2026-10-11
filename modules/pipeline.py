@@ -627,6 +627,130 @@ def _merge_diagnostics(total, diagnostics):
         counts["failed"] += int(diag.get("failed", 0))
 
 
+SW_MODEL_NAMES = {column: name for name, column in SW_COLUMN_MAP.items()}
+
+# Per-model counts in ``summary["solver_diagnostics"]`` (and per zone under ``"zones"``).
+SW_DIAGNOSTIC_KEYS = (
+    "no_root", "failed", "at_upper_bound", "at_lower_bound", "no_porosity",
+    "no_phit", "bvh_exceeds_phie", "phie_above_phit",
+)
+# Warn when more than this share of a zone's samples has inconsistent porosities.
+INCONSISTENT_POROSITY_SHARE = 0.05
+# Warn when more than this share of a zone's clean samples sits at the upper Sw bound.
+UPPER_BOUND_SHARE = 0.10
+
+
+def _concat_flags(frames, index):
+    """Per-sample flag frames of several calculators as one boolean frame on ``index``."""
+    return pd.concat(frames).reindex(index).fillna(False).astype(bool)
+
+
+def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutoff, warnings):
+    """``solver_diagnostics`` per Sw model and zone from the calculators' sample flags.
+
+    ``{column: {count: n, ..., "zones": {zone: {count: n, ..., "samples": N}}}}``;
+    ``"zones"`` is present when the well has formation zones. The counts are the
+    ``SW_DIAGNOSTIC_KEYS``; ``no_root`` and ``failed`` are the solver counts of
+    Waxman-Smits and Dual-Water. Appends a warning to ``warnings`` per model and
+    zone where more than 5 % of the samples have inconsistent porosities or more
+    than 10 % of the clean samples sit at the upper Sw bound (Sw > 1 before clipping).
+    """
+    frames = {}
+    for calc in calcs:
+        for column, flags in calc.sw_flags.items():
+            frames.setdefault(column, []).append(flags)
+    vsh_a = np.asarray(vsh, dtype=float)
+    zones = list(dict.fromkeys(labels.dropna())) if labels is not None else [None]
+    out = {}
+    for column in SW_COLUMN_MAP.values():
+        if column not in frames:
+            continue
+        flags = _concat_flags(frames[column], index)
+        name = SW_MODEL_NAMES[column]
+        entry = {key: int(flags[key].sum()) if key in flags else 0 for key in SW_DIAGNOSTIC_KEYS}
+        by_zone = {}
+        for zone in zones:
+            mask = (np.ones(len(index), dtype=bool) if zone is None
+                    else (labels == zone).to_numpy())
+            samples = int(mask.sum())
+            if not samples:
+                continue
+            counts = {key: int(flags.loc[mask, key].sum()) if key in flags else 0
+                      for key in SW_DIAGNOSTIC_KEYS}
+            counts["samples"] = samples
+            if zone is not None:
+                by_zone[zone] = counts
+            where = f" (zone {zone})" if zone is not None else ""
+            for key, text in (
+                ("bvh_exceeds_phie",
+                 "the hydrocarbon volume from total porosity is larger than the effective "
+                 "porosity can hold, so it was limited to PHIE"),
+                ("phie_above_phit", "effective porosity is above total porosity"),
+            ):
+                if counts[key] > INCONSISTENT_POROSITY_SHARE * samples:
+                    warnings.append(
+                        f"{name}{where}: {text} in {counts[key]} of {samples} samples. "
+                        "Check that PHIE and PHIT come from the same inputs."
+                    )
+            cutoff = vsh_cutoffs.get(zone, default_cutoff)
+            with np.errstate(invalid="ignore"):
+                clean = mask & (vsh_a < cutoff)
+            n_clean = int(clean.sum())
+            n_upper = int((flags["at_upper_bound"].to_numpy() & clean).sum())
+            if n_clean and n_upper > UPPER_BOUND_SHARE * n_clean:
+                warnings.append(
+                    f"{name}{where}: Sw > 1 before clipping in {n_upper} clean samples: "
+                    "check Rw, m, n or Rt."
+                )
+        if labels is not None:
+            entry["zones"] = by_zone
+        if entry["no_phit"]:
+            warnings.append(
+                f"{name}: {entry['no_phit']} samples have an effective porosity but no total "
+                f"porosity, so {name} has no Sw there."
+            )
+        out[column] = entry
+    return out
+
+
+def _swirr_warnings(calcs, index, warnings):
+    """Warn about Swirr samples that were limited or taken from Buckles; returns the fallback count."""
+    parts = [c.swirr_flags for c in calcs if c.swirr_flags is not None]
+    if not parts:
+        return 0
+    flags = _concat_flags(parts, index)
+    n_raised = int(flags["raised_to_floor"].sum()) if "raised_to_floor" in flags else 0
+    n_by_sw = int(flags["limited_by_sw"].sum()) if "limited_by_sw" in flags else 0
+    n_max = int(flags["limited_to_max"].sum()) if "limited_to_max" in flags else 0
+    if n_raised:
+        warnings.append(
+            f"Hierarchical Swirr: {n_raised} samples were raised to the 0.05 floor "
+            "(Swirr is never below 0.05, even where the measured Sw is)."
+        )
+    if n_by_sw:
+        warnings.append(
+            f"Hierarchical Swirr: {n_by_sw} samples were limited to the measured Sw "
+            "(Swirr cannot exceed Sw)."
+        )
+    if n_max:
+        warnings.append(f"Hierarchical Swirr: {n_max} samples were limited to the 0.60 maximum.")
+    n_fallback = int(flags["buckles_fallback"].sum()) if "buckles_fallback" in flags else 0
+    return n_fallback
+
+
+def _swirr_method_label(method, n_fallback, warnings):
+    """The Swirr method shown in the summary: the series actually used."""
+    if method == "All Methods":
+        return "All methods (Buckles used)"
+    if n_fallback:
+        warnings.append(
+            f"Swirr method {method}: no value for {n_fallback} samples; "
+            "Buckles Swirr was used for them."
+        )
+        return f"{method} (Buckles used for {n_fallback} samples)"
+    return method
+
+
 def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
@@ -772,6 +896,10 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
         # Never fabricate porosity: a sample without one has NaN Sw and no pay.
         phie = pd.Series(np.nan, index=data.index)
 
+    phit = calc.results.get("PHIT")
+    if phit is None:
+        phit = pd.Series(np.nan, index=data.index)
+
     if has_rt:
         selected = p["sw_methods"]
         if "Archie" in selected:
@@ -781,9 +909,12 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
         if "Simandoux" in selected:
             calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n)
         if "Waxman-Smits" in selected:
-            calc.calculate_sw_waxman_smits(rt_curve, phie, rw_eff, a, m, n, p["ws_qv"], ws_b)
+            # Total-porosity models: solved on PHIT, returned as effective Sw on PHIE.
+            calc.calculate_sw_waxman_smits(rt_curve, phit, rw_eff, a, m, n, p["ws_qv"], ws_b,
+                                           phie=phie)
         if "Dual-Water" in selected:
-            calc.calculate_sw_dual_water(rt_curve, phie, rw_eff, a, m, n, p["dw_swb"], rwb_eff)
+            calc.calculate_sw_dual_water(rt_curve, phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
+                                         phie=phie)
 
         primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
         if primary_col in calc.results.columns:
@@ -812,7 +943,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
             vsh_threshold=0.2,
             methods=SWIRR_METHOD_MAP.get(swirr_method, ["buckles"]),
         )
-    swirr = calc.results.get("SWIRR", pd.Series([0.2] * len(data), index=data.index))
+    # Every Swirr method sets SWIRR; no constant stands in for a missing one.
+    swirr = calc.results.get("SWIRR", pd.Series(np.nan, index=data.index))
 
     perm_timur = calc.calculate_permeability_timur(phie, swirr)
     calc.calculate_permeability_wyllie_rose(phie, swirr, p["perm_C"], p["perm_P"], p["perm_Q"])
@@ -1098,6 +1230,7 @@ def run_pipeline(
     )
     sources_by_zone = {}
     solver_raw = {}
+    flag_calcs = []     # calculators whose per-sample Sw / Swirr flags feed the diagnostics
 
     if not plan:
         emit("Calculating Swirr...", 65)
@@ -1107,6 +1240,7 @@ def run_pipeline(
         emit("Calculating net pay...", 85)
         summary = dict(pay["summary"])
         _merge_diagnostics(solver_raw, calc.solver_diagnostics)
+        flag_calcs.append(calc)
     else:
         # Planned zones run as their own segments; every other sample runs
         # together with the well's parameters.
@@ -1123,6 +1257,7 @@ def run_pipeline(
             pays.append(seg_pay)
             sources_by_zone[zone] = table
             _merge_diagnostics(solver_raw, seg_calc.solver_diagnostics)
+            flag_calcs.append(seg_calc)
         rest = ~labels.isin(zones)
         if rest.any():
             rest_data = data[rest]
@@ -1137,6 +1272,7 @@ def run_pipeline(
                                            rw, rsh, tctx, warnings, rsh_auto))
             parts.append(rest_calc.results)
             _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
+            flag_calcs.append(rest_calc)
         emit("Calculating net pay...", 85)
         calc.results = pd.concat(parts).reindex(data.index)
         pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
@@ -1170,7 +1306,8 @@ def run_pipeline(
     summary["rw_source"] = rw_source
     summary["rsh_source"] = rsh_source
     summary.update(rw_rsh_info)     # rw_quality and sample counts, only for auto Rw / Rsh
-    summary["swirr_method"] = p["swirr_method"]
+    swirr_fallback = _swirr_warnings(flag_calcs, data.index, warnings)
+    summary["swirr_method"] = _swirr_method_label(p["swirr_method"], swirr_fallback, warnings)
     summary["swirr_mean"] = pay["swirr"].mean()
     summary["analysis_mode"] = analysis_mode
     summary["selected_formations"] = selected_formations
@@ -1208,13 +1345,20 @@ def run_pipeline(
             labels, (pay["vsh"], pay["phie"], pay["sw"]),
             _sample_dz(data), param_sources)
 
-    solver_diagnostics = {}
+    vsh_cutoffs = {}
+    for zone in (dict.fromkeys(labels.dropna()) if labels is not None else ()):
+        try:
+            vsh_cutoffs[zone] = float(param_sources[zone]["vsh_cutoff"]["value"])
+        except (KeyError, TypeError, ValueError):
+            pass
+    solver_diagnostics = _sw_solver_diagnostics(
+        flag_calcs, labels, data.index, pay["vsh"], vsh_cutoffs, p["vsh_cutoff"], warnings
+    )
     for method, diagnostics in solver_raw.items():
-        counts = {
+        counts = solver_diagnostics.setdefault(method, {
             "no_root": int(diagnostics.get("no_root", 0)),
             "failed": int(diagnostics.get("failed", 0)),
-        }
-        solver_diagnostics[method] = counts
+        })
         if counts["no_root"] or counts["failed"]:
             warnings.append(
                 f"{method}: {counts['no_root']} no-root, {counts['failed']} failed solver points."

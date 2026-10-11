@@ -1,0 +1,208 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.14848803281035192,
+ "avg_sw_pay": 0.16379915282935958,
+ "avg_vsh_pay": 0.3026533779241857,
+ "data_points": 60,
+ "gr_max": 120.0,
+ "gr_min": 20.0,
+ "gross_sand": 61.01694915254245,
+ "hcpv_gross": 7.26438543707747,
+ "hcpv_net_pay": 7.071138157139227,
+ "hcpv_net_res": 7.26438543707747,
+ "net_pay": 56.9491525423731,
+ "net_reservoir": 61.01694915254245,
+ "ng_pay": 0.9333333333333357,
+ "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     20.0,
+     120.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto unavailable (fallback: project)",
+    "value": 5.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 8.456267631233633,
+ "rsh": 5.0,
+ "rsh_shale_samples": 0,
+ "rsh_source": "manual (auto estimate unavailable)",
+ "rw": 0.05,
+ "rw_source": "manual",
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_ARCHIE": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 9,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  },
+  "SW_DW": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 23,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  },
+  "SW_WS": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 27,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
+ "swirr_mean": 0.13714086402686906,
+ "swirr_method": "Buckles Number",
+ "warnings": [
+  "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
+  "Archie: Sw > 1 before clipping in 9 clean samples: check Rw, m, n or Rt.",
+  "Waxman-Smits: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 27 of 60 samples. Check that PHIE and PHIT come from the same inputs.",
+  "Dual-Water: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 23 of 60 samples. Check that PHIE and PHIT come from the same inputs."
+ ],
+ "zones": []
+}

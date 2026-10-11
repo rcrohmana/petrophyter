@@ -569,3 +569,155 @@ class TestPipelinePorosityPaths:
         mapping = {"GR": "GR", "RHOB": "None", "NPHI": "None", "DT": "DT", "RT": "RT"}
         results, _ = self._run(sample_log_data, mapping)
         np.testing.assert_allclose(results["PHIT"], results["PHIS"])
+
+
+# ---------------------------------------------------------------------------
+# C7 Hierarchical Swirr: floor last, counts reach the summary
+# C15 The selected Swirr method feeds SWIRR and permeability
+# ---------------------------------------------------------------------------
+from modules.pipeline import PARAM_DEFAULTS, run_pipeline
+
+_FULL_MAPPING = {"GR": "GR", "RHOB": "RHOB", "NPHI": "NPHI", "DT": "DT", "RT": "RT"}
+
+
+class TestHierarchicalSwirrOrder:
+    def _calc(self, n):
+        return PetrophysicsCalculator(pd.DataFrame({"RT": np.ones(n)}))
+
+    def test_floor_is_applied_last(self):
+        calc = self._calc(4)
+        phie = pd.Series([0.25] * 4)
+        sw = pd.Series([0.02, 0.04, 0.30, 0.90])      # first two below the 0.05 floor
+        swirr, info = calc.calculate_swirr_hierarchical(
+            phie=phie, sw=sw, vsh=pd.Series([0.5] * 4), k_buckles=0.02)
+        assert (swirr >= 0.05).all()
+        assert swirr.tolist() == pytest.approx([0.05, 0.05, 0.08, 0.08])
+        assert info["raised_to_floor"] == 2
+
+    def test_counts_are_taken_before_clipping(self):
+        calc = self._calc(5)
+        phie = pd.Series([0.25, 0.25, 0.25, 0.02, 0.02])   # Buckles 0.08, 0.08, 0.08, 1.0, 1.0
+        sw = pd.Series([0.9, 0.9, 0.06, 1.0, 1.0])
+        swirr, info = calc.calculate_swirr_hierarchical(
+            phie=phie, sw=sw, vsh=pd.Series([0.5] * 5), k_buckles=0.02)
+        assert info["limited_by_sw"] == 1      # 0.08 > 0.06
+        assert info["limited_to_max"] == 2     # 1.0 -> 0.60
+        assert info["raised_to_floor"] == 0
+        assert swirr.tolist() == pytest.approx([0.08, 0.08, 0.06, 0.60, 0.60])
+
+    def test_nan_sw_gives_nan_swirr_and_is_not_counted(self):
+        calc = self._calc(2)
+        swirr, info = calc.calculate_swirr_hierarchical(
+            phie=pd.Series([0.25, 0.25]), sw=pd.Series([np.nan, 0.5]),
+            vsh=pd.Series([0.5, 0.5]), k_buckles=0.02)
+        assert np.isnan(swirr[0]) and info["samples"] == 1
+
+    def _hydrocarbon_well(self, rt):
+        n = 30
+        return pd.DataFrame({
+            "DEPTH": np.linspace(1000, 1029, n), "GR": np.full(n, 25.0),
+            "RHOB": np.full(n, 2.35), "NPHI": np.full(n, 0.20), "DT": np.full(n, 90.0),
+            "RT": np.full(n, rt),
+        })
+
+    def test_counts_reach_the_summary_warnings(self):
+        params = {**PARAM_DEFAULTS, "vsh_baseline_method": "Custom (Manual)"}
+        results, summary = run_pipeline(self._hydrocarbon_well(2000.0), _FULL_MAPPING, params)
+        assert (results["SW"] < 0.05).all()
+        assert (results["SWIRR"] >= 0.05).all()
+        assert ("Hierarchical Swirr: 30 samples were raised to the 0.05 floor "
+                "(Swirr is never below 0.05, even where the measured Sw is).") in summary["warnings"]
+
+    def test_limit_to_maximum_reaches_the_summary_warnings(self):
+        data = self._hydrocarbon_well(1.0)
+        data["RHOB"] = 2.64      # tight: Buckles Swirr above 0.60
+        data["NPHI"] = -0.01
+        params = {**PARAM_DEFAULTS, "vsh_baseline_method": "Custom (Manual)"}
+        results, summary = run_pipeline(data, _FULL_MAPPING, params)
+        assert (results["SWIRR"] <= 0.60).all()
+        assert any(w.startswith("Hierarchical Swirr:") and "limited to the 0.60 maximum" in w
+                   for w in summary["warnings"])
+
+
+class TestSelectedSwirrMethod:
+    def _data(self):
+        n = 40
+        rng = np.random.default_rng(3)
+        return pd.DataFrame({
+            "DEPTH": np.linspace(1000, 1039, n), "GR": rng.uniform(20, 45, n),
+            "RHOB": rng.uniform(2.28, 2.42, n), "NPHI": rng.uniform(0.18, 0.26, n),
+            "DT": np.full(n, 90.0), "RT": rng.uniform(40, 120, n),
+        })
+
+    def _run(self, method, data=None):
+        params = {**PARAM_DEFAULTS, "vsh_baseline_method": "Custom (Manual)", "swirr_method": method}
+        return run_pipeline(self._data() if data is None else data, _FULL_MAPPING, params)
+
+    def test_clean_zone_value_feeds_swirr_and_permeability(self):
+        results, summary = self._run("Clean Zone")
+        value = results["SWIRR_CLEANZONE"].iloc[0]
+        assert results["SWIRR_CLEANZONE"].nunique() == 1
+        np.testing.assert_allclose(results["SWIRR"], value)
+        assert (results["SWIRR_METHOD"] == "clean_zone").all()
+        phie = results["PHIE"].clip(lower=0.001)
+        p = PARAM_DEFAULTS
+        expected = (p["perm_C"] * phie ** p["perm_P"] / max(value, 0.05) ** p["perm_Q"]).clip(0.001, 50000)
+        np.testing.assert_allclose(results["PERM_WR"], expected, rtol=1e-12)
+        assert summary["swirr_method"] == "Clean Zone"
+
+    def test_a_clean_zone_value_of_0_0993_is_used_for_permeability(self, monkeypatch):
+        def fixed(self, sw=None, vsh=None, vsh_threshold=0.2, sw_threshold=0.5):
+            series = pd.Series(0.0993, index=self.data.index)
+            self.results["SWIRR_CLEANZONE"] = series
+            return series
+        monkeypatch.setattr(PetrophysicsCalculator, "calculate_swirr_clean_zone", fixed)
+        results, _ = self._run("Clean Zone")
+        np.testing.assert_allclose(results["SWIRR"], 0.0993)
+        phie = results["PHIE"].clip(lower=0.001)
+        p = PARAM_DEFAULTS
+        expected = (p["perm_C"] * phie ** p["perm_P"] / 0.0993 ** p["perm_Q"]).clip(0.001, 50000)
+        np.testing.assert_allclose(results["PERM_WR"], expected, rtol=1e-12)
+        # The old constant 0.2 gave a K (0.0993 / 0.2)^2 = 4.06 times lower (Q = 2).
+        old = (p["perm_C"] * phie ** p["perm_P"] / 0.2 ** p["perm_Q"]).clip(0.001, 50000)
+        assert (expected > 3 * old).all()
+
+    def test_statistical_value_feeds_swirr(self):
+        results, summary = self._run("Statistical")
+        np.testing.assert_allclose(results["SWIRR"], results["SWIRR_STAT"])
+        assert (results["SWIRR_METHOD"] == "statistical").all()
+        assert summary["swirr_method"] == "Statistical"
+
+    def test_buckles_number_feeds_swirr(self):
+        results, _ = self._run("Buckles Number")
+        np.testing.assert_allclose(results["SWIRR"], results["SWIRR_BUCKLES"])
+
+    def test_all_methods_keeps_buckles(self):
+        results, summary = self._run("All Methods")
+        np.testing.assert_allclose(results["SWIRR"], results["SWIRR_BUCKLES"])
+        assert {"SWIRR_BUCKLES", "SWIRR_CLEANZONE", "SWIRR_STAT"} <= set(results.columns)
+        assert summary["swirr_method"] == "All methods (Buckles used)"
+
+    def test_missing_value_falls_back_to_buckles_with_a_warning(self, monkeypatch):
+        def partial(self, sw=None, vsh=None, vsh_threshold=0.2, sw_threshold=0.5):
+            series = pd.Series(0.12, index=self.data.index)
+            series.iloc[:5] = np.nan
+            self.results["SWIRR_CLEANZONE"] = series
+            return series
+        monkeypatch.setattr(PetrophysicsCalculator, "calculate_swirr_clean_zone", partial)
+        results, summary = self._run("Clean Zone")
+        buckles = (PARAM_DEFAULTS["k_buckles"] / results["PHIE"].clip(lower=0.01)).clip(0.05, 0.5)
+        np.testing.assert_allclose(results["SWIRR"].iloc[:5], buckles.iloc[:5])
+        np.testing.assert_allclose(results["SWIRR"].iloc[5:], 0.12)
+        assert results["SWIRR_METHOD"].iloc[:5].eq("buckles").all()
+        assert "SWIRR_BUCKLES" not in results.columns     # computed for the fallback only
+        assert ("Swirr method Clean Zone: no value for 5 samples; "
+                "Buckles Swirr was used for them.") in summary["warnings"]
+        assert summary["swirr_method"] == "Clean Zone (Buckles used for 5 samples)"
+
+    def test_no_constant_fallback_without_rt(self):
+        data = self._data().drop(columns="RT")
+        mapping = {**_FULL_MAPPING, "RT": "None"}
+        params = {**PARAM_DEFAULTS, "vsh_baseline_method": "Custom (Manual)",
+                  "swirr_method": "Buckles Number"}
+        results, _ = run_pipeline(data, mapping, params)
+        assert not (results["SWIRR"] == 0.2).all()

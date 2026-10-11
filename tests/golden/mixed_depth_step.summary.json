@@ -164,9 +164,22 @@
  "rw": 0.05,
  "rw_source": "manual",
  "selected_formations": [],
- "solver_diagnostics": {},
+ "solver_diagnostics": {
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 28,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
  "swirr_mean": 0.14156094971753586,
  "swirr_method": "Hierarchical (Recommended)",
- "warnings": [],
+ "warnings": [
+  "Hierarchical Swirr: 7 samples were limited to the measured Sw (Swirr cannot exceed Sw)."
+ ],
  "zones": []
 }

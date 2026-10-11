@@ -170,10 +170,12 @@ def test_dual_water_rwb_is_corrected_with_the_rw_reference_temperature():
     results, _ = run_pipeline(df, MAPPING, {**dw, "temp_correction": True})
     factor = factor_of(df)
     expected = PetrophysicsCalculator(df).calculate_sw_dual_water(
-        "RT", results["PHIE"], RW * factor, 0.62, 2.15, 2.0, 0.1, 0.2 * factor)
+        "RT", results["PHIT"], RW * factor, 0.62, 2.15, 2.0, 0.1, 0.2 * factor,
+        phie=results["PHIE"])
     np.testing.assert_allclose(results["SW_DW"], expected, rtol=1e-12, equal_nan=True)
     wrong = PetrophysicsCalculator(df).calculate_sw_dual_water(
-        "RT", results["PHIE"], RW * factor, 0.62, 2.15, 2.0, 0.1, 0.2)
+        "RT", results["PHIT"], RW * factor, 0.62, 2.15, 2.0, 0.1, 0.2,
+        phie=results["PHIE"])
     assert not np.allclose(results["SW_DW"], wrong, equal_nan=True)
 
 
@@ -211,12 +213,12 @@ def test_ws_b_from_temperature_uses_rw_at_formation_temperature():
     rw_eff = RW * factor
     b = np.array([juhasz_by_hand(float(t), float(r)) for t, r in zip(temp_at(df["DEPTH"]), rw_eff)])
     expected = PetrophysicsCalculator(df).calculate_sw_waxman_smits(
-        "RT", on["PHIE"], rw_eff, 0.62, 2.15, 2.0, 0.2, b)
+        "RT", on["PHIT"], rw_eff, 0.62, 2.15, 2.0, 0.2, b, phie=on["PHIE"])
     np.testing.assert_allclose(on["SW_WS"], expected, rtol=1e-12, equal_nan=True)
     # Rw at the reference temperature would give a different B, and so a different Sw.
     b_ref = np.array([juhasz_by_hand(float(t), RW) for t in temp_at(df["DEPTH"])])
     wrong = PetrophysicsCalculator(df).calculate_sw_waxman_smits(
-        "RT", on["PHIE"], rw_eff, 0.62, 2.15, 2.0, 0.2, b_ref)
+        "RT", on["PHIT"], rw_eff, 0.62, 2.15, 2.0, 0.2, b_ref, phie=on["PHIE"])
     assert not np.allclose(on["SW_WS"], wrong, equal_nan=True)
     assert not np.allclose(on["SW_WS"], off["SW_WS"], equal_nan=True)
     assert summary["temperature"]["kind"] == "md"
@@ -230,7 +232,7 @@ def test_ws_b_from_temperature_without_rw_correction_warns_and_uses_entered_rw()
     assert any("WS B from temperature uses Rw as entered" in w for w in summary["warnings"])
     b = np.array([juhasz_by_hand(float(t), RW) for t in temp_at(df["DEPTH"])])
     expected = PetrophysicsCalculator(df).calculate_sw_waxman_smits(
-        "RT", results["PHIE"], RW, 0.62, 2.15, 2.0, 0.2, b)
+        "RT", results["PHIT"], RW, 0.62, 2.15, 2.0, 0.2, b, phie=results["PHIE"])
     np.testing.assert_allclose(results["SW_WS"], expected, rtol=1e-12, equal_nan=True)
 
 

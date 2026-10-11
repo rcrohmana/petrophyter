@@ -167,6 +167,7 @@
  "swirr_mean": 0.3124247430548857,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
+  "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
   "Water saturation defaulted to 1.0 because no RT curve was available."
  ],
  "zones": []

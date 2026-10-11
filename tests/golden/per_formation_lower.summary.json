@@ -307,11 +307,37 @@
  "selected_formations": [
   "Lower"
  ],
- "solver_diagnostics": {},
+ "solver_diagnostics": {
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 5,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 4,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 5,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 4,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 60
+    }
+   }
+  }
+ },
  "swirr_mean": 0.3051239776536887,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
-  "auto Rsh of 65.81 ohm.m is outside the allowed range 0.5 to 50; 50 is used."
+  "auto Rsh of 65.81 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+  "Hierarchical Swirr: 26 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+  "Hierarchical Swirr: 12 samples were limited to the 0.60 maximum."
  ],
  "zone_diagnostics": {
   "LOWER": {

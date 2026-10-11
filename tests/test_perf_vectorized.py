@@ -207,15 +207,19 @@ def test_ws_dw_match_old(seed):
     phi[rng.integers(0, n, 50)] = np.nan
     calc = _calc(rt, phi)
     phie = pd.Series(phi, index=calc.data.index)
+    # C6: a porosity at or below 0.001 with a valid RT gives Sw 1.0 (the old solvers gave NaN).
+    no_pore = ~np.isnan(rt) & ~np.isnan(phi) & (phi <= 0.001)
 
     got = calc.calculate_sw_waxman_smits("RT", phie, rw=0.05, a=1.0, m=2.0, n=2.0, qv=0.3, B=4.0)
     ref, diag = old_ws(rt, phi, 0.05, 1.0, 2.0, 2.0, 0.3, 4.0)
+    ref = np.where(no_pore, 1.0, ref)
     _same_nan(got.to_numpy(), ref)
     assert np.nanmax(np.abs(got.to_numpy() - ref)) < 1e-6
     assert calc.solver_diagnostics["SW_WS"] == diag
 
     got = calc.calculate_sw_dual_water("RT", phie, rw=0.05, a=1.0, m=2.0, n=2.0, swb=0.15, rwb=0.2)
     ref, diag = old_dw(rt, phi, 0.05, 1.0, 2.0, 2.0, 0.15, 0.2)
+    ref = np.where(no_pore, 1.0, ref)
     _same_nan(got.to_numpy(), ref)
     assert np.nanmax(np.abs(got.to_numpy() - ref)) < 1e-6
     assert calc.solver_diagnostics["SW_DW"] == diag

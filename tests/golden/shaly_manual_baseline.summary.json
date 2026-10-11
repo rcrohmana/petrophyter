@@ -167,7 +167,28 @@
  "rw_source": "manual (auto estimate unavailable)",
  "rw_water_samples": 0,
  "selected_formations": [],
- "solver_diagnostics": {},
+ "solver_diagnostics": {
+  "SW_ARCHIE": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  },
+  "SW_INDO": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
  "swirr_mean": 0.20466379984798894,
  "swirr_method": "Buckles Number",
  "warnings": [

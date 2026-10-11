@@ -310,3 +310,25 @@ class TestWeightedPayAverages:
         assert pay["avg_sw_pay"] == pytest.approx(
             (phie * sw * dz).sum() / (phie * dz).sum(), rel=1e-12)
         assert pay["phih_pay"] == pytest.approx((phie * dz).sum(), rel=1e-12)
+
+
+class TestHcpvWithTotalPorosityModels:
+    """C3: HCPV on PHIE and the effective Sw equals the total-porosity volume PHIT * (1 - Swt)."""
+
+    def test_dual_water_hcpv_frac_matches_the_total_porosity_volume(self):
+        calc = PetrophysicsCalculator(pd.DataFrame({"DEPTH": [1000.0, 1001.0], "RT": [20.0, 20.0]}))
+        phit, phie = pd.Series([0.25, 0.25]), pd.Series([0.225, 0.225])
+        sw = calc.calculate_sw_dual_water(
+            "RT", phit, rw=0.05, a=0.62, m=2.15, n=2.0, swb=0.1, rwb=0.2, phie=phie)
+        swt = calc.results["SWT_DW"]
+        assert swt[0] == pytest.approx(0.2162, abs=5e-5)
+        assert sw[0] == pytest.approx(0.1291, abs=5e-5)
+
+        hcpv = calc.calculate_hcpv(phie=phie, sw=sw, depth=calc.data["DEPTH"])
+        assert hcpv["HCPV_FRAC"][0] == pytest.approx(0.1959, abs=5e-5)
+        np.testing.assert_allclose(hcpv["HCPV_FRAC"], phit * (1 - swt), rtol=1e-12)
+
+        # The v1.7.0 pipeline solved on PHIE and read that Swt as effective: 12 % too little.
+        old_swt = PetrophysicsCalculator(calc.data).calculate_sw_dual_water(
+            "RT", phie, rw=0.05, a=0.62, m=2.15, n=2.0, swb=0.1, rwb=0.2)
+        assert (phie * (1 - old_swt))[0] == pytest.approx(0.1717, abs=5e-5)

@@ -190,6 +190,54 @@ def pay_summary(gross_flag, res_flag, pay_flag, vsh, phie, sw, dz) -> Dict[str, 
     }
 
 
+# A porosity at or below this holds no hydrocarbon: every Sw model returns 1.0.
+SW_MIN_POROSITY = 0.001
+
+
+def _effective_sw_detail(swt, phit, phie):
+    """``(swe, masks)`` of :func:`effective_sw`; ``masks`` holds the counted cases."""
+    swt_a, phit_a, phie_a = (np.asarray(x, dtype=float) for x in (swt, phit, phie))
+    swt_a, phit_a, phie_a = np.broadcast_arrays(swt_a, phit_a, phie_a)
+    known = np.isfinite(swt_a) & np.isfinite(phit_a) & np.isfinite(phie_a)
+    no_porosity = known & (phie_a <= SW_MIN_POROSITY)
+    usable = known & ~no_porosity
+    with np.errstate(all="ignore"):
+        bvh_model = phit_a * (1.0 - swt_a)
+        exceeds = usable & (bvh_model > phie_a)
+        bvh = np.where(exceeds, phie_a, bvh_model)
+        swe = np.clip(1.0 - bvh / phie_a, 0.0, 1.0)
+    swe = np.where(usable, swe, np.nan)
+    swe = np.where(no_porosity, 1.0, swe)
+    return swe, {
+        "no_porosity": no_porosity,
+        "bvh_exceeds_phie": exceeds,
+        "phie_above_phit": usable & (phie_a > phit_a),
+    }
+
+
+def effective_sw(swt, phit, phie):
+    """Effective water saturation from total saturation by hydrocarbon-volume conservation.
+
+    The total-porosity models (Waxman-Smits, Dual-Water) solve ``Swt`` on
+    ``PHIT``. The hydrocarbon volume they describe is ``PHIT * (1 - Swt)``; the
+    effective saturation that reproduces it on ``PHIE`` is::
+
+        BVH = min(PHIT * (1 - Swt), PHIE)
+        Swe = 1 - BVH / PHIE
+
+    For Dual-Water with ``PHIE = PHIT * (1 - Swb)`` this is the textbook
+    ``(Swt - Swb) / (1 - Swb)`` (Clavier, Coates and Dumanoir 1984). The volume
+    is exact when ``PHIT * (1 - Swt) <= PHIE``; otherwise the result never holds
+    more hydrocarbon than either porosity allows (``Swe`` then reaches 0). A
+    ``PHIE`` at or below 0.001 has no pore space: ``Swe`` is 1. Any NaN input
+    gives NaN. Returns a Series when ``swt`` is one, otherwise an array.
+    """
+    swe = _effective_sw_detail(swt, phit, phie)[0]
+    if isinstance(swt, pd.Series):
+        return pd.Series(swe, index=swt.index)
+    return swe
+
+
 class PetrophysicsCalculator:
     """
     Petrophysics calculations engine.
@@ -223,6 +271,13 @@ class PetrophysicsCalculator:
         # Per-method counts of solver fallbacks/failures, so callers can surface
         # how many points did not converge instead of failing silently.
         self.solver_diagnostics = {}
+        # Per-sample boolean flags of each Sw model (``{"SW_ARCHIE": DataFrame}``):
+        # samples at a bound, without pore space, without a root, and so on.
+        # The pipeline sums them per zone into ``summary["solver_diagnostics"]``.
+        self.sw_flags = {}
+        # Per-sample flags and the info dict of the last Swirr calculation.
+        self.swirr_flags = None
+        self.swirr_info = None
 
     def _make_series(self, fill_value) -> pd.Series:
         """
@@ -1081,6 +1136,55 @@ class PetrophysicsCalculator:
     # WATER SATURATION CALCULATIONS
     # =========================================================================
 
+    def _column(self, value, name: str = "value") -> np.ndarray:
+        """A scalar or one-value-per-row input as a float array of ``len(data)`` rows."""
+        values = np.asarray(value, dtype=float)
+        if values.ndim == 0:
+            return np.full(len(self.data), float(values))
+        if values.shape != (len(self.data),):
+            raise ValueError(f"{name} must have one value per data row")
+        return values
+
+    @staticmethod
+    def _sw_valid_mask(rt, porosity):
+        """The one validity rule of every Sw model.
+
+        Returns ``(solve, no_porosity)`` boolean arrays:
+
+        - RT or the model's porosity NaN: neither (Sw is NaN);
+        - the model's porosity at or below ``SW_MIN_POROSITY`` with a valid RT:
+          ``no_porosity`` (Sw is 1.0, there is no pore space to hold hydrocarbon);
+        - otherwise ``solve``.
+
+        The model's porosity is PHIE for Archie, Indonesian and Simandoux and
+        PHIT for Waxman-Smits and Dual-Water.
+        """
+        rt_a = np.asarray(rt, dtype=float)
+        phi_a = np.asarray(porosity, dtype=float)
+        known = ~(np.isnan(rt_a) | np.isnan(phi_a))
+        no_porosity = known & (phi_a <= SW_MIN_POROSITY)
+        return known & ~no_porosity, no_porosity
+
+    def _finish_sw(self, key, raw, solve, no_porosity, upper=None, lower=None, extra=None):
+        """Clip ``raw`` Sw to [0, 1], apply the validity rule, and record the bound counts.
+
+        ``upper``/``lower`` default to the samples whose unclipped Sw is at or
+        beyond 1 / 0; solver models pass their own masks (bracket fallbacks).
+        ``extra`` adds more per-sample flag columns to ``self.sw_flags[key]``.
+        """
+        raw = np.asarray(raw, dtype=float)
+        with np.errstate(invalid="ignore"):
+            if upper is None:
+                upper = solve & (raw >= 1.0)
+            if lower is None:
+                lower = solve & (raw <= 0.0)
+        sw = np.where(solve, np.clip(raw, 0.0, 1.0), np.nan)
+        sw = np.where(no_porosity, 1.0, sw)
+        flags = {"at_upper_bound": upper, "at_lower_bound": lower, "no_porosity": no_porosity}
+        flags.update(extra or {})
+        self.sw_flags[key] = pd.DataFrame(flags, index=self.data.index)
+        return pd.Series(sw, index=self.data.index)
+
     def calculate_sw_archie(
         self,
         rt_curve: str = "RT",
@@ -1104,7 +1208,8 @@ class PetrophysicsCalculator:
             n: Saturation exponent (2.0)
 
         Returns:
-            Water saturation series (0-1)
+            Water saturation series (0-1); NaN without RT or porosity, 1.0
+            where the porosity is at or below 0.001
         """
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
@@ -1120,16 +1225,19 @@ class PetrophysicsCalculator:
         if phie is None:
             phie = self.results.get("PHIE", self._make_series(0.15))
 
+        rt_a = self._column(rt, "rt")
+        phie_a = self._column(phie, "phie")
+        solve, no_porosity = self._sw_valid_mask(rt_a, phie_a)
+
         # Avoid division by zero
-        phie_safe = np.maximum(phie, 0.001)
-        rt_safe = np.maximum(rt, 0.001)
+        phie_safe = np.maximum(phie_a, SW_MIN_POROSITY)
+        rt_safe = np.maximum(rt_a, 0.001)
 
         # Archie equation
-        sw = np.power((a * rw) / (rt_safe * np.power(phie_safe, m)), 1 / n)
+        with np.errstate(all="ignore"):
+            raw = np.power((a * rw) / (rt_safe * np.power(phie_safe, m)), 1 / n)
 
-        # Clip to 0-1 range
-        sw = np.clip(sw, 0, 1)
-
+        sw = self._finish_sw("SW_ARCHIE", raw, solve, no_porosity)
         self.results["SW_ARCHIE"] = sw
         return sw
 
@@ -1160,7 +1268,8 @@ class PetrophysicsCalculator:
             a, m, n: Archie parameters
 
         Returns:
-            Water saturation series (0-1)
+            Water saturation series (0-1); NaN without RT or porosity, 1.0
+            where the porosity is at or below 0.001
         """
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
@@ -1186,9 +1295,10 @@ class PetrophysicsCalculator:
         # This replaces a per-row brentq solve whose fixed [0.001, 1.5] bracket
         # could fail (same-sign endpoints for very low Rt) and then silently fall
         # back to plain Archie -- dropping the Vsh term exactly where it matters.
-        phie_v = np.asarray(phie, dtype=float)
-        vsh_v = np.asarray(vsh, dtype=float)
-        rt_v = np.asarray(rt, dtype=float)
+        phie_v = self._column(phie, "phie")
+        vsh_v = self._column(vsh, "vsh")
+        rt_v = self._column(rt, "rt")
+        solve, no_porosity = self._sw_valid_mask(rt_v, phie_v)
 
         # Clip Vsh to [0, 1] so the fractional power stays well-defined.
         vsh_clip = np.clip(vsh_v, 0.0, 1.0)
@@ -1197,20 +1307,9 @@ class PetrophysicsCalculator:
             term1 = np.sqrt(np.power(phie_v, m) / (a * rw))
             term2 = np.power(vsh_clip, (1 - vsh_clip / 2)) / np.sqrt(rsh)
             lhs = 1.0 / np.sqrt(rt_v)
-            sw = np.power(lhs / (term1 + term2), 2.0 / n)
+            raw = np.power(lhs / (term1 + term2), 2.0 / n)
 
-        sw = np.clip(sw, 0, 1)
-
-        # Invalidate non-physical inputs (match previous NaN semantics).
-        invalid = (
-            np.isnan(rt_v)
-            | np.isnan(phie_v)
-            | (phie_v <= 0.001)
-            | (rt_v <= 0)
-        )
-        sw = np.where(invalid, np.nan, sw)
-
-        sw = pd.Series(sw, index=self.data.index)
+        sw = self._finish_sw("SW_INDO", raw, solve, no_porosity)
         self.results["SW_INDO"] = sw
         return sw
 
@@ -1235,13 +1334,14 @@ class PetrophysicsCalculator:
         Args:
             rt_curve: Resistivity curve mnemonic
             phie: Effective porosity series
-            vsh: Vshale series
+            vsh: Vshale series (clipped to 0-1)
             rw: Formation water resistivity (ohm.m), scalar or one value per row
             rsh: Shale resistivity (ohm.m), scalar or one value per row
             a, m, n: Archie parameters
 
         Returns:
-            Water saturation series (0-1)
+            Water saturation series (0-1); NaN without RT or porosity, 1.0
+            where the porosity is at or below 0.001
         """
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
@@ -1261,28 +1361,33 @@ class PetrophysicsCalculator:
         if vsh is None:
             vsh = self.results.get("VSH", self._make_series(0.2))
 
+        phie_a = self._column(phie, "phie")
+        vsh_a = self._column(vsh, "vsh")
+        rt_a = self._column(rt, "rt")
+        solve, no_porosity = self._sw_valid_mask(rt_a, phie_a)
+
         # Simandoux:  1/Rt = A*Sw^n + B*Sw   with
         #   A = PHIE^m / (a*Rw)   (coefficient on Sw^n)
-        #   B = Vsh / Rsh         (coefficient on Sw)
+        #   B = Vsh / Rsh         (coefficient on Sw), Vsh clipped to [0, 1]
         #   C = 1 / Rt            (constant)
-        phie_safe = np.maximum(phie, 0.001)
-        rt_safe = np.maximum(rt, 0.001)
+        phie_safe = np.maximum(phie_a, SW_MIN_POROSITY)
+        rt_safe = np.maximum(rt_a, 0.001)
 
         A = np.power(phie_safe, m) / (a * rw)
-        B = vsh / rsh
+        B = np.clip(vsh_a, 0.0, 1.0) / rsh
         C = 1 / rt_safe
 
         if abs(n - 2.0) < 1e-9:
             # n == 2: closed-form quadratic  A*Sw^2 + B*Sw - C = 0
             discriminant = B**2 + 4 * A * C
             discriminant = np.maximum(discriminant, 0)  # Ensure non-negative
-            sw = (-B + np.sqrt(discriminant)) / (2 * A)
+            raw = (-B + np.sqrt(discriminant)) / (2 * A)
         else:
             # General n: f(Sw) = A*Sw^n + B*Sw - C is strictly increasing for
             # Sw > 0 (A > 0, B >= 0), so it has a unique root. Solve per row.
             # Previously the n argument was ignored and n=2 was always used.
-            A_arr = np.asarray(A, dtype=float)
-            B_arr = np.asarray(B, dtype=float)
+            A_arr = np.broadcast_to(np.asarray(A, dtype=float), rt_safe.shape)
+            B_arr = np.broadcast_to(np.asarray(B, dtype=float), rt_safe.shape)
             C_arr = np.asarray(C, dtype=float)
 
             sw_list = []
@@ -1304,47 +1409,78 @@ class PetrophysicsCalculator:
                 except Exception:
                     sw_list.append(np.nan)
 
-            sw = pd.Series(sw_list, index=self.data.index)
+            raw = np.array(sw_list, dtype=float)
 
-        # Clip to 0-1 range
-        sw = np.clip(sw, 0, 1)
-
+        sw = self._finish_sw("SW_SIMAN", raw, solve, no_porosity)
         self.results["SW_SIMAN"] = sw
+        return sw
+
+    def _finish_total_sw(self, key, swt_key, swt_arr, solve_flags, phit_a, phie, rt_a, no_phi):
+        """Store ``Swt`` in ``SWT_*`` and return the effective Sw of a total-porosity model.
+
+        ``solve_flags`` are the solver's per-sample flags. ``phie`` is the
+        effective porosity (``None``: the total porosity, so Swe = Swt). The
+        effective Sw conserves the hydrocarbon volume (:func:`effective_sw`).
+        """
+        index = self.data.index
+        phie_a = phit_a if phie is None else self._column(phie, "phie")
+        swe, eff = _effective_sw_detail(swt_arr, phit_a, phie_a)
+        # A PHIT below the floor is already counted as no_porosity by the solver.
+        eff["no_porosity"] = eff["no_porosity"] & ~no_phi
+        eff["bvh_exceeds_phie"] = eff["bvh_exceeds_phie"] & ~no_phi
+        eff["phie_above_phit"] = eff["phie_above_phit"] & ~no_phi
+        flags = dict(solve_flags)
+        flags["no_porosity"] = no_phi | eff["no_porosity"]
+        flags["bvh_exceeds_phie"] = eff["bvh_exceeds_phie"]
+        flags["phie_above_phit"] = eff["phie_above_phit"]
+        # PHIE is there but the total porosity is not: no basis for the total model.
+        flags["no_phit"] = ~np.isnan(rt_a) & np.isnan(phit_a) & np.isfinite(phie_a)
+        self.sw_flags[key] = pd.DataFrame(flags, index=index)
+        self.results[swt_key] = pd.Series(swt_arr, index=index)
+        sw = pd.Series(np.where(no_phi, 1.0, swe), index=index)
+        self.results[key] = sw
         return sw
 
     def calculate_sw_waxman_smits(
         self,
         rt_curve: str = "RT",
-        phie: pd.Series = None,
+        phit: pd.Series = None,
         rw: float = 0.05,
         a: float = 0.62,
         m: float = 2.15,
         n: float = 2.0,
         qv: float = 0.2,
         B: float = 1.0,
+        phie: pd.Series = None,
     ) -> pd.Series:
         """
         Calculate water saturation using Waxman-Smits equation.
 
-        Ct = (1/F*) * (Sw^n*) * (Cw + (B*Qv) / Sw)
+        Ct = (1/F*) * (Swt^n*) * (Cw + (B*Qv) / Swt)
 
         Where:
         - Ct = 1/Rt (Total conductivity)
-        - F* = a / PHIE^m
+        - F* = a / PHIT^m (total porosity)
         - Cw = 1/Rw
         - Qv = cation exchange capacity per unit pore volume
         - B = equivalent conductance of clay exchange cations
 
+        The solver returns the total water saturation Swt, stored in ``SWT_WS``.
+        ``SW_WS`` (and the return value) is the effective saturation from
+        hydrocarbon-volume conservation, ``effective_sw(Swt, PHIT, PHIE)``; without
+        ``phie`` (and without ``PHIE`` in the results) PHIE = PHIT and Swe = Swt.
+
         Args:
             rt_curve: Resistivity curve mnemonic
-            phie: Effective porosity series
+            phit: Total porosity series
             rw: Formation water resistivity (ohm.m)
             a, m, n: Archie parameters
             qv: Qv parameter (meq/ml)
             B: B parameter (mho cm^2/meq)
+            phie: Effective porosity series for the effective Sw
 
         Returns:
-            Water saturation series (0-1)
+            Effective water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
@@ -1361,28 +1497,30 @@ class PetrophysicsCalculator:
         if np.ndim(B):
             B = self._per_sample(B, "B")      # e.g. B from temperature, one value per row
 
+        if phit is None:
+            phit = self.results.get("PHIT", self.results.get("PHIE", self._make_series(0.15)))
         if phie is None:
-            phie = self.results.get("PHIE", self._make_series(0.15))
-
-        fail_count = 0
+            phie = self.results.get("PHIE")
 
         # Pre-calculate constants where possible
         cw = 1.0 / rw  # validated > 0; an array for per-sample Rw
 
-        rt_arr = np.asarray(rt, dtype=float)
-        phie_arr = np.asarray(phie, dtype=float)
-        valid = ~(
-            np.isnan(rt_arr) | np.isnan(phie_arr) | (phie_arr <= 0.001) | (rt_arr <= 0)
-        )
-        sw_arr = np.full(len(rt_arr), np.nan)
-        no_root_count = 0
+        rt_arr = self._column(rt, "rt")
+        phit_arr = self._column(phit, "phit")
+        solve, no_phi = self._sw_valid_mask(rt_arr, phit_arr)
+        size = len(rt_arr)
+        swt_arr = np.full(size, np.nan)
+        no_root = np.zeros(size, dtype=bool)
+        failed_all = np.zeros(size, dtype=bool)
+        upper = np.zeros(size, dtype=bool)
+        lower = np.zeros(size, dtype=bool)
 
-        if valid.any():
+        if solve.any():
             with np.errstate(all="ignore"):
-                f_star = a / np.power(phie_arr[valid], m)
-                ct = 1.0 / rt_arr[valid]
-                cw_v = cw[valid] if np.ndim(cw) else cw
-                b_v = B[valid] if np.ndim(B) else B
+                f_star = a / np.power(phit_arr[solve], m)
+                ct = 1.0 / rt_arr[solve]
+                cw_v = cw[solve] if np.ndim(cw) else cw
+                b_v = B[solve] if np.ndim(B) else B
 
                 # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
                 # Model_Ct = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
@@ -1397,31 +1535,40 @@ class PetrophysicsCalculator:
                 f_hi = ws_func(np.full(f_star.shape, 1.0))
                 bracketed = f_lo * f_hi < 0
                 root, failed = _vectorized_brentq(ws_func, 0.001, 1.0, bracketed)
-                # Fallback if no root in range (rare)
-                fallback = np.where(f_hi < 0, 1.0, 0.0)
+                # No root in range: the bound the conductivity points to (Sw > 1 or
+                # below the lower bracket); counted as at_upper_bound / at_lower_bound.
+                fallback_up = f_hi < 0
+                fallback = np.where(fallback_up, 1.0, 0.0)
                 solved = np.where(bracketed, np.clip(root, 0, 1), fallback)
-            no_root_count = int((~bracketed).sum())
-            fail_count = int(failed.sum())
-            sw_arr[valid] = solved
+            swt_arr[solve] = solved
+            no_root[solve] = ~bracketed
+            failed_all[solve] = failed
+            upper[solve] = ~bracketed & fallback_up
+            lower[solve] = ~bracketed & ~fallback_up
+        swt_arr[no_phi] = 1.0
 
-        sw = pd.Series(sw_arr, index=self.data.index)
-        self.results["SW_WS"] = sw
         self.solver_diagnostics["SW_WS"] = {
-            "no_root": no_root_count,
-            "failed": fail_count,
+            "no_root": int(no_root.sum()),
+            "failed": int(failed_all.sum()),
         }
-        return sw
+        return self._finish_total_sw(
+            "SW_WS", "SWT_WS", swt_arr,
+            {"at_upper_bound": upper, "at_lower_bound": lower,
+             "no_root": no_root, "failed": failed_all},
+            phit_arr, phie, rt_arr, no_phi,
+        )
 
     def calculate_sw_dual_water(
         self,
         rt_curve: str = "RT",
-        phie: pd.Series = None,
+        phit: pd.Series = None,
         rw: float = 0.05,
         a: float = 0.62,
         m: float = 2.15,
         n: float = 2.0,
         swb: float = 0.1,
         rwb: float = 0.2,
+        phie: pd.Series = None,
     ) -> pd.Series:
         """
         Calculate water saturation using Dual-Water model.
@@ -1432,20 +1579,25 @@ class PetrophysicsCalculator:
            Ct = (Swt^n / Ft) * [ Cw + (Cwb - Cw) * (Swb / Swt) ]
 
         Where:
-        - Swt = Total water saturation (what we solve for)
+        - Swt = Total water saturation (what we solve for), stored in ``SWT_DW``
         - Swb = Bound water saturation (input)
+        - Ft = a / PHIT^m (total porosity)
+
+        ``SW_DW`` (and the return value) is the effective saturation from
+        hydrocarbon-volume conservation, ``effective_sw(Swt, PHIT, PHIE)``; without
+        ``phie`` (and without ``PHIE`` in the results) PHIE = PHIT and Swe = Swt.
 
         Args:
             rt_curve: Resistivity curve mnemonic
-            phie: Total porosity (Note: DW uses PHIT typically, but we use PHIE passed in
-                  if we assume params are tuned for it, or user passes PHIT)
+            phit: Total porosity series
             rw: Free water resistivity
             a, m, n: Archie parameters
             swb: Bound water saturation fraction
             rwb: Bound water resistivity
+            phie: Effective porosity series for the effective Sw
 
         Returns:
-            Water saturation series (0-1)
+            Effective water saturation series (0-1)
         """
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
@@ -1462,34 +1614,31 @@ class PetrophysicsCalculator:
         if not np.isfinite(swb) or not 0 <= swb < 1:
             raise ValueError("swb must be finite and in the range [0, 1)")
 
-        # Dual water ideally uses PHIT, but we operate with whatever 'phie' is passed.
-        # If the user selected DW, they should ideally check if they want to pass PHIT.
-        # For consistency with other methods signature, we accept 'phie'.
+        if phit is None:
+            phit = self.results.get("PHIT", self.results.get("PHIE", self._make_series(0.15)))
         if phie is None:
-            phie = self.results.get(
-                "PHIT", self.results.get("PHIE", self._make_series(0.15))
-            )
-
-        fail_count = 0
+            phie = self.results.get("PHIE")
 
         cw = 1.0 / rw  # validated > 0; an array for per-sample Rw
         cwb = 1.0 / rwb  # validated > 0; an array for per-sample Rwb
 
-        rt_arr = np.asarray(rt, dtype=float)
-        phi_arr = np.asarray(phie, dtype=float)
-        valid = ~(
-            np.isnan(rt_arr) | np.isnan(phi_arr) | (phi_arr <= 0.001) | (rt_arr <= 0)
-        )
-        sw_arr = np.full(len(rt_arr), np.nan)
-        no_root_count = 0
+        rt_arr = self._column(rt, "rt")
+        phi_arr = self._column(phit, "phit")
+        solve, no_phi = self._sw_valid_mask(rt_arr, phi_arr)
+        size = len(rt_arr)
+        swt_arr = np.full(size, np.nan)
+        no_root = np.zeros(size, dtype=bool)
+        failed_all = np.zeros(size, dtype=bool)
+        upper = np.zeros(size, dtype=bool)
+        lower = np.zeros(size, dtype=bool)
 
-        if valid.any():
+        if solve.any():
             with np.errstate(all="ignore"):
-                # Formation factor based on total porosity (usually)
-                f_t = a / np.power(phi_arr[valid], m)
-                ct_measured = 1.0 / rt_arr[valid]
-                cw_v = cw[valid] if np.ndim(cw) else cw
-                cwb_v = cwb[valid] if np.ndim(cwb) else cwb
+                # Formation factor based on total porosity
+                f_t = a / np.power(phi_arr[solve], m)
+                ct_measured = 1.0 / rt_arr[solve]
+                cw_v = cw[solve] if np.ndim(cw) else cw
+                cwb_v = cwb[solve] if np.ndim(cwb) else cwb
 
                 # f(Swt) = Model_Ct - Measured_Ct
                 def dw_func(swt):
@@ -1507,19 +1656,26 @@ class PetrophysicsCalculator:
                 bracketed = val_low * val_high < 0
                 root, failed = _vectorized_brentq(dw_func, lower_bound, 1.0, bracketed)
                 # No root: if measured cond is very high, Sw -> 1; if very low, Sw -> Swb
-                fallback = np.where(np.abs(val_high) < np.abs(val_low), 1.0, swb)
+                fallback_up = np.abs(val_high) < np.abs(val_low)
+                fallback = np.where(fallback_up, 1.0, swb)
                 solved = np.clip(np.where(bracketed, root, fallback), 0, 1)
-            no_root_count = int((~bracketed).sum())
-            fail_count = int(failed.sum())
-            sw_arr[valid] = solved
+            swt_arr[solve] = solved
+            no_root[solve] = ~bracketed
+            failed_all[solve] = failed
+            upper[solve] = ~bracketed & fallback_up
+            lower[solve] = ~bracketed & ~fallback_up
+        swt_arr[no_phi] = 1.0
 
-        sw = pd.Series(sw_arr, index=self.data.index)
-        self.results["SW_DW"] = sw
         self.solver_diagnostics["SW_DW"] = {
-            "no_root": no_root_count,
-            "failed": fail_count,
+            "no_root": int(no_root.sum()),
+            "failed": int(failed_all.sum()),
         }
-        return sw
+        return self._finish_total_sw(
+            "SW_DW", "SWT_DW", swt_arr,
+            {"at_upper_bound": upper, "at_lower_bound": lower,
+             "no_root": no_root, "failed": failed_all},
+            phi_arr, phie, rt_arr, no_phi,
+        )
 
     # =========================================================================
     # IRREDUCIBLE WATER SATURATION (Swirr) CALCULATIONS
@@ -1722,21 +1878,36 @@ class PetrophysicsCalculator:
             info["method"] = "buckles_fallback"
             info["swirr_value"] = float(swirr.mean())
 
-        # Step 3: Statistical Bounds
-        # Swirr should be >= 0.05 (physically reasonable)
-        swirr = np.maximum(swirr, 0.05)
+        # Step 3: Statistical Bounds, in this order so the floor always holds:
+        # never above the observed Sw (illogical), then within [0.05, 0.60].
+        # A Swirr floor of 0.05 may exceed a measured Sw below 0.05 (counted).
+        estimate = np.asarray(swirr, dtype=float)
+        sw_a = np.asarray(sw, dtype=float)
+        with np.errstate(invalid="ignore"):
+            limited = np.minimum(estimate, sw_a)
+            by_sw = estimate > sw_a
+            raised = limited < 0.05
+            capped = limited > 0.60
+        swirr = pd.Series(np.clip(limited, 0.05, 0.60), index=self.data.index)
 
-        # Swirr should never exceed observed Sw (illogical)
-        swirr = np.minimum(swirr, sw)
-
-        # Upper bound at 0.60 (very shaley)
-        swirr = np.minimum(swirr, 0.60)
-
-        # Check for warnings
-        if (swirr < 0.05).any():
-            info["warning"] = "Some Swirr values below 0.05 (clipped)"
-        if (swirr > sw).any():
-            info["warning"] = "Some Swirr values exceeded Sw (clipped to Sw)"
+        info["samples"] = int(np.isfinite(limited).sum())
+        info["raised_to_floor"] = int(raised.sum())
+        info["limited_by_sw"] = int(by_sw.sum())
+        info["limited_to_max"] = int(capped.sum())
+        notes = []
+        if info["raised_to_floor"]:
+            notes.append(f"{info['raised_to_floor']} samples raised to the 0.05 floor")
+        if info["limited_by_sw"]:
+            notes.append(f"{info['limited_by_sw']} samples limited to the measured Sw")
+        if info["limited_to_max"]:
+            notes.append(f"{info['limited_to_max']} samples limited to 0.60")
+        if notes:
+            info["warning"] = "Hierarchical Swirr: " + "; ".join(notes) + "."
+        self.swirr_flags = pd.DataFrame(
+            {"raised_to_floor": raised, "limited_by_sw": by_sw, "limited_to_max": capped},
+            index=self.data.index,
+        )
+        self.swirr_info = info
 
         self.results["SWIRR"] = swirr
         self.results["SWIRR_METHOD"] = info["method"]
@@ -1787,12 +1958,55 @@ class PetrophysicsCalculator:
         if "statistical" in methods:
             results["SWIRR_STAT"] = self.calculate_swirr_statistical(sw, vsh)
 
-        # Default SWIRR is from hierarchical if available
-        if "SWIRR" not in self.results:
-            if "SWIRR_BUCKLES" in results:
-                self.results["SWIRR"] = results["SWIRR_BUCKLES"]
+        # SWIRR is the series of the selected method: hierarchical when asked for,
+        # else the single method requested. Several methods ("All Methods") keep
+        # Buckles as the one used.
+        if "hierarchical" not in methods:
+            chosen = None
+            if len(methods) == 1 or "buckles" not in methods:
+                chosen = next((m for m in methods if m in self._SWIRR_SERIES), None)
+            else:
+                chosen = "buckles"
+            if chosen is not None:
+                self._set_swirr_from(chosen, results, phie, k_buckles)
 
         return results
+
+    # Swirr method key -> (results column, SWIRR_METHOD label)
+    _SWIRR_SERIES = {
+        "buckles": ("SWIRR_BUCKLES", "buckles"),
+        "clean_zone": ("SWIRR_CLEANZONE", "clean_zone"),
+        "statistical": ("SWIRR_STAT", "statistical"),
+    }
+
+    def _set_swirr_from(self, method, results, phie, k_buckles):
+        """``SWIRR``/``SWIRR_METHOD`` from the selected method (spec C15).
+
+        A sample where the selected series has no value falls back to Buckles;
+        those samples are flagged in ``swirr_flags["buckles_fallback"]`` and
+        labelled ``buckles`` in ``SWIRR_METHOD``.
+        """
+        column, label = self._SWIRR_SERIES[method]
+        series = pd.Series(results[column], index=self.data.index, dtype=float)
+        methods_label = pd.Series(label, index=self.data.index, dtype=object)
+        fallback = pd.Series(False, index=self.data.index)
+        if method != "buckles":
+            missing = series.isna()
+            if missing.any():
+                buckles = results.get("SWIRR_BUCKLES")
+                if buckles is None:
+                    had_column = "SWIRR_BUCKLES" in self.results.columns
+                    buckles = self.calculate_swirr_buckles(phie, k_buckles)
+                    if not had_column:
+                        self.results.drop(columns="SWIRR_BUCKLES", inplace=True)
+                buckles = pd.Series(buckles, index=self.data.index, dtype=float)
+                fallback = missing & buckles.notna()
+                series = series.where(~missing, buckles)
+                methods_label = methods_label.where(~fallback, "buckles")
+        self.results["SWIRR"] = series
+        self.results["SWIRR_METHOD"] = methods_label
+        self.swirr_flags = pd.DataFrame({"buckles_fallback": fallback})
+        self.swirr_info = {"method": label, "buckles_fallback": int(fallback.sum())}
 
     # =========================================================================
     # PERMEABILITY CALCULATIONS

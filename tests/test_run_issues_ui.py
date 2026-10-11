@@ -42,6 +42,9 @@ def _add_wells(window, keys):
     for key in keys:
         window.model.project.add_well(_well(key))
     window.model.set_active_well(keys[0])
+    # Buckles Swirr: the default Hierarchical Swirr notes how many samples it limited
+    # to Sw or to 0.60 (C7), which would make every run on this random log "with warnings".
+    window.params_window.swir_params_widget.method_combo.setCurrentText("Buckles Number")
     return [window.model.project.get(k) for k in keys]
 
 

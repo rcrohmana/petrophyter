@@ -824,6 +824,8 @@ _LAS_UNIT_DEFAULTS = {
     "SW_SIMAN": "V/V",
     "SW_WS": "V/V",
     "SW_DW": "V/V",
+    "SWT_WS": "V/V",
+    "SWT_DW": "V/V",
     "PHIE": "V/V",
     "PHID": "V/V",
     "PHIN": "V/V",
