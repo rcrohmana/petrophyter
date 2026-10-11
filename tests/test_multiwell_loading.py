@@ -113,7 +113,10 @@ def test_build_well_single(tmp_path):
     assert ds.key == "WELL:BKS-01" and ds.display_name == "BKS-01"
     assert not ds.merged and ds.las_filename == item.path
     assert ds.las_data is item.parser.data
-    assert ds.sources == [{"name": "a.las", "path": item.path, "rows": len(item.parser.data)}]
+    import hashlib
+    raw = open(item.path, "rb").read()
+    assert ds.sources == [{"name": "a.las", "path": item.path, "rows": len(item.parser.data),
+                           "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}]
     assert ds.curve_mapping["GR"] == "GR" and ds.curve_mapping["RT"] == "RT"
     assert ds.qc_report is not None
 

@@ -82,6 +82,22 @@ def _no_discard_prompt(monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_relocate_prompt(monkeypatch):
+    """A session with a missing source must not open the "Locate ..." file dialog.
+
+    Offscreen, a real QFileDialog never returns. The default is Skip (None); tests of
+    the relocation patch ``MainWindow._prompt_relocate`` back.
+    """
+    try:
+        from ui.main_window import MainWindow
+    except ImportError:
+        yield
+        return
+    monkeypatch.setattr(MainWindow, "_prompt_relocate", lambda self, path: None)
+    yield
+
+
 @pytest.fixture
 def sample_log_data():
     """Generate sample log data for testing."""

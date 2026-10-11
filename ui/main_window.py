@@ -40,8 +40,10 @@ from services.load_service import (
 from services.export_service import ExportService
 from services.issues import collect_issues, issue_counts
 from services.session_service import (
-    SessionService, is_v2_session, session_level_notes, validate_session,
+    SessionService, is_v2_session, relocate_missing_sources, session_level_notes,
+    validate_session,
 )
+from modules.fingerprint import fingerprint_file
 from services.restore_service import RestoreWorker
 from .widgets.about_dialog import AboutDialog
 from .widgets.notification_banner import NotificationBanner
@@ -1300,6 +1302,7 @@ class MainWindow(QMainWindow):
                     active = self.model.active_well
                     active.tops_path = file_path
                     active.tops_import = None
+                    active.tops_sha256 = fingerprint_file(file_path)[0]
                     self.model.formation_tops = tops
 
                     self.params_window.update_formations_list(tops.get_formation_list())
@@ -1353,6 +1356,7 @@ class MainWindow(QMainWindow):
                     active.core_path = file_path
                     active.core_depth_unit = depth_unit
                     active.core_import = None
+                    active.core_sha256 = fingerprint_file(file_path)[0]
                     self.model.core_data = handler
                     self.params_window.set_core_available(True)
                     self._refresh_core_actions()
@@ -1469,6 +1473,7 @@ class MainWindow(QMainWindow):
             part, record = parts[key], import_record(plan, row)
             if kind == "tops":
                 ds.tops_path, ds.tops_import = plan.path, record
+                ds.tops_sha256 = fingerprint_file(plan.path)[0]
                 if key == active_key:
                     self.model.formation_tops = part
                 else:
@@ -1476,6 +1481,7 @@ class MainWindow(QMainWindow):
                 details.extend(self._tops_scope_notes(ds, part, row))
             else:
                 ds.core_path, ds.core_import = plan.path, record
+                ds.core_sha256 = fingerprint_file(plan.path)[0]
                 ds.core_depth_unit = plan.effective_unit
                 if key == active_key:
                     self.model.core_data = part
@@ -2050,6 +2056,21 @@ class MainWindow(QMainWindow):
             return self._save_session(as_new=False)
         return reply == box.Discard
 
+    def _prompt_relocate(self, path: str):
+        """Ask where a source file of the session has moved to (H3); None means Skip.
+
+        A decision, so a modal file dialog. Runs on the GUI thread before the restore
+        worker starts. Tests patch this method.
+        """
+        from PyQt6.QtWidgets import QFileDialog
+
+        name = os.path.basename(str(path))
+        chosen, _ = QFileDialog.getOpenFileName(
+            self, f"Locate {name}", os.path.dirname(str(path)),
+            f"{name} (*{os.path.splitext(name)[1]});;All Files (*)"
+        )
+        return chosen or None
+
     def _on_load_session(self):
         """Handle load session button click."""
         from PyQt6.QtWidgets import QFileDialog
@@ -2075,6 +2096,7 @@ class MainWindow(QMainWindow):
             # A v2.0 session is a whole project: it replaces the loaded wells, but only
             # once every well is built. Here nothing of the open project is touched; the
             # swap (batch cancel, reset, parameters, wells) is in _on_restore_completed.
+            relocate_missing_sources(session_data, self._prompt_relocate)
             self._cancel_restore()
             self._start_restore(session_data, file_path)
             return

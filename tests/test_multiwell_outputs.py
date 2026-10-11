@@ -589,3 +589,49 @@ def test_scope_change_refreshes_the_preview(export_tab, model, monkeypatch):
                         lambda: (calls.append(1), original())[1])
     export_tab.scope_combo.setCurrentIndex(1)
     assert calls
+
+
+def test_the_provenance_block_is_the_run_manifest_in_every_format(tmp_path, model):
+    from importlib import metadata
+
+    alpha = model.project.get("W:A")
+    alpha.run_time = "2026-10-11T09:00:00+00:00"
+    alpha.run_params_hash = "abc123"
+    alpha.merged = True
+    alpha.sources = [
+        {"name": "a1.las", "path": "a1.las", "rows": 5, "sha256": "aa" * 32, "size": 111},
+        {"name": "a2.las", "path": "a2.las", "rows": 5, "sha256": "bb" * 32, "size": 222},
+    ]
+    alpha.merge_recipe = {"step": 0.5, "gap_limit": 5.0, "policy": 2}
+    alpha.tops_path, alpha.tops_sha256 = "tops.csv", "cc" * 32
+    block = provenance_block(alpha)
+    assert block["Source files"] == f"a1.las sha256:{'aa' * 32} (111 bytes); a2.las sha256:{'bb' * 32} (222 bytes)"
+    assert block["Merge recipe"] == "step 0.5 ft, gap limit 5 ft, policy 2"
+    assert block["Tops file"] == f"tops.csv sha256:{'cc' * 32}"
+    assert block["Core file"] == "none"
+    assert block["Parameter hash"] == "abc123"
+    for name in ("numpy", "scipy", "pandas", "lasio"):
+        assert block[name] == metadata.version(name)
+    # a single-file well says so
+    assert provenance_block(model.project.get("W:B"))["Merge recipe"] == "single file"
+
+    svc = ExportService()
+    xlsx = tmp_path / "one.xlsx"
+    assert svc.export_excel(alpha.results, alpha.summary, str(xlsx), block)
+    values = dict(zip(*[pd.read_excel(xlsx, sheet_name=PROVENANCE_SHEET)[c] for c in ("Item", "Value")]))
+    assert values["Source files"] == block["Source files"] and values["numpy"] == block["numpy"]
+    allx = tmp_path / "all.xlsx"
+    assert svc.export_excel_wells(model.project.wells, str(allx))
+    sheet = pd.read_excel(allx, sheet_name=PROVENANCE_SHEET)
+    assert sheet.loc[0, "Merge recipe"] == block["Merge recipe"] and sheet.loc[0, "scipy"] == block["scipy"]
+    las = tmp_path / "one.las"
+    assert svc.export_las(las_frame(alpha), alpha.well_info, str(las), block)
+    text = las.read_text(encoding="utf-8")
+    assert f"Sources {block['Source files']}" in text
+    assert "Merge recipe step 0.5 ft, gap limit 5 ft, policy 2" in text
+    assert f"Libraries numpy {block['numpy']}, scipy {block['scipy']}" in text
+    csv = tmp_path / "res.csv"
+    assert svc.export_csv(alpha.results, str(csv), block)
+    side = (tmp_path / "res.provenance.txt").read_text(encoding="utf-8")
+    assert f"Source files: {block['Source files']}" in side and f"pandas: {block['pandas']}" in side
+    assert "Merge recipe: step 0.5 ft" in side

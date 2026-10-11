@@ -228,3 +228,153 @@ def test_temperature_settings_round_trip(tmp_path):
     assert svc.apply_session_to_model(fresh, svc.load_session(str(path)))
     assert (fresh.temp_correction, fresh.surface_temp, fresh.temp_gradient, fresh.rw_ref_temp) == (
         True, 70.0, 1.8, 68.0)
+
+
+# ---- H3: source fingerprints, changed / missing sources ------------------------------
+import hashlib
+import shutil
+
+from services.session_service import relocate_missing_sources
+
+
+def _sha(path):
+    return hashlib.sha256(open(path, "rb").read()).hexdigest()
+
+
+def _save(model, tmp_path, name="s.json"):
+    path = str(tmp_path / name)
+    assert SessionService().save_session(model, path)
+    return path, json.loads(open(path, encoding="utf-8").read())
+
+
+def _restore(path):
+    svc = SessionService()
+    fresh = AppModel()
+    data = svc.load_session(path)
+    svc.apply_session_to_model(fresh, data)
+    return fresh, svc.restore_wells(fresh, data), data
+
+
+def test_fingerprints_are_written_for_single_merged_and_tops(three_wells, tmp_path):
+    model, keys = three_wells
+    _, saved = _save(model, tmp_path)
+    alpha, beta, _gamma = saved["wells"]
+    # sources keeps its v1.7.0 type: a list of path strings
+    assert all(isinstance(p, str) for w in saved["wells"] for p in w["sources"])
+    assert saved["_session_version"] == "2.1"
+    assert alpha["source_fingerprints"] == [{
+        "path": str(tmp_path / "a.las"), "sha256": _sha(tmp_path / "a.las"),
+        "size": os.path.getsize(tmp_path / "a.las")}]
+    assert [f["path"] for f in beta["source_fingerprints"]] == beta["sources"]
+    assert [f["sha256"] for f in beta["source_fingerprints"]] == [
+        _sha(tmp_path / "b1.las"), _sha(tmp_path / "b2.las")]
+    assert beta["tops_sha256"] == _sha(tmp_path / "beta_tops.txt")
+    assert "tops_sha256" not in alpha and "core_sha256" not in alpha
+
+
+def test_an_unchanged_session_restores_without_notes(three_wells, tmp_path):
+    model, _ = three_wells
+    path, _ = _save(model, tmp_path)
+    _, notes, _ = _restore(path)
+    assert notes == []
+
+
+def test_an_overwritten_source_gets_the_changed_note_and_stays_stale(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    (tmp_path / "b2.las").write_text(_las_text("BETA-2", top=1030.0, bottom=1085.0))
+    fresh, notes, _ = _restore(path)
+    assert len(notes) == 1
+    assert "b2.las changed since the session was saved (hash differs)" in notes[0]
+    assert "results will differ from the saved project" in notes[0]
+    assert fresh.project.get(keys[1]).calculated is False
+    assert fresh.project.get(keys[1]).status == "loaded"
+
+
+def test_a_changed_tops_file_gets_a_note(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    (tmp_path / "beta_tops.txt").write_text(TOPS_TEXT.replace("1080", "1070"))
+    fresh, notes, _ = _restore(path)
+    assert any("beta_tops.txt changed since the session was saved" in n for n in notes)
+    assert fresh.project.get(keys[1]).formation_tops is not None
+
+
+def test_a_session_without_fingerprints_restores_as_before(three_wells, tmp_path):
+    model, keys = three_wells
+    path, saved = _save(model, tmp_path)
+    for entry in saved["wells"]:
+        for name in ("source_fingerprints", "tops_sha256", "core_sha256"):
+            entry.pop(name, None)
+    open(path, "w", encoding="utf-8").write(json.dumps(saved))
+    (tmp_path / "a.las").write_text(_las_text("ALPHA-1", bottom=1070.0))     # changed, unnoticed
+    fresh, notes, data = _restore(path)
+    assert notes == [] and fresh.project.keys() == keys
+    # and nothing is asked for a missing file: no fingerprints, so no relocation
+    os.remove(tmp_path / "c.las")
+    asked = []
+    assert relocate_missing_sources(data, lambda p: asked.append(p)) == 0 and asked == []
+
+
+def test_relocation_with_the_same_file_is_silent(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    shutil.move(str(tmp_path / "c.las"), str(moved / "c.las"))
+    svc = SessionService()
+    data = svc.load_session(path)
+    asked = []
+    assert relocate_missing_sources(data, lambda p: (asked.append(p), str(moved / "c.las"))[1]) == 1
+    assert [os.path.basename(p) for p in asked] == ["c.las"]
+    fresh = AppModel()
+    notes = svc.restore_wells(fresh, data)
+    assert notes == [] and fresh.project.keys() == keys
+    assert fresh.project.get(keys[2]).sources[0]["path"] == str(moved / "c.las")
+
+
+def test_relocating_to_a_different_file_gets_the_changed_note(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    os.remove(tmp_path / "c.las")
+    other = tmp_path / "other.las"
+    other.write_text(_las_text("GAMMA-3", bottom=1055.0))
+    svc = SessionService()
+    data = svc.load_session(path)
+    relocate_missing_sources(data, lambda p: str(other))
+    fresh = AppModel()
+    notes = svc.restore_wells(fresh, data)
+    assert len(notes) == 1 and "other.las changed since the session was saved" in notes[0]
+    assert fresh.project.keys() == keys
+
+
+def test_skip_keeps_the_missing_source_behaviour(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    os.remove(tmp_path / "c.las")
+    svc = SessionService()
+    data = svc.load_session(path)
+    assert relocate_missing_sources(data, lambda p: None) == 0
+    fresh = AppModel()
+    notes = svc.restore_wells(fresh, data)
+    assert fresh.project.keys() == keys[:2]
+    assert len(notes) == 1 and "c.las" in notes[0] and "source file not found" in notes[0]
+
+
+def test_the_relocated_folder_is_tried_first_for_other_files(three_wells, tmp_path):
+    model, keys = three_wells
+    path, _ = _save(model, tmp_path)
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    for name in ("a.las", "c.las"):
+        shutil.move(str(tmp_path / name), str(moved / name))
+    data = SessionService().load_session(path)
+    asked = []
+
+    def prompt(p):
+        asked.append(os.path.basename(p))
+        return str(moved / os.path.basename(p))
+
+    assert relocate_missing_sources(data, prompt) == 2
+    assert asked == ["a.las"]            # c.las was found in the remembered folder, silently
+    assert data["wells"][2]["sources"] == [str(moved / "c.las")]

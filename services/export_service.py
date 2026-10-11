@@ -324,18 +324,64 @@ def apply_depth_range(df: pd.DataFrame, depth_range=None) -> pd.DataFrame:
     return df[(df["DEPTH"] >= top) & (df["DEPTH"] <= bottom)]
 
 
+def library_versions() -> dict:
+    """``{"numpy": "2.1.0", ...}`` for the libraries that shape the numbers."""
+    from importlib import metadata
+
+    versions = {}
+    for name in ("numpy", "scipy", "pandas", "lasio"):
+        try:
+            versions[name] = metadata.version(name)
+        except Exception:
+            versions[name] = "not installed"
+    return versions
+
+
+def _source_summary(ds) -> str:
+    """``a.las sha256:<hash> (123 bytes); b.las ...``, one entry per source file."""
+    parts = []
+    for source in getattr(ds, "sources", None) or []:
+        name = source.get("name") or os.path.basename(str(source.get("path") or "")) or "file"
+        text = f"{name} sha256:{source.get('sha256') or 'unknown'}"
+        if source.get("size") is not None:
+            text += f" ({source['size']} bytes)"
+        parts.append(text)
+    return "; ".join(parts) if parts else "unknown"
+
+
+def _recipe_summary(ds) -> str:
+    recipe = getattr(ds, "merge_recipe", None)
+    if not recipe:
+        return "single file" if not getattr(ds, "merged", False) else "unknown"
+    return (f"step {recipe.get('step'):g} ft, gap limit {recipe.get('gap_limit'):g} ft, "
+            f"policy {recipe.get('policy')}")
+
+
+def _import_summary(path, sha) -> str:
+    if not path:
+        return "none"
+    return f"{os.path.basename(str(path))} sha256:{sha or 'unknown'}"
+
+
 def provenance_block(ds, depth_range=None) -> dict:
     """What produced a well's exported numbers (P0-UI/UX U3), as ordered key/value pairs.
 
     App version and build, the run time (UTC), the well's status at export,
     the parameter hash of the run, the issue counts of the last run and the
-    depth interval of the exported rows (``depth_range`` or all depths).
+    depth interval of the exported rows (``depth_range`` or all depths, U9). This
+    is also the run manifest (P0-Hardening H3): the source fingerprints, the merge
+    recipe, the tops / core hashes and the versions of numpy, scipy, pandas and lasio.
     """
     counts = issue_counts(collect_issues(ds))
     return {
         "Well": well_label(ds),
         "App version": APP_VERSION,
         "Build": APP_BUILD,
+        **library_versions(),
+        "Source files": _source_summary(ds),
+        "Merge recipe": _recipe_summary(ds),
+        "Tops file": _import_summary(getattr(ds, "tops_path", None), getattr(ds, "tops_sha256", None)),
+        "Core file": _import_summary(getattr(ds, "core_path", None), getattr(ds, "core_sha256", None)),
         "Run time": getattr(ds, "run_time", None) or "unknown",
         "Status at export": PROVENANCE_STATUS.get(ds.status, ds.status),
         "Parameter hash": getattr(ds, "run_params_hash", None) or "unknown",
@@ -357,6 +403,12 @@ def _las_other_lines(block: dict) -> list:
         f"Run time {block['Run time']} (UTC)",
         f"Status {block['Status at export']}",
         f"Param hash {block['Parameter hash']}",
+        f"Sources {block['Source files']}",
+        f"Merge recipe {block['Merge recipe']}",
+        f"Tops {block['Tops file']}",
+        f"Core {block['Core file']}",
+        "Libraries " + ", ".join(f"{name} {block[name]}"
+                                 for name in ("numpy", "scipy", "pandas", "lasio")),
         f"Issues {block['Errors']} errors, {block['Warnings']} warnings, {block['Info']} info",
         f"Depth interval {block.get('Depth interval', ALL_DEPTHS)}",
     ]

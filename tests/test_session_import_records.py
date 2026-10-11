@@ -213,3 +213,65 @@ def test_import_records_are_not_part_of_the_parameter_hash(two_wells, tmp_path, 
     ds.tops_import = dict(ds.tops_import, columns={"top": "Something else"})
     ds.core_import = {"anything": 1}
     assert window.model.well_params_hash(ds) == before
+
+
+# ---- H3: fingerprints on import records, relocation through the window ----------------
+def test_tops_and_core_fingerprints_are_written(two_wells, tmp_path, monkeypatch):
+    import hashlib
+
+    window = two_wells
+    path = tmp_path / "tops.csv"
+    path.write_text(TOPS)
+    import_with_manual_mapping(window, str(path), monkeypatch=monkeypatch)
+    core = tmp_path / "core.csv"
+    core.write_text("Well,Depth (ft),Porosity (%)\nBKS-01,1010,12\nBKS-01,1020,14\n")
+    first = window.model.project.get(key(window, "BKS-01"))
+    from services.session_service import attach_core
+    assert attach_core(first, str(core)) == []
+    assert first.tops_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    session = tmp_path / "s.json"
+    assert window.session_service.save_session(window.model, str(session))
+    saved = json.loads(session.read_text(encoding="utf-8"))
+    entry = next(w for w in saved["wells"] if w["display_name"] == "BKS-01")
+    assert entry["tops_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert entry["core_sha256"] == hashlib.sha256(core.read_bytes()).hexdigest()
+    assert all(isinstance(p, str) for w in saved["wells"] for p in w["sources"])
+    assert entry["source_fingerprints"][0]["sha256"] == hashlib.sha256(
+        (tmp_path / "a.las").read_bytes()).hexdigest()
+
+
+def test_relocation_prompt_through_the_window(two_wells, tmp_path, monkeypatch):
+    window = two_wells
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    session = tmp_path / "s.json"
+    assert window.session_service.save_session(window.model, str(session))
+    (tmp_path / "b.las").rename(moved / "b.las")
+    asked = []
+    monkeypatch.setattr(MainWindow, "_prompt_relocate",
+                        lambda self, path: (asked.append(path), str(moved / "b.las"))[1])
+    window.batch_runner.cancel()
+    window.model.reset()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(session), "")))
+    window._on_load_session()
+    wait_for_restore(window)
+    assert [os.path.basename(p) for p in asked] == ["b.las"]
+    assert [ds.display_name for ds in window.model.project.wells] == ["BKS-01", "BKS-02"]
+    assert "changed since" not in window.banner.message_label.text()
+
+
+def test_skip_in_the_window_keeps_todays_behaviour(two_wells, tmp_path, monkeypatch):
+    window = two_wells
+    session = tmp_path / "s.json"
+    assert window.session_service.save_session(window.model, str(session))
+    (tmp_path / "b.las").unlink()
+    # the autouse conftest patch returns None (Skip)
+    window.batch_runner.cancel()
+    window.model.reset()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(session), "")))
+    window._on_load_session()
+    wait_for_restore(window)
+    assert [ds.display_name for ds in window.model.project.wells] == ["BKS-01"]
+    assert "b.las" in window.banner.message_label.text()

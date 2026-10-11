@@ -5,6 +5,7 @@ one :class:`WellDataset` per group.
 """
 
 import copy
+import io
 import logging
 import os
 import re
@@ -14,6 +15,7 @@ from typing import Dict, List, Optional
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from models.project import WellDataset, display_name_for, make_well_key
+from modules.fingerprint import sha256_of
 from modules.las_parser import LASParser
 from modules.las_handler import MERGE_POLICY
 from modules.las_utils import MAX_INPUT_BYTES, same_well, well_key
@@ -49,6 +51,9 @@ class ParsedFile:
     name: str
     parser: Optional[object] = None
     error: Optional[str] = None
+    # Fingerprint taken from the bytes read for parsing (H3); None when not read.
+    sha256: Optional[str] = None
+    size: Optional[int] = None
 
     @property
     def ok(self) -> bool:
@@ -71,16 +76,23 @@ def parse_file(path: str) -> ParsedFile:
                 f"File is {size / 1024 ** 2:.0f} MB; the limit is "
                 f"{MAX_INPUT_BYTES // 1024 ** 2} MB",
             )
-        with open(path, "r") as handle:
+        # Read the bytes once: the fingerprint (H3) and the text come from the same read.
+        with open(path, "rb") as raw_handle:
+            raw = raw_handle.read()
+        sha = sha256_of(raw)
+        size = len(raw)
+        # Same decoding as open(path, "r"): locale encoding, universal newlines.
+        with io.TextIOWrapper(io.BytesIO(raw)) as handle:
             success = parser.read_las_from_buffer(handle)
     except Exception as exc:
         logger.exception("Unexpected failure parsing LAS file %s", path)
         return ParsedFile(path, name, None, sanitize_error_detail(exc) or "Could not read file")
     if success and parser.data is not None:
-        return ParsedFile(path, name, parser, None)
+        return ParsedFile(path, name, parser, None, sha, size)
     detail = getattr(parser, "last_error", None)
     logger.error("Failed to load LAS file %s: %s", path, detail)
-    return ParsedFile(path, name, None, sanitize_error_detail(detail) or "Could not parse file")
+    return ParsedFile(path, name, None, sanitize_error_detail(detail) or "Could not parse file",
+                      sha, size)
 
 
 class LoadSignals(QObject):
@@ -170,6 +182,8 @@ def build_well(files: List[ParsedFile], merge_result=None) -> WellDataset:
             "name": f.name,
             "path": f.path,
             "rows": 0 if getattr(f.parser, "data", None) is None else len(f.parser.data),
+            "sha256": f.sha256,
+            "size": f.size,
         }
         for f in files
     ]

@@ -21,6 +21,16 @@ A format 2.1 session stores:
 
 Loading a 2.0 or 2.1 session replaces the loaded wells: the LAS, tops, and core files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
 
+**Source fingerprints** *(v1.7.2)*. When a file is loaded, Petrophyter computes its SHA-256 hash and size from the bytes it reads. The session stores them next to the paths: `source_fingerprints` for each well (one entry per LAS file, so a merged well has one per file), and `tops_sha256` and `core_sha256` for the tops and core files. Saving never reads the files again. The `sources` list is unchanged, so an older version still opens the session.
+
+When you load a session, each file is compared with its stored hash before the well is rebuilt:
+
+- **Same hash.** The well loads as before.
+- **Changed.** The file is still read, and the banner says `a.las changed since the session was saved (hash differs); results will differ from the saved project`. The well needs a run, as every restored well does.
+- **Missing.** Petrophyter asks you to locate the file (`Locate a.las�`). Pick the file where it is now. A file with the same hash loads with no note; a different file loads with the *changed* note. **Cancel** skips the file, and the well is skipped with a note, as in earlier versions. The folder you pick is tried first, without asking, for the other missing files of the same session.
+
+A session saved by v1.7.0 or v1.7.1 has no hashes: it loads as before, with no note and no prompt.
+
 **Import records.** When tops or core data were assigned to a well from a multi-well file, the well stores a `tops_import` or `core_import` record: the file well name and its spellings, the columns that were used, the delimiter, decimal mark and encoding that were detected, the sheet, the depth unit, the fill-down setting, the last-formation rule and, for core data, the porosity scale. Loading the session replays the record exactly, so a manual choice such as mapping the file well `BKS-1` to the loaded well `BKS-01`, a column picked by hand, or a depth unit chosen in the dialog survives. If the file no longer holds any of the stored spellings, or the replay fails, Petrophyter falls back to matching the file by well name and adds a note to the banner. A 2.0 session has no records and always matches by name. A well whose tops or core file was loaded without a well column has no record. Results are not stored, so restored wells need a run (**Analysis → Run All Wells**).
 
 Project parameters include:

@@ -42,7 +42,8 @@ class WellDataset:
         self.key = key
         self.display_name = display_name
         self.identity: Dict = {}
-        # One entry per source file: {"name", "path", "rows"}.
+        # One entry per source file: {"name", "path", "rows", "sha256", "size"} (the
+        # fingerprint is taken when the file is read, P0-Hardening H3).
         self.sources: List[Dict] = []
         self.merged = False
         # How a merged well was merged: {"step", "gap_limit", "policy"} (the
@@ -62,6 +63,9 @@ class WellDataset:
         self.core_depth_unit = None
         self.tops_import = None
         self.core_import = None
+        # SHA-256 of the tops / core file, taken when it was read (H3).
+        self.tops_sha256 = None
+        self.core_sha256 = None
         self.curve_mapping: Dict[str, str] = default_curve_mapping()
         self.analysis_mode = "Whole Well"
         self.selected_formations: List[str] = []

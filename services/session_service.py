@@ -13,6 +13,7 @@ import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
+from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
 from version import APP_VERSION, version_tuple
 
@@ -243,6 +244,7 @@ def attach_tops(well, path: str) -> List[str]:
     well.formation_tops = tops
     well.tops_path = path
     well.tops_import = None
+    well.tops_sha256 = fingerprint_file(path)[0]
     return notes
 
 
@@ -274,6 +276,7 @@ def attach_core(well, path: str, depth_unit: str = "Auto") -> List[str]:
     well.core_path = path
     well.core_depth_unit = depth_unit
     well.core_import = None
+    well.core_sha256 = fingerprint_file(path)[0]
     return []
 
 
@@ -350,34 +353,135 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
         return False
     if kind == "tops":
         well.formation_tops, well.tops_path, well.tops_import = part, path, stored
+        well.tops_sha256 = fingerprint_file(path)[0]
     else:
         well.core_data, well.core_path, well.core_import = part, path, stored
         well.core_depth_unit = plan.effective_unit
+        well.core_sha256 = fingerprint_file(path)[0]
     return True
 
 
-def _restore_tops(ds, path: str, record: Optional[dict], cache: dict) -> List[str]:
+def changed_note(path: str) -> str:
+    """The load note for a source whose hash differs from the one saved (H3)."""
+    return (f"{os.path.basename(str(path))} changed since the session was saved (hash differs); "
+            f"results will differ from the saved project.")
+
+
+def _changed_since_save(path: str, stored_sha) -> List[str]:
+    """A one-item note list when ``path`` no longer has the hash the session stored."""
+    if not isinstance(stored_sha, str) or not stored_sha:
+        return []           # v1.7.0 / v1.7.1 session: nothing to compare
+    current = fingerprint_file(path)[0]
+    return [changed_note(path)] if current and current != stored_sha else []
+
+
+def _restore_tops(ds, path: str, record: Optional[dict], cache: dict,
+                  stored_sha=None) -> List[str]:
+    changed = _changed_since_save(path, stored_sha)
     refused: List[str] = []
     if record and replay_import(ds, "tops", path, record, cache, refused):
-        return []
+        return changed
     if refused:
-        return refused          # a refused TVD import is not retried by well name
+        return changed + refused          # a refused TVD import is not retried by well name
     notes = []
     if record:
         notes.append("the stored import no longer matches the tops file; matched by well name instead.")
-    return notes + attach_tops(ds, path)
+    return changed + notes + attach_tops(ds, path)
 
 
-def _restore_core(ds, path: str, record: Optional[dict], depth_unit: str, cache: dict) -> List[str]:
+def _restore_core(ds, path: str, record: Optional[dict], depth_unit: str, cache: dict,
+                  stored_sha=None) -> List[str]:
+    changed = _changed_since_save(path, stored_sha)
     refused: List[str] = []
     if record and replay_import(ds, "core", path, record, cache, refused):
-        return []
+        return changed
     if refused:
-        return refused
+        return changed + refused
     notes = []
     if record:
         notes.append("the stored import no longer matches the core file; matched by well name instead.")
-    return notes + attach_core(ds, path, depth_unit)
+    return changed + notes + attach_core(ds, path, depth_unit)
+
+
+def _entry_fingerprints(entry) -> List[Optional[str]]:
+    """Stored source hashes of one well entry, aligned with ``entry["sources"]``.
+
+    ``source_fingerprints`` is matched to each source by path, or by position when
+    the paths differ (the session was relocated before this call). A session
+    without fingerprints (v1.7.0 / v1.7.1), or a malformed list, gives all None.
+    """
+    paths = [str(p) for p in entry.get("sources") or []]
+    stored = entry.get("source_fingerprints")
+    if not isinstance(stored, list):
+        return [None] * len(paths)
+    items = [f for f in stored if isinstance(f, dict)]
+    by_path = {str(f.get("path")): f.get("sha256") for f in items}
+    result: List[Optional[str]] = []
+    for index, path in enumerate(paths):
+        sha = by_path.get(path)
+        if sha is None and len(items) == len(paths):
+            sha = items[index].get("sha256")
+        result.append(sha if isinstance(sha, str) and sha else None)
+    return result
+
+
+def relocate_missing_sources(session_data: Dict, prompt: Callable[[str], Optional[str]]) -> int:
+    """Ask for the files a session lists that are no longer where they were (H3).
+
+    Runs on the GUI thread before the restore worker starts, because the prompt is a
+    dialog. ``prompt(path)`` returns the located file or None (Skip). Changes
+    ``session_data`` in place: a located file replaces the stored path (the saved
+    hash is still compared by the builder, so a different file gets the "changed"
+    note). Only files the session fingerprinted are asked for; an older session
+    restores as before. The folder of a located file is tried first, silently, for
+    the other missing files of the session, and a path asked for once is not asked
+    again. Returns how many paths were replaced.
+    """
+    if not isinstance(session_data, dict):
+        return 0
+    folders: List[str] = []
+    resolved: Dict[str, Optional[str]] = {}
+
+    def locate(path: str) -> Optional[str]:
+        if path in resolved:
+            return resolved[path]
+        found = None
+        for folder in folders:
+            candidate = os.path.join(folder, os.path.basename(path))
+            if os.path.isfile(candidate):
+                found = candidate
+                break
+        if found is None:
+            chosen = prompt(path)
+            if chosen and os.path.isfile(chosen):
+                found = chosen
+                folder = os.path.dirname(os.path.abspath(chosen))
+                if folder not in folders:
+                    folders.append(folder)
+        resolved[path] = found
+        return found
+
+    replaced = 0
+    for entry in session_data.get("wells") or []:
+        if not isinstance(entry, dict):
+            continue
+        fingerprints = _entry_fingerprints(entry)
+        sources = entry.get("sources")
+        if isinstance(sources, list):
+            for index, path in enumerate(sources):
+                if fingerprints[index] and not os.path.isfile(str(path)):
+                    new = locate(str(path))
+                    if new:
+                        sources[index] = new
+                        replaced += 1
+        for path_key, sha_key in (("tops_path", "tops_sha256"), ("core_path", "core_sha256")):
+            path = entry.get(path_key)
+            if path and entry.get(sha_key) and not os.path.isfile(str(path)):
+                new = locate(str(path))
+                if new:
+                    entry[path_key] = new
+                    replaced += 1
+    return replaced
 
 
 class SessionService(QObject):
@@ -794,6 +898,11 @@ class SessionService(QObject):
         if bad:
             notes.append(f"{label}: could not read {bad[0].name} ({bad[0].error}); skipped.")
             return None
+        # Compare with the hashes saved with the session before merging (H3). A changed
+        # source still loads; the well is stale like every restored well.
+        for parsed, stored_sha in zip(files, _entry_fingerprints(entry)):
+            if stored_sha and parsed.sha256 and parsed.sha256 != stored_sha:
+                notes.append(f"{label}: {changed_note(parsed.path)}")
         merge_result = None
         recipe = None
         if len(files) > 1:
@@ -844,7 +953,7 @@ class SessionService(QObject):
             path = entry["tops_path"]
             if os.path.isfile(path):
                 notes.extend(f"{label}: {n}" for n in _restore_tops(
-                    ds, path, entry.get("tops_import"), parse_cache))
+                    ds, path, entry.get("tops_import"), parse_cache, entry.get("tops_sha256")))
             else:
                 notes.append(f"{label}: formation tops file not found ({os.path.basename(path)}).")
         if entry.get("core_path"):
@@ -852,7 +961,7 @@ class SessionService(QObject):
             if os.path.isfile(path):
                 notes.extend(f"{label}: {n}" for n in _restore_core(
                     ds, path, entry.get("core_import"), entry.get("core_depth_unit") or "Auto",
-                    parse_cache))
+                    parse_cache, entry.get("core_sha256")))
             else:
                 notes.append(f"{label}: core file not found ({os.path.basename(path)}).")
         ds.calculated = False
@@ -908,6 +1017,15 @@ class SessionService(QObject):
                 merge_keys = {"merge_step": getattr(model, "merge_step", 0.5),
                               "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
                               "merge_policy": MERGE_POLICY}
+            fingerprints = [{"path": s_["path"], "sha256": s_["sha256"], "size": s_.get("size")}
+                            for s_ in ds.sources if s_.get("path") and s_.get("sha256")]
+            hashes = {}
+            if fingerprints:
+                hashes["source_fingerprints"] = fingerprints
+            if getattr(ds, "tops_sha256", None):
+                hashes["tops_sha256"] = ds.tops_sha256
+            if getattr(ds, "core_sha256", None):
+                hashes["core_sha256"] = ds.core_sha256
             wells.append({
                 "key": ds.key,
                 "display_name": ds.display_name,
@@ -924,6 +1042,7 @@ class SessionService(QObject):
                 "tops_import": getattr(ds, "tops_import", None),
                 "core_import": getattr(ds, "core_import", None),
                 "core_depth_unit": getattr(ds, "core_depth_unit", None),
+                **hashes,
             })
         data = {
             "_session_version": self.SESSION_VERSION,

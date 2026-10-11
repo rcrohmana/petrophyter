@@ -76,6 +76,15 @@ Text that starts with `=` is never written as a formula *(v1.7.1)*:
 
 Every export records what produced its numbers *(v1.7.1)*: the Petrophyter version and build, the run time (UTC), the well's status at export (current, out of date, or latest run failed), the parameter hash of the run, and the issue counts.
 
+The block is also the run manifest *(v1.7.2)*. For each well it adds:
+
+- **Source files**: each LAS file with its SHA-256 hash and size, taken when the file was loaded.
+- **Merge recipe**: the step, gap limit and merge-rules version of a merged well, or `single file`.
+- **Tops file** and **Core file**: the file name and hash, or `none`.
+- **numpy**, **scipy**, **pandas** and **lasio**: the library versions, next to the Petrophyter version.
+
+Together with the parameter hash, this shows which files and settings produced the numbers. In the LAS section the same facts are the lines `Sources`, `Merge recipe`, `Tops`, `Core` and `Libraries`.
+
 - **Excel.** A **Provenance** sheet: one row per well for an all-wells export, key/value rows for one well. The **Summary** sheet lists **Parameter**, **Scope** (well, zone name, or temperature), **Value**, and **Source** for every parameter the run used.
 - **LAS.** An `~OTHER INFORMATION` section before the data, starting with `Exported by Petrophyter <version> (Build <build>)`.
 - **CSV.** A `<name>.provenance.txt` file next to the CSV. The CSV itself keeps one header row and one table.
