@@ -1,6 +1,6 @@
 """Single source of truth for Petrophyter release metadata."""
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 APP_BUILD = "20261011"
 APP_VERSION_DISPLAY = f"{APP_VERSION} (Build {APP_BUILD})"
 
