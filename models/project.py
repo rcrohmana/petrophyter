@@ -35,7 +35,7 @@ class WellDataset:
         "qc_report", "results", "summary", "merge_report", "calculated",
         "calculated_shale", "shale_method_used", "calculated_rw",
         "calculated_rsh", "calculated_C", "calculated_P", "calculated_Q",
-        "run_params_hash", "error",
+        "run_params_hash", "error", "run_time",
     )
 
     def __init__(self, key: str = "", display_name: str = ""):
@@ -45,6 +45,10 @@ class WellDataset:
         # One entry per source file: {"name", "path", "rows"}.
         self.sources: List[Dict] = []
         self.merged = False
+        # How a merged well was merged: {"step", "gap_limit", "policy"} (the
+        # resolved gap, never None); None for a single-file well. Saved per well
+        # in sessions instead of the global merge settings (P0-Hardening H1).
+        self.merge_recipe: Optional[Dict] = None
 
         self.las_parser = None
         self.data_version = 0
@@ -96,6 +100,8 @@ class WellDataset:
         self.calculated_Q = None
         self.run_params_hash = None
         self.error = None
+        # UTC ISO time of the last successful run (P0-UI/UX U3); not saved.
+        self.run_time = None
         self.stale = False
 
     @property

@@ -25,6 +25,12 @@ from .las_utils import (
 # Discrete curves tokens that should NOT be interpolated
 DISCRETE_CURVE_TOKENS = ['LITH', 'FACIES', 'FLAG', 'ZONE', 'CODE', 'TYPE', 'CLASS']
 
+# Version of the rules a merge uses to fill the master grid. Sessions record it
+# per merged well (P0-Hardening H1) so a reload can say when a well was merged
+# again under different rules. 1 = v1.7.0; 2 = no end extrapolation (I4) and
+# resistivity interpolated in log10 (I5). Bump on any change to filled values.
+MERGE_POLICY = 1
+
 # Expected curve ranges for QC scoring (used by curve_qc_score below).
 CURVE_RANGES = {
     'GR': (0, 300),

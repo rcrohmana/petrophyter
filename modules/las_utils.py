@@ -48,6 +48,26 @@ NULL_REPLACE_DTYPES = ('float64', 'float32', 'int64')
 NULL_MATCH_TOLERANCE = 0.01
 
 
+def mask_nonpositive(df: pd.DataFrame, curves: Sequence[str]) -> dict:
+    """Set values <= 0 to NaN in the named columns, in place.
+
+    Resistivity, bulk density and sonic slowness cannot be zero or negative;
+    such values are tool-off or casing readings, treated like null sentinels.
+    Columns that are absent or not numeric are skipped. Returns the number of
+    samples masked per column (only columns with at least one).
+    """
+    counts = {}
+    for curve in curves:
+        if curve not in df.columns or not pd.api.types.is_numeric_dtype(df[curve]):
+            continue
+        bad = df[curve] <= 0
+        n = int(bad.sum())
+        if n:
+            df.loc[bad, curve] = np.nan
+            counts[curve] = n
+    return counts
+
+
 def find_depth_column(columns: Sequence[str]) -> Optional[str]:
     """
     Return the first depth-candidate mnemonic present in ``columns``.
