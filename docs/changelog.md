@@ -4,15 +4,15 @@
 
 ## v1.7.3 (Build 20261011) — Current Release
 
-See the [release notes](releases/v1.7.3.md) for details, including the settled P0 decisions. Results do not
+See the [release notes](releases/v1.7.3.md) for details, including the confirmed defaults. Results do not
 change.
 
-- **Curve Mapping detail (U11).** Mapped curves table: unit, coverage (warning below 50 %), range, Auto or
+- **Curve Mapping detail.** Mapped curves table: unit, coverage (warning below 50 %), range, Auto or
   Manual mapping.
-- **Changes since the last run (U12).** The Parameters window lists what changed since the active well's
+- **Changes since the last run.** The Parameters window lists what changed since the active well's
   last run; **Revert to last run** restores those parameters (project values are shared, tops are not
   reverted).
-- **Plot engine under Advanced (U13)** on the Log Display tab.
+- **Plot engine under Advanced** on the Log Display tab.
 - The Sw > 1.05 warning needs at least 10 clean samples in the zone.
 - README: SmartScreen and SHA-256 check for the unsigned installer.
 - 1338 tests.
@@ -24,16 +24,16 @@ sessions from 1.7.1 and older show a notice and every well is out of date until 
 
 ### Calculation changes
 
-- **Porosity (C1, C4, C5).** PHIT on every porosity path; D-N combination Average (default) or RMS, RMS on gas
+- **Porosity.** PHIT on every porosity path; D-N combination Average (default) or RMS, RMS on gas
   samples; RMS reproduces the old PHIT. Gas flag needs a 0.02 crossover and Vsh ≤ 0.40; PHIE_GAS ≤ PHIT. The
   neutron shale term uses `NPHI_shale − NPHI_matrix`.
-- **Saturation (C2, C3, C6, C14).** Waxman-Smits and Dual-Water are solved on PHIT (`SWT_WS`, `SWT_DW`) and
+- **Saturation.** Waxman-Smits and Dual-Water are solved on PHIT (`SWT_WS`, `SWT_DW`) and
   reported as effective Sw from the hydrocarbon volume; one validity rule (Sw 1 at porosity ≤ 0.001, Vsh 0–1)
   for every model; bound hits counted per model and zone. Waxman-Smits accepts Qv 0.
-- **Rw, Rsh, shale (C8, C9, C11).** Automatic Rw from the water-like samples (water leg, no contrast, or no
+- **Rw, Rsh, shale.** Automatic Rw from the water-like samples (water leg, no contrast, or no
   water); automatic Rsh needs 10 shale samples; clamps warn. Zone GR baseline keeps the well's GRmax in a zone
   without shale. `VSH` from the Primary Vsh method.
-- **Pay, HCPV, Swirr, permeability (C7, C10, C12, C13, C15).** One thickness rule with local gap detection for
+- **Pay, HCPV, Swirr, permeability.** One thickness rule with local gap detection for
   pay and HCPV; thickness-weighted PHIE and Vsh, pore-volume-weighted Sw; Swirr floor applied last; the
   selected Swirr method feeds permeability; calibration fits C and P with Q held and the run's Buckles Swirr.
 
