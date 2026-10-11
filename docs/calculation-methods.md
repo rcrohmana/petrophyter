@@ -29,21 +29,50 @@ Clavier, Stieber, SP or neutron-density Vsh.
 
 | Method | Description | Version |
 |---|---|---|
-| **Density (PHID)** | `PHIE = (ρma - ρb) / (ρma - ρfl) - Vsh × correction` | v1.0 |
-| **Neutron (PHIN)** | Matrix and shale correction | v1.0 |
+| **Density (PHID)** | `PHID = (ρma - ρb) / (ρma - ρfl)`; `PHIE_D = PHID - Vsh × (ρma - ρsh) / (ρma - ρfl)` | v1.0 |
+| **Neutron (PHIN)** | `PHIN = NPHI - NPHI_matrix`; `PHIE_N = PHIN - Vsh × (NPHI_shale - NPHI_matrix)` | v1.0, shale term v1.7.2 |
 | **Sonic (PHIS)** | Wyllie time-average equation | v1.0 |
-| **Neutron-Density (PHIT)** | RMS average from the crossplot | v1.0 |
+| **Density-Neutron (PHIE_DN)** | The shale-corrected PHIE_D and PHIE_N combined like PHIT (below) | v1.0, combination v1.7.2 |
 
 A sample where no selected porosity method gives a value has no PHIE: it is left empty (NaN) and drops out of
 Sw, pay and HCPV. The run lists how much of the interval has porosity; a fixed porosity is never substituted
 *(v1.7.1)*.
+
+**Neutron shale term** *(v1.7.2)*. PHIN is the neutron reading on the matrix scale (`NPHI − NPHI_matrix`), so
+the shale reading is shifted the same way: pure shale gives `PHIE_N = 0`. Before v1.7.2 the raw `NPHI_shale`
+was subtracted, which left 0.02 of porosity in pure shale with the sandstone matrix.
+
+### Total porosity (PHIT) *(v1.7.2)*
+
+Every porosity path has a total porosity, sample by sample:
+
+| Inputs at the sample | PHIT |
+|---|---|
+| PHID and PHIN | **Average** `(PHID + PHIN) / 2`, signs kept (default), or **RMS** `√((PHID² + PHIN²) / 2)`; RMS on gas-flagged samples whatever the choice |
+| PHID only | PHID |
+| PHIN only | PHIN |
+| PHIS only | PHIS |
+| none | empty (NaN) |
+
+PHIT is limited to 0–0.45 after the combination, so a negative mean becomes 0 instead of a positive square.
+The combination, **D-N combination** (`dn_combination`), can be set per well and per zone. The arithmetic
+average is the density-neutron total porosity of liquid-filled formations; the root-mean-square is the
+Gaymard-Poupon (1968) gas-zone form, which is why gas-flagged samples always use it. Choosing **RMS**
+everywhere reproduces the PHIT of v1.7.1 and older.
 
 ### Gas correction *(v1.1)*
 
 - Enable or disable gas correction for PHIE.
 - Configure the NPHI factor from 0.10 to 0.50.
 - Configure the RHOB factor from 0.05 to 0.30.
-- Detect gas zones automatically from neutron-density crossover.
+- **Gas flag** *(v1.7.2)*: a sample is flagged when `PHID − PHIN ≥ gas_crossover_min` (0.02 v/v by default)
+  and `Vsh ≤ gas_vsh_max` (0.40 by default). A bare crossover is noise within a few porosity units, and shale
+  also crosses over. The flag (`GAS_FLAG`) is computed whenever gas correction is on, whatever the primary
+  PHIE method, and it switches PHIT to RMS on those samples.
+- **PHIE_GAS** *(v1.7.2)*: on flagged samples PHIN is divided by `(1 − NPHI factor)` and PHID multiplied by
+  `(1 − RHOB factor)`; both are shale-corrected and averaged (the correction already removes the gas effect,
+  so RMS on top would count it twice), and the result is limited to the sample's PHIT, then to 0.45.
+  Effective porosity never exceeds total porosity.
 
 ## Water Saturation
 
