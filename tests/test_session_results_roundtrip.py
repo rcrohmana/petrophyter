@@ -64,8 +64,7 @@ def _same(a, b, path="summary"):
 
 @pytest.mark.parametrize("steps", [
     pytest.param(((0.5, 5.0), (0.5, 5.0)), id="same-step"),
-    pytest.param(((0.25, 3.0), (1.0, 8.0)), id="different-steps", marks=pytest.mark.xfail(
-        strict=True, reason="needs H1 merge_recipe from build_well")),
+    pytest.param(((0.25, 3.0), (1.0, 8.0)), id="different-steps"),
 ])
 def test_save_load_run_reproduces_results(tmp_path, steps):
     model = AppModel()

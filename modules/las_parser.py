@@ -11,6 +11,8 @@ from typing import Dict, List, Tuple, Optional, Any
 from .las_utils import (
     COMMON_NULL_VALUES,
     DEPTH_COLUMN_CANDIDATES,
+    check_depth_range,
+    mask_intake_nonpositive,
     normalize_curve_units,
     replace_null_values,
     well_key,
@@ -249,6 +251,11 @@ class LASParser:
             unit = (getattr(item, 'unit', '') or '').strip()
             if unit:
                 self.well_info[f'{name}_unit'] = unit
+            elif name == 'bht' and not isinstance(self.well_info[name], str):
+                # No unit: stays degF as before, but the assumption is flagged.
+                # It is not guessed from the depth unit: 194 is plausible in
+                # both degF and degC (I7).
+                self.well_info['bht_unit_assumed'] = True
         for name, mnemonic in (('permanent_datum', 'PDAT'), ('depth_measured_from', 'DMF')):
             text = self._get_text(mnemonic)
             if text:
@@ -343,6 +350,13 @@ class LASParser:
                 value = pd.to_numeric(self.well_info.get(key), errors='coerce')
                 if not pd.isna(value):
                     self.well_info[key] = float(value) * 3.28084
+            # A TD without a unit sits next to depths in metres: take it as
+            # metres too, and say so (I7).
+            td = self.well_info.get('td')
+            if isinstance(td, (int, float)) and not self.well_info.get('td_unit'):
+                self.well_info['td'] = float(td) * 3.28084
+                self.well_info['td_unit'] = 'FT'
+                self.well_info['td_unit_assumed'] = True
             self.well_info['depth_unit'] = 'FT'
             self.well_info['converted_from_meters'] = True
             logger.info("Converted depth from %s to FT", detected_unit)
@@ -374,10 +388,19 @@ class LASParser:
         # null-handles identically whether it is loaded singly or merged.
         replace_null_values(self.data, [self.null_value] + COMMON_NULL_VALUES)
 
+        # Resistivity, density and sonic readings <= 0 are tool-off or casing
+        # values, not measurements: treat them like null sentinels (I1, I2).
+        mask_warnings = mask_intake_nonpositive(self.data, self.curve_info)
+
         # Bring neutron / density / sonic curves to the app's working units.
-        self.data, self.curve_info, self.unit_warnings = normalize_curve_units(
+        self.data, self.curve_info, unit_warnings = normalize_curve_units(
             self.data, self.curve_info
         )
+        self.unit_warnings = mask_warnings + unit_warnings
+
+        # A depth outside any real well is a unit error, not a grid (H5).
+        if 'DEPTH' in self.data.columns:
+            check_depth_range(self.data['DEPTH'], depth_source or 'DEPTH')
 
         # Store null value info
         self.null_values_replaced = True

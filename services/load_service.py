@@ -15,7 +15,8 @@ from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from models.project import WellDataset, display_name_for, make_well_key
 from modules.las_parser import LASParser
-from modules.las_utils import same_well, well_key
+from modules.las_handler import MERGE_POLICY
+from modules.las_utils import MAX_INPUT_BYTES, same_well, well_key
 from modules.param_scopes import default_well_overrides
 from modules.qc_module import QCModule
 
@@ -63,6 +64,13 @@ def parse_file(path: str) -> ParsedFile:
     name = os.path.basename(str(path))
     parser = LASParser()
     try:
+        size = os.path.getsize(path)
+        if size > MAX_INPUT_BYTES:
+            return ParsedFile(
+                path, name, None,
+                f"File is {size / 1024 ** 2:.0f} MB; the limit is "
+                f"{MAX_INPUT_BYTES // 1024 ** 2} MB",
+            )
         with open(path, "r") as handle:
             success = parser.read_las_from_buffer(handle)
     except Exception as exc:
@@ -139,6 +147,16 @@ def _detect_mapping(parser) -> Dict[str, str]:
     return detected
 
 
+def _merge_recipe(merge_report) -> Optional[Dict]:
+    """{"step", "gap_limit", "policy"} from a merge report, or None if it lacks them."""
+    master = getattr(merge_report, "master_depth", None) or {}
+    try:
+        step, gap = float(master["step"]), float(master["gap_limit"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"step": step, "gap_limit": gap, "policy": MERGE_POLICY}
+
+
 def build_well(files: List[ParsedFile], merge_result=None) -> WellDataset:
     """Build a WellDataset from one file, or from a merged group.
 
@@ -191,6 +209,8 @@ def build_well(files: List[ParsedFile], merge_result=None) -> WellDataset:
     ds.las_data = data
     ds.las_filename = las_filename
     ds.merge_report = merge_report
+    # What a session needs to merge this well again the same way (H1).
+    ds.merge_recipe = _merge_recipe(merge_report) if merged else None
     ds.curve_mapping = _detect_mapping(parser)
     ds.qc_report = QCModule(data, ds.display_name).run_qc()
     # New wells estimate Rw, Rsh and the GR baseline from their own data

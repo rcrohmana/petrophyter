@@ -462,6 +462,28 @@ def gradient_from_header(header: Optional[Dict], surface_temp_f,
     return round((bht_f - float(surface_temp_f)) / height * 100.0, 4)
 
 
+GRADIENT_PLAUSIBLE_F_PER_100FT = (0.5, 4.0)
+
+
+def gradient_header_notes(header: Optional[Dict], gradient: Optional[float]) -> str:
+    """Suffix for the header-gradient readout line (I7), or "".
+
+    Names a TD or BHT unit that the parser had to assume, and warns when the
+    gradient lies outside 0.5 to 4.0 degF/100 ft. The value is still offered.
+    """
+    header = header or {}
+    notes = []
+    if header.get("td_unit_assumed"):
+        notes.append("(TD unit assumed: m)")
+    if header.get("bht_unit_assumed"):
+        notes.append("(BHT unit assumed: °F)")
+    if gradient is not None:
+        lo, hi = GRADIENT_PLAUSIBLE_F_PER_100FT
+        if not lo <= float(gradient) <= hi:
+            notes.append("header gradient unusual; check the BHT and TD units")
+    return " ".join(notes)
+
+
 ARPS_OFFSET_F = 6.77
 
 
@@ -657,7 +679,8 @@ def temperature_readout(data, tvd_curve, depth_reference, header, flat) -> List[
             where = "MD" if "_td_tvd_ft" not in header else f"MD, TVD {header['_td_tvd_ft']:,.0f} ft"
             lines.append(
                 f"header: {_to_degf(float(bht), header.get('bht_unit')):.0f} °F at TD "
-                f"{td_ft:,.0f} ft ({where}) → gradient {gradient:.2f} °F/100 ft"
+                f"{td_ft:,.0f} ft ({where}) → gradient {gradient:.2f} °F/100 ft "
+                f"{gradient_header_notes(header, gradient)}".rstrip()
             )
     return lines
 

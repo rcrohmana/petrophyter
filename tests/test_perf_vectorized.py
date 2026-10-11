@@ -16,17 +16,19 @@ from modules.petrophysics import PetrophysicsCalculator
 # Reference (old) implementations
 # ---------------------------------------------------------------------------
 def old_linear(x_new, x, y, gap_limit):
+    # Loop reference with the P0 I4 rule: nothing before the first or after the
+    # last sample, and a grid point on a measured depth keeps the measured value.
     result = np.full(len(x_new), np.nan)
     sort_idx = np.argsort(x)
     xs, ys = x[sort_idx], y[sort_idx]
     for i, xi in enumerate(x_new):
         r = np.searchsorted(xs, xi)
-        if r == 0:
-            if abs(xi - xs[0]) <= gap_limit:
-                result[i] = ys[0]
-        elif r >= len(xs):
-            if abs(xi - xs[-1]) <= gap_limit:
-                result[i] = ys[-1]
+        if r < len(xs) and abs(xs[r] - xi) <= 1e-6:
+            result[i] = ys[r]
+        elif r > 0 and abs(xs[r - 1] - xi) <= 1e-6:
+            result[i] = ys[r - 1]
+        elif r == 0 or r >= len(xs):
+            continue
         else:
             xl, xr = xs[r - 1], xs[r]
             if (xr - xl) <= gap_limit:

@@ -13,10 +13,12 @@ from dataclasses import dataclass, field
 
 from .las_utils import (
     COMMON_NULL_VALUES,
-    DEPTH_COLUMN_CANDIDATES,
     canonical_unit,
+    check_depth_range,
+    find_depth_column,
     normalize_well_name,
     replace_null_values,
+    resistivity_curves,
     same_well,
     well_key,
 )
@@ -29,7 +31,15 @@ DISCRETE_CURVE_TOKENS = ['LITH', 'FACIES', 'FLAG', 'ZONE', 'CODE', 'TYPE', 'CLAS
 # per merged well (P0-Hardening H1) so a reload can say when a well was merged
 # again under different rules. 1 = v1.7.0; 2 = no end extrapolation (I4) and
 # resistivity interpolated in log10 (I5). Bump on any change to filled values.
-MERGE_POLICY = 1
+MERGE_POLICY = 2
+
+# Resource guards for the master grid (P0-Hardening H5): the memory estimate
+# points x curves x 8 B x 3 and the number of grid points must stay below these.
+MAX_MERGE_BYTES = 1024 ** 3
+MAX_GRID_POINTS = 2_000_000
+
+# A grid point this close to a measured depth takes the measured value (ft).
+_MEASURED_DEPTH_TOL = 1e-6
 
 # Expected curve ranges for QC scoring (used by curve_qc_score below).
 CURVE_RANGES = {
@@ -143,14 +153,15 @@ class LASHandler:
         """
         df = df.copy()
         
-        # 1. Ensure DEPTH column exists (candidates shared with las_parser)
-        for col in DEPTH_COLUMN_CANDIDATES:
-            if col in df.columns and col != 'DEPTH':
-                df = df.rename(columns={col: 'DEPTH'})
-                break
-
+        # 1. Ensure DEPTH column exists (candidates shared with las_parser).
+        #    A candidate is renamed only when DEPTH is absent: a TVD or MD
+        #    curve next to DEPTH stays an ordinary curve (I3).
+        depth_source = 'DEPTH'
         if 'DEPTH' not in df.columns:
-            raise ValueError("No depth column found in DataFrame")
+            depth_source = find_depth_column(df.columns)
+            if depth_source is None:
+                raise ValueError("No depth column found in DataFrame")
+            df = df.rename(columns={depth_source: 'DEPTH'})
 
         # 2. Convert null values to NaN via the shared helper (same dtype set and
         #    tolerance as the single-load path in las_parser).
@@ -159,7 +170,10 @@ class LASHandler:
         # 3. Convert depth to FT if in meters
         if depth_unit.upper() in ['M', 'METER', 'METERS']:
             df['DEPTH'] = df['DEPTH'] * 3.28084
-        
+
+        # A depth outside any real well is a unit error, not a grid (H5).
+        check_depth_range(df['DEPTH'], depth_source)
+
         # 4. Sort by depth
         df = df.sort_values('DEPTH').reset_index(drop=True)
 
@@ -218,7 +232,21 @@ class LASHandler:
         # Use linspace with a computed point count instead of np.arange with a
         # float step: arange accumulates floating-point drift over long wells
         # and can drop/add the final point. linspace is deterministic.
+        if not (np.isfinite(min_depth) and np.isfinite(max_depth)):
+            raise ValueError("Depth range is not finite; check the depth column")
         num_points = int(round((max_depth - min_depth) / step_ft)) + 1
+
+        # Refuse before allocating anything (H5): the estimate counts the
+        # projection array per curve per file, the merged frame and the copies.
+        n_curves = sum(max(len(df.columns) - 1, 1) for df in files_dfs
+                       if 'DEPTH' in df.columns and len(df) > 0)
+        needed = num_points * n_curves * 8 * 3
+        if num_points > MAX_GRID_POINTS or needed > MAX_MERGE_BYTES:
+            raise ValueError(
+                f"depth range {min_depth:g}–{max_depth:g} at step {step_ft:g} needs "
+                f"{num_points} points and about {needed / 1024 ** 3:.1f} GB; "
+                "check the depth unit and the step"
+            )
         master_depth = np.linspace(min_depth, max_depth, num_points)
 
         return master_depth
@@ -302,16 +330,23 @@ class LASHandler:
     def project_to_master_grid(self, df: pd.DataFrame, 
                                 master_depth: np.ndarray,
                                 gap_limit_ft: float = 5.0,
-                                step_ft: float = 0.5) -> pd.DataFrame:
+                                step_ft: float = 0.5,
+                                curve_info: Optional[Dict] = None) -> pd.DataFrame:
         """
         Project DataFrame to master depth grid with interpolation.
-        
+
+        Resistivity curves (aliases, or an ohm unit in ``curve_info``) are
+        interpolated in log10; other continuous curves linearly; discrete
+        curves by nearest neighbour. Nothing is extrapolated past a file's
+        first or last sample.
+
         Args:
             df: Input DataFrame
             master_depth: Master depth array
             gap_limit_ft: Maximum gap for interpolation
             step_ft: Depth step (for discrete curve max_dist)
-            
+            curve_info: Optional {curve: {"unit": ...}} of the source file
+
         Returns:
             Projected DataFrame on master grid
         """
@@ -323,7 +358,8 @@ class LASHandler:
         
         # Get curves (excluding DEPTH)
         curves = [c for c in df.columns if c != 'DEPTH']
-        
+        log_curves = set(resistivity_curves(curves, curve_info))
+
         # Discrete curve max distance = 2 * step
         discrete_max_dist = max(1.0, 2 * step_ft)
         
@@ -346,20 +382,35 @@ class LASHandler:
                     max_dist=discrete_max_dist
                 )
             else:
-                # Linear interpolation with gap limit
+                is_log = curve in log_curves
+                if is_log:
+                    # A resistivity <= 0 is not a measurement (and has no log).
+                    curve_data = curve_data[curve_data[curve] > 0]
+                    if len(curve_data) == 0:
+                        result[curve] = np.nan
+                        continue
+                # Linear interpolation with gap limit (log10 for resistivity)
                 result[curve] = self._linear_interp_with_gap_limit(
                     master_depth,
                     curve_data['DEPTH'].values,
                     curve_data[curve].values,
-                    gap_limit_ft
+                    gap_limit_ft,
+                    log=is_log,
                 )
-        
+
         return result
     
     def _linear_interp_with_gap_limit(self, x_new: np.ndarray,
                                        x: np.ndarray, y: np.ndarray,
-                                       gap_limit: float) -> np.ndarray:
-        """Linear interpolation with gap limit."""
+                                       gap_limit: float, log: bool = False) -> np.ndarray:
+        """Linear interpolation with gap limit, never past a file's ends.
+
+        Values are interpolated only BETWEEN measured samples that are at most
+        ``gap_limit`` apart; before the first and after the last sample the
+        result stays NaN (a file's edge is not data). A grid point on a
+        measured depth takes the measured value whatever the gap beside it.
+        With ``log`` the interpolation runs on log10(y) (``y`` must be > 0).
+        """
         x_new = np.asarray(x_new, dtype=float)
         result = np.full(len(x_new), np.nan)
         if len(x) == 0 or len(x_new) == 0:
@@ -367,24 +418,15 @@ class LASHandler:
 
         # Sort input
         sort_idx = np.argsort(x)
-        x_sorted = np.asarray(x)[sort_idx]
-        y_sorted = np.asarray(y)[sort_idx]
+        x_sorted = np.asarray(x, dtype=float)[sort_idx]
+        y_sorted = np.asarray(y, dtype=float)[sort_idx]
         n = len(x_sorted)
+        y_interp = np.log10(y_sorted) if log else y_sorted
 
         idx_right = np.searchsorted(x_sorted, x_new)
 
-        # Before first / after last point: end sample if within gap_limit.
-        before = idx_right == 0
-        after = idx_right >= n
-        if before.any():
-            ok = before & (np.abs(x_new - x_sorted[0]) <= gap_limit)
-            result[ok] = y_sorted[0]
-        if after.any():
-            ok = after & (np.abs(x_new - x_sorted[-1]) <= gap_limit)
-            result[ok] = y_sorted[-1]
-
         # Between points: interpolate only across intervals <= gap_limit.
-        mid = np.flatnonzero(~(before | after))
+        mid = np.flatnonzero((idx_right > 0) & (idx_right < n))
         if mid.size:
             ir = idx_right[mid]
             x_left = x_sorted[ir - 1]
@@ -392,7 +434,16 @@ class LASHandler:
             ok = (x_right - x_left) <= gap_limit
             mid, ir, x_left, x_right = mid[ok], ir[ok], x_left[ok], x_right[ok]
             t = (x_new[mid] - x_left) / (x_right - x_left)
-            result[mid] = y_sorted[ir - 1] * (1 - t) + y_sorted[ir] * t
+            value = y_interp[ir - 1] * (1 - t) + y_interp[ir] * t
+            result[mid] = 10.0 ** value if log else value
+
+        # A measured depth keeps its measured value, whatever the gaps beside it.
+        right = np.clip(idx_right, 0, n - 1)
+        left = np.clip(idx_right - 1, 0, n - 1)
+        on_right = np.abs(x_sorted[right] - x_new) <= _MEASURED_DEPTH_TOL
+        on_left = ~on_right & (np.abs(x_sorted[left] - x_new) <= _MEASURED_DEPTH_TOL)
+        result[on_right] = y_sorted[right[on_right]]
+        result[on_left] = y_sorted[left[on_left]]
 
         return result
     
@@ -588,7 +639,10 @@ class LASHandler:
         # Project all files to master grid
         projected_dfs = []
         for i, df in enumerate(normalized_dfs):
-            projected = self.project_to_master_grid(df, master_depth, gap_limit_ft, step_ft)
+            projected = self.project_to_master_grid(
+                df, master_depth, gap_limit_ft, step_ft,
+                curve_info=getattr(kept_las[i], 'curve_info', None),
+            )
             projected_dfs.append((file_names[i], projected))
         
         # Calculate QC scores per curve per file
@@ -698,7 +752,10 @@ class LASHandler:
                 'min': float(master_depth.min()),
                 'max': float(master_depth.max()),
                 'step': step_ft,
-                'points': len(master_depth)
+                'points': len(master_depth),
+                # The limit actually used (resolved when None was passed), so a
+                # session can replay this merge exactly (H1).
+                'gap_limit': float(gap_limit_ft),
             },
             files_processed=file_names,
             warnings=warnings,

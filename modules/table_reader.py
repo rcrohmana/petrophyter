@@ -29,6 +29,8 @@ from typing import Callable, List, Optional, Sequence, Union
 import numpy as np
 import pandas as pd
 
+from .las_utils import MAX_INPUT_BYTES
+
 CANDIDATE_DELIMITERS = ["\t", ",", ";", "|"]
 MAX_HEADER_ROWS = 10
 
@@ -275,6 +277,12 @@ def read_table(source, required: Required = None, *, sheet=0,
     path_str = os.fspath(source) if is_path else ""
     raw = None
     if is_path:
+        size = os.path.getsize(path_str)
+        if size > MAX_INPUT_BYTES:
+            raise TableReadError(
+                f"The file is {size / 1024 ** 2:.0f} MB; the limit is "
+                f"{MAX_INPUT_BYTES // 1024 ** 2} MB."
+            )
         if path_str.lower().endswith((".xlsx", ".xlsm")):
             return _read_excel(path_str, required, sheet)
         with open(path_str, "rb") as fh:

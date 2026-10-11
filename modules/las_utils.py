@@ -48,6 +48,32 @@ NULL_REPLACE_DTYPES = ('float64', 'float32', 'int64')
 NULL_MATCH_TOLERANCE = 0.01
 
 
+# Largest input file read into memory (P0-Hardening H5).
+MAX_INPUT_BYTES = 500 * 1024 * 1024
+
+# Plausible depth range after unit handling, in feet (P0-Hardening H5).
+DEPTH_SANITY_MIN_FT = -1000.0
+DEPTH_SANITY_MAX_FT = 60000.0
+
+
+def check_depth_range(depth, name: str = "DEPTH") -> None:
+    """Raise ValueError when depth values (feet) lie outside -1 000 to 60 000 ft.
+
+    ``name`` is the depth curve's mnemonic, so the message tells the user which
+    curve to check. NaN is ignored; a column with no finite value passes.
+    """
+    values = np.asarray(depth, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return
+    lo, hi = float(values.min()), float(values.max())
+    if lo < DEPTH_SANITY_MIN_FT or hi > DEPTH_SANITY_MAX_FT:
+        raise ValueError(
+            f"Depth curve {name} has values from {lo:g} to {hi:g} ft, outside "
+            f"{DEPTH_SANITY_MIN_FT:g} to {DEPTH_SANITY_MAX_FT:g} ft; check the depth unit."
+        )
+
+
 def mask_nonpositive(df: pd.DataFrame, curves: Sequence[str]) -> dict:
     """Set values <= 0 to NaN in the named columns, in place.
 
@@ -189,6 +215,8 @@ _FT_PER_M = 3.28084
 _NEUTRON_PERCENT_MEDIAN = 1.0
 _DENSITY_KGM3_MEDIAN = 100.0
 _SONIC_US_M_MEDIAN = 300.0
+# Medians of the final (working-unit) values that a physical curve can have.
+_SANITY_RANGES = {"NPHI": (-0.1, 1.0), "RHOB": (1.0, 3.5), "DT": (30.0, 250.0)}
 
 
 def _unit_token(unit) -> str:
@@ -236,6 +264,35 @@ def _curve_type_for(mnemonic: str) -> Optional[str]:
     return None
 
 
+def resistivity_curves(columns: Sequence[str], curve_info: Optional[dict] = None) -> List[str]:
+    """Columns that are resistivity: RT/RM/RS aliases, or any curve with an ohm unit."""
+    info = curve_info or {}
+    found = []
+    for col in columns:
+        if col == STANDARD_DEPTH_COL:
+            continue
+        if _curve_type_for(col) in ("RT", "RM", "RS"):
+            found.append(col)
+        elif canonical_unit((info.get(col) or {}).get("unit")) == "OHMM":
+            found.append(col)
+    return found
+
+
+def mask_intake_nonpositive(df: pd.DataFrame, curve_info: Optional[dict] = None) -> List[str]:
+    """Mask resistivity, RHOB and DT samples <= 0 (I1, I2); return the warnings.
+
+    Resistivity is every column ``resistivity_curves`` finds; RHOB and DT are
+    found by alias. NPHI is not masked (slightly negative neutron is real).
+    Warnings read ``"RT: 2 samples ≤ 0 set to NaN"``.
+    """
+    columns = [c for c in df.columns if c != STANDARD_DEPTH_COL]
+    targets = resistivity_curves(columns, curve_info)
+    targets += [c for c in columns
+                if c not in targets and _curve_type_for(c) in ("RHOB", "DT")]
+    counts = mask_nonpositive(df, targets)
+    return [f"{col}: {n} samples ≤ 0 set to NaN" for col, n in counts.items()]
+
+
 def normalize_curve_units(df: pd.DataFrame, curve_info: dict) -> tuple:
     """Convert neutron, density and sonic curves to the app's working units.
 
@@ -273,7 +330,7 @@ def normalize_curve_units(df: pd.DataFrame, curve_info: dict) -> tuple:
         values = df[col].dropna()
         median = float(values.median()) if len(values) else None
 
-        factor, new_unit, inferred = None, None, False
+        factor, new_unit, inferred, contradicted = None, None, False, False
         if curve_type == "NPHI":
             if unit in _PERCENT_UNITS:
                 factor, new_unit = 0.01, "V/V"
@@ -282,8 +339,10 @@ def normalize_curve_units(df: pd.DataFrame, curve_info: dict) -> tuple:
         elif curve_type == "RHOB":
             if unit in _KG_M3_UNITS:
                 factor, new_unit = 0.001, "G/C3"
-            elif not unit and median is not None and median > _DENSITY_KGM3_MEDIAN:
+            elif median is not None and median > _DENSITY_KGM3_MEDIAN:
+                # Also when a unit is declared: a median above 100 cannot be g/cc.
                 factor, new_unit, inferred = 0.001, "G/C3", True
+                contradicted = bool(unit)
         elif curve_type == "DT":
             if unit in _US_PER_M_UNITS:
                 factor, new_unit = _M_TO_FT, "US/F"
@@ -295,15 +354,30 @@ def normalize_curve_units(df: pd.DataFrame, curve_info: dict) -> tuple:
                 "to resistivity. Convert it before using it as a resistivity curve."
             )
 
-        if factor is None:
-            continue
-        df[col] = df[col] * factor
-        entry["unit_converted_from"] = raw_unit
-        entry["unit"] = new_unit
-        reason = (
-            f"unit inferred from the value range, median {median:.4g}" if inferred
-            else f"from {raw_unit}"
-        )
-        warnings.append(f"{col} converted to {new_unit} ({reason}).")
+        if factor is not None:
+            df[col] = df[col] * factor
+            entry["unit_converted_from"] = raw_unit
+            entry["unit"] = new_unit
+            if contradicted:
+                reason = (
+                    f"declared unit {raw_unit} contradicts the values, median {median:.4g}; "
+                    "converted as if no unit were declared"
+                )
+            elif inferred:
+                reason = f"unit inferred from the value range, median {median:.4g}"
+            else:
+                reason = f"from {raw_unit}"
+            warnings.append(f"{col} converted to {new_unit} ({reason}).")
+            if median is not None:
+                median *= factor
+
+        # Unit sanity (I8): the median of the final values must be physical.
+        bounds = _SANITY_RANGES.get(curve_type)
+        if bounds is not None and median is not None and not bounds[0] <= median <= bounds[1]:
+            shown = entry.get("unit") or raw_unit or "no unit"
+            warnings.append(
+                f"{col} median {median:.4g} is outside the expected {bounds[0]:g} to "
+                f"{bounds[1]:g} range ({shown}); check the curve unit."
+            )
 
     return df, info, warnings
