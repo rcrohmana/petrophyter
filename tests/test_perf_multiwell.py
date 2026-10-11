@@ -5,6 +5,7 @@ import time
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from modules import param_scopes as ps
 from modules.formation_tops import FormationTops
@@ -34,6 +35,7 @@ def _tops():
     return tops
 
 
+@pytest.mark.slow
 def test_ten_wells_default_methods_under_three_seconds():
     wells = [_well(seed) for seed in range(N_WELLS)]
     start = time.perf_counter()
@@ -42,6 +44,7 @@ def test_ten_wells_default_methods_under_three_seconds():
     assert time.perf_counter() - start < 3.0
 
 
+@pytest.mark.slow
 def test_ten_zoned_wells_all_sw_models_stay_fast():
     wells = [_well(seed) for seed in range(N_WELLS)]
     tops = _tops()

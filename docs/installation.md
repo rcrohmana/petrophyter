@@ -50,9 +50,15 @@ On the maintainer's machine, the reference environment is the Conda env **`mldl`
 
 ```bash
 pip install -r requirements-dev.txt
-# PowerShell: $env:QT_QPA_PLATFORM = "offscreen"
-QT_QPA_PLATFORM=offscreen python -m pytest -q
+# PowerShell: $env:QT_QPA_PLATFORM = "offscreen"; $env:PYTEST_QT_API = "pyqt6"
+export QT_QPA_PLATFORM=offscreen PYTEST_QT_API=pyqt6
+
+python -m pytest -q -n auto -m "not slow"   # day-to-day: parallel, skips timing tests
+python -m pytest -q -n auto                 # whole suite, parallel
+python -m pytest -q                         # whole suite, one process (release check)
 ```
+
+`-n auto` needs `pytest-xdist` (in `requirements-dev.txt`) and starts one worker per CPU thread. Each worker loads Qt, so on many-core machines a fixed count such as `-n 8` can finish sooner. Tests marked `slow` assert wall-clock times, so run them before a release, ideally without `-n`, which keeps CPU contention from skewing the timings. `PYTEST_QT_API=pyqt6` matters when another Qt binding is installed in the same environment.
 
 ## Dependencies
 

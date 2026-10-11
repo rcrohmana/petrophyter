@@ -246,6 +246,7 @@ def test_export_formats_numeric_nan_and_strings():
     assert rows[1].split()[3] == "-999.2500"  # LITH None -> NaN null
 
 
+@pytest.mark.slow
 def test_vectorised_ws_is_fast():
     rng = np.random.default_rng(5)
     n = 20000
