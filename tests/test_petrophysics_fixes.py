@@ -89,8 +89,8 @@ class TestGasCorrectionDirection:
         )
 
         # PHID = 0.393939, reduced by *(1-0.15) = 0.334848; PHIN = 0.07
-        # PHIE_GAS = sqrt((0.334848^2 + 0.07^2)/2) = 0.241892
-        np.testing.assert_allclose(phie_gas.iloc[0], 0.241892, rtol=1e-3)
+        # PHIE_GAS = (0.334848 + 0.07)/2 = 0.202424 (average of the corrected pair, C4)
+        np.testing.assert_allclose(phie_gas.iloc[0], 0.202424, rtol=1e-3)
 
         # Correcting a gas over-read must LOWER effective porosity, never raise it.
         assert phie_gas.iloc[0] < phie_dn.iloc[0]
@@ -387,3 +387,185 @@ class TestPhieAvailabilityThreshold:
         assert calc.results["PHIE"].isna().all()
         assert calc.phie_method_used is None
         assert calc.phie_partial == (None, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# P0 v1.7.2 porosity: C1 (PHIT on every path), C4 (gas flag), C5 (neutron shale)
+# ---------------------------------------------------------------------------
+def _porosity_calc(**columns):
+    """Calculator whose results already hold the given porosity columns."""
+    n = len(next(iter(columns.values())))
+    calc = PetrophysicsCalculator(pd.DataFrame({"X": np.zeros(n)}))
+    for name, values in columns.items():
+        calc.results[name] = pd.Series(values, dtype=float)
+    return calc
+
+
+class TestPhitCombination:
+    def test_average_keeps_signs(self):
+        calc = _porosity_calc(PHID=[-0.05, 0.152], PHIN=[0.00, 0.35])
+        phit = calc.calculate_phit_neutron_density(dn_combination="Average")
+        assert phit.iloc[0] == 0.0                      # mean -0.025 clipped, never a positive square
+        assert phit.iloc[1] == pytest.approx(0.251)
+
+    def test_rms_reproduces_the_old_value(self):
+        calc = _porosity_calc(PHID=[-0.05, 0.152], PHIN=[0.00, 0.35])
+        phit = calc.calculate_phit_neutron_density(dn_combination="RMS")
+        assert phit.iloc[0] == pytest.approx(0.0354, abs=1e-4)
+        assert phit.iloc[1] == pytest.approx(0.2698, abs=1e-4)
+
+    def test_default_is_average(self):
+        calc = _porosity_calc(PHID=[0.10], PHIN=[0.30])
+        assert calc.calculate_phit_neutron_density().iloc[0] == pytest.approx(0.20)
+
+    def test_gas_samples_use_rms_whatever_the_setting(self):
+        calc = _porosity_calc(PHID=[0.35, 0.35], PHIN=[0.22, 0.22])
+        flag = pd.Series([True, False])
+        phit = calc.calculate_phit_neutron_density(dn_combination="Average", gas_flag=flag)
+        assert phit.iloc[0] == pytest.approx(np.sqrt((0.35**2 + 0.22**2) / 2))
+        assert phit.iloc[1] == pytest.approx(0.285)
+
+    def test_single_input_paths(self):
+        assert _porosity_calc(PHID=[0.2]).calculate_phit_neutron_density().iloc[0] == 0.2
+        assert _porosity_calc(PHIN=[0.18]).calculate_phit_neutron_density().iloc[0] == 0.18
+        assert _porosity_calc(PHIS=[0.12]).calculate_phit_neutron_density().iloc[0] == 0.12
+        assert _porosity_calc(PHIS=[0.12], PHID=[0.2]).calculate_phit_neutron_density().iloc[0] == 0.2
+        none = _porosity_calc(VSH=[0.1]).calculate_phit_neutron_density()
+        assert none.isna().all()
+
+    def test_per_sample_fallback_where_one_curve_has_a_gap(self):
+        calc = _porosity_calc(PHID=[0.20, 0.20], PHIN=[np.nan, 0.30])
+        phit = calc.calculate_phit_neutron_density()
+        assert phit.iloc[0] == 0.20 and phit.iloc[1] == pytest.approx(0.25)
+
+    def test_clipped_to_045(self):
+        calc = _porosity_calc(PHID=[0.5], PHIN=[0.5])
+        assert calc.calculate_phit_neutron_density().iloc[0] == 0.45
+
+    def test_unknown_combination_rejected(self):
+        calc = _porosity_calc(PHID=[0.2], PHIN=[0.2])
+        with pytest.raises(ValueError):
+            calc.calculate_phit_neutron_density(dn_combination="Geometric")
+
+    def test_phie_dn_follows_the_combination(self):
+        calc = _porosity_calc(PHID=[0.30], PHIN=[0.10], VSH=[0.0])
+        avg = calc.calculate_phie_density_neutron(nphi_matrix=0.0, dn_combination="Average")
+        rms = calc.calculate_phie_density_neutron(nphi_matrix=0.0, dn_combination="RMS")
+        assert avg.iloc[0] == pytest.approx(0.20)
+        assert rms.iloc[0] == pytest.approx(np.sqrt((0.09 + 0.01) / 2))
+
+
+class TestGasFlagAndPhieGas:
+    def _gas_pair(self, nphi, vsh=0.0):
+        data = pd.DataFrame({"RHOB": [2.155], "NPHI": [nphi]})
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_density("RHOB", 2.65, 1.0)
+        calc.calculate_porosity_neutron("NPHI", -0.02)
+        calc.calculate_phit_neutron_density()
+        calc.calculate_all_phie(
+            vsh=pd.Series([vsh]), gas_correction=True, primary_method="PHIE_GAS",
+            nphi_matrix=-0.02,
+        )
+        return calc
+
+    def test_small_crossover_is_not_gas(self):
+        # Crossover 0.002 in both: no flag, and 0.004 of NPHI moves PHIE by ~0.002, not 0.05.
+        a, b = self._gas_pair(0.282), self._gas_pair(0.278)
+        assert a.results["GAS_FLAG"].iloc[0] == 0 and b.results["GAS_FLAG"].iloc[0] == 0
+        assert abs(a.results["PHIE"].iloc[0] - b.results["PHIE"].iloc[0]) < 0.005
+
+    def test_real_gas_is_flagged_and_capped_at_phit(self):
+        calc = _porosity_calc(PHID=[0.35], PHIN=[0.22], VSH=[0.0])
+        flag = calc.calculate_gas_flag(calc.results["VSH"])
+        assert bool(flag.iloc[0])
+        calc.calculate_phit_neutron_density(gas_flag=flag)
+        phie_gas = calc.calculate_phie_gas_corrected(
+            vsh=calc.results["VSH"], nphi_matrix=0.0
+        )
+        assert calc.results["GAS_FLAG"].iloc[0] == 1
+        phit = calc.results["PHIT"].iloc[0]
+        assert phit == pytest.approx(0.2923, abs=1e-4)
+        assert phie_gas.iloc[0] <= 0.2925        # the spec's "<= 0.292", to rounding
+        assert phie_gas.iloc[0] <= phit
+
+    def test_phie_gas_never_exceeds_phit_per_sample(self):
+        calc = _porosity_calc(PHID=[0.35, -0.05, 0.30], PHIN=[0.22, 0.00, 0.31], VSH=[0.0] * 3)
+        flag = calc.calculate_gas_flag(calc.results["VSH"])
+        calc.calculate_phit_neutron_density(gas_flag=flag)
+        phie_gas = calc.calculate_phie_gas_corrected(vsh=calc.results["VSH"], nphi_matrix=0.0)
+        assert (phie_gas <= calc.results["PHIT"] + 1e-12).all()
+
+    def test_vsh_gate_and_threshold_parameters(self):
+        calc = _porosity_calc(PHID=[0.35, 0.35, 0.35], PHIN=[0.22, 0.22, 0.34], VSH=[0.0, 0.5, 0.0])
+        flag = calc.calculate_gas_flag(calc.results["VSH"], 0.02, 0.40)
+        assert flag.tolist() == [True, False, False]
+        strict = calc.calculate_gas_flag(calc.results["VSH"], 0.20, 0.60)
+        assert strict.tolist() == [False, False, False]
+        lax = calc.calculate_gas_flag(calc.results["VSH"], 0.10, 0.60)
+        assert lax.tolist() == [True, True, False]
+
+    def test_nan_inputs_are_not_flagged(self):
+        calc = _porosity_calc(PHID=[np.nan, 0.35], PHIN=[0.2, 0.22], VSH=[0.0, np.nan])
+        assert calc.calculate_gas_flag(calc.results["VSH"]).tolist() == [False, False]
+
+    def test_gas_flag_dropped_when_correction_is_off(self):
+        calc = _porosity_calc(PHID=[0.35], PHIN=[0.22], VSH=[0.0])
+        calc.calculate_all_phie(vsh=calc.results["VSH"], gas_correction=True, nphi_matrix=0.0)
+        assert "GAS_FLAG" in calc.results.columns
+        calc.calculate_all_phie(vsh=calc.results["VSH"], gas_correction=False, nphi_matrix=0.0)
+        assert "GAS_FLAG" not in calc.results.columns
+
+
+class TestNeutronShaleCorrection:
+    def test_pure_shale_gives_zero(self):
+        data = pd.DataFrame({"NPHI": [0.35]})
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_neutron("NPHI", -0.02)         # sandstone
+        phie_n = calc.calculate_phie_neutron(pd.Series([1.0]), nphi_shale=0.35, nphi_matrix=-0.02)
+        assert phie_n.iloc[0] == pytest.approx(0.0, abs=1e-12)
+
+    def test_matrix_defaults_to_the_one_used_for_phin(self):
+        data = pd.DataFrame({"NPHI": [0.35]})
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_neutron("NPHI", 0.02)          # dolomite-like scale
+        assert calc.calculate_phie_neutron(pd.Series([1.0]), 0.35).iloc[0] == pytest.approx(0.0, abs=1e-12)
+
+    def test_clean_rock_unchanged(self):
+        data = pd.DataFrame({"NPHI": [0.20]})
+        calc = PetrophysicsCalculator(data)
+        calc.calculate_porosity_neutron("NPHI", -0.02)
+        assert calc.calculate_phie_neutron(pd.Series([0.0]), 0.35).iloc[0] == pytest.approx(0.22)
+
+
+class TestPipelinePorosityPaths:
+    def _run(self, data, mapping, **params):
+        from modules.pipeline import run_pipeline
+        return run_pipeline(data, mapping, params)
+
+    def test_gas_flag_exists_with_phie_dn_primary(self, gas_zone_data):
+        mapping = {"GR": "GR", "RHOB": "RHOB", "NPHI": "NPHI", "DT": "DT", "RT": "RT"}
+        results, _ = self._run(gas_zone_data, mapping, gas_correction_enabled=True,
+                               primary_phie_method="PHIE_DN")
+        assert "GAS_FLAG" in results.columns and results["GAS_FLAG"].sum() > 0
+        gas = results["GAS_FLAG"] == 1
+        d, n = results["PHID"], results["PHIN"]
+        rms = np.sqrt((d**2 + n**2) / 2).clip(0, 0.45)
+        np.testing.assert_allclose(results.loc[gas, "PHIT"], rms[gas])
+
+    def test_no_gas_flag_when_correction_is_off(self, gas_zone_data):
+        mapping = {"GR": "GR", "RHOB": "RHOB", "NPHI": "NPHI", "DT": "DT", "RT": "RT"}
+        results, _ = self._run(gas_zone_data, mapping)
+        assert "GAS_FLAG" not in results.columns
+
+    def test_dn_combination_selects_phit(self, sample_log_data):
+        mapping = {"GR": "GR", "RHOB": "RHOB", "NPHI": "NPHI", "DT": "DT", "RT": "RT"}
+        avg, _ = self._run(sample_log_data, mapping, dn_combination="Average")
+        rms, _ = self._run(sample_log_data, mapping, dn_combination="RMS")
+        d, n = avg["PHID"], avg["PHIN"]
+        np.testing.assert_allclose(avg["PHIT"], ((d + n) / 2).clip(0, 0.45))
+        np.testing.assert_allclose(rms["PHIT"], np.sqrt((d**2 + n**2) / 2).clip(0, 0.45))
+
+    def test_sonic_only_run_has_phit(self, sample_log_data):
+        mapping = {"GR": "GR", "RHOB": "None", "NPHI": "None", "DT": "DT", "RT": "RT"}
+        results, _ = self._run(sample_log_data, mapping)
+        np.testing.assert_allclose(results["PHIT"], results["PHIS"])

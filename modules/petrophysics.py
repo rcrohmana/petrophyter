@@ -94,6 +94,10 @@ def _vectorized_brentq(func, lo, hi, active, xtol=2e-12,
     return np.where(failed, np.nan, out), failed
 
 
+# How PHID and PHIN are combined into PHIT / PHIE_DN.
+DN_COMBINATIONS = ("Average", "RMS")
+
+
 class PetrophysicsCalculator:
     """
     Petrophysics calculations engine.
@@ -422,6 +426,7 @@ class PetrophysicsCalculator:
 
         # Apply matrix correction if needed
         phin = nphi - nphi_matrix
+        self._nphi_matrix_used = nphi_matrix
 
         # Clip to reasonable range
         phin = np.clip(phin, -0.05, 0.50)
@@ -458,17 +463,73 @@ class PetrophysicsCalculator:
         self.results["PHIS"] = phis
         return phis
 
-    def calculate_phit_neutron_density(
-        self, phid: pd.Series = None, phin: pd.Series = None
+    @staticmethod
+    def combine_density_neutron(a, b, dn_combination: str = "Average", rms_mask=None):
+        """
+        Combine two density / neutron porosities sample by sample.
+
+        ``Average`` is the arithmetic mean (signs kept, liquid-filled formations);
+        ``RMS`` is sqrt((a^2 + b^2) / 2). Samples in ``rms_mask`` (gas) always use
+        RMS, the Gaymard-Poupon gas-zone total porosity.
+        """
+        if dn_combination not in DN_COMBINATIONS:
+            raise ValueError(
+                f"dn_combination must be one of {DN_COMBINATIONS}, got {dn_combination!r}"
+            )
+        a = np.asarray(a, dtype=float)
+        b = np.asarray(b, dtype=float)
+        mean = (a + b) / 2
+        if dn_combination == "Average" and rms_mask is None:
+            return mean
+        rms = np.sqrt((a**2 + b**2) / 2)
+        if dn_combination == "RMS":
+            return rms
+        return np.where(np.asarray(rms_mask, dtype=bool), rms, mean)
+
+    def calculate_gas_flag(
+        self,
+        vsh: pd.Series = None,
+        gas_crossover_min: float = 0.02,
+        gas_vsh_max: float = 0.40,
     ) -> pd.Series:
         """
-        Calculate total porosity from neutron-density crossplot.
+        Flag gas samples: (PHID - PHIN) >= gas_crossover_min and VSH <= gas_vsh_max.
 
-        PHIT = sqrt((NPHI^2 + PHID^2) / 2)
+        A bare crossover is noise within a few porosity units, and shale also
+        crosses over, so a minimum separation and a Vsh gate are required.
+        Samples with NaN in PHID, PHIN or Vsh are not flagged. Stored as the
+        integer ``GAS_FLAG`` column and returned as a boolean Series.
+        """
+        phid = self.results.get("PHID", self._make_series(np.nan))
+        phin = self.results.get("PHIN", self._make_series(np.nan))
+        if vsh is None:
+            vsh = self.results.get("VSH", self._make_series(0))
+        flag = ((phid - phin) >= gas_crossover_min) & (vsh <= gas_vsh_max)
+        flag = pd.Series(np.asarray(flag, dtype=bool), index=self.data.index)
+        self.results["GAS_FLAG"] = flag.astype(int)
+        return flag
+
+    def calculate_phit_neutron_density(
+        self,
+        phid: pd.Series = None,
+        phin: pd.Series = None,
+        dn_combination: str = "Average",
+        gas_flag: pd.Series = None,
+    ) -> pd.Series:
+        """
+        Calculate total porosity from the density-neutron pair (and fallbacks).
+
+        PHIT = (PHID + PHIN) / 2 (``Average``) or sqrt((PHID^2 + PHIN^2) / 2)
+        (``RMS``); RMS on ``gas_flag`` samples whatever ``dn_combination``.
+        Where only one of PHID / PHIN is present PHIT is that one; where neither,
+        the sonic porosity PHIS; otherwise NaN. Clipped to [0, 0.45] after the
+        combination, so a negative mean becomes 0.
 
         Args:
             phid: Density porosity series
             phin: Neutron porosity series
+            dn_combination: "Average" or "RMS"
+            gas_flag: Boolean series of gas samples (RMS there)
 
         Returns:
             Total porosity series
@@ -477,12 +538,21 @@ class PetrophysicsCalculator:
             phid = self.results.get("PHID", self._make_series(np.nan))
         if phin is None:
             phin = self.results.get("PHIN", self._make_series(np.nan))
+        phis = self.results.get("PHIS", self._make_series(np.nan))
 
-        # Square root mean of squares
-        phit = np.sqrt((phid**2 + phin**2) / 2)
+        d = np.asarray(phid, dtype=float)
+        n = np.asarray(phin, dtype=float)
+        s = np.asarray(phis, dtype=float)
+        both = np.isfinite(d) & np.isfinite(n)
+        with np.errstate(invalid="ignore"):
+            combined = self.combine_density_neutron(d, n, dn_combination, gas_flag)
+        phit = np.where(
+            both, combined,
+            np.where(np.isfinite(d), d, np.where(np.isfinite(n), n, s)),
+        )
 
-        # Clip to reasonable range
-        phit = np.clip(phit, 0, 0.45)
+        # Clip to reasonable range (NaN stays NaN)
+        phit = pd.Series(np.clip(phit, 0, 0.45), index=self.data.index)
 
         self.results["PHIT"] = phit
         return phit
@@ -550,17 +620,28 @@ class PetrophysicsCalculator:
         self.results["PHIE_D"] = phie_d
         return phie_d
 
+    def _neutron_shale_porosity(self, nphi_shale: float, nphi_matrix: float = None) -> float:
+        """Shale neutron response on the PHIN scale: NPHI_shale - NPHI_matrix."""
+        if nphi_matrix is None:
+            nphi_matrix = getattr(self, "_nphi_matrix_used", -0.02)
+        return nphi_shale - nphi_matrix
+
     def calculate_phie_neutron(
-        self, vsh: pd.Series = None, nphi_shale: float = 0.35
+        self, vsh: pd.Series = None, nphi_shale: float = 0.35, nphi_matrix: float = None
     ) -> pd.Series:
         """
         Calculate effective porosity from neutron (PHIE_N).
 
-        PHIE_N = PHIN - (Vsh * NPHI_shale)
+        PHIE_N = PHIN - Vsh * (NPHI_shale - NPHI_matrix)
+
+        The shale response is shifted to the same matrix scale as PHIN, so pure
+        shale gives 0.
 
         Args:
             vsh: Vshale series
             nphi_shale: Shale neutron porosity response
+            nphi_matrix: Matrix neutron response used for PHIN (default: the one
+                of the last ``calculate_porosity_neutron`` call)
 
         Returns:
             Effective neutron porosity series
@@ -570,7 +651,7 @@ class PetrophysicsCalculator:
             vsh = self.results.get("VSH", self._make_series(0))
 
         # Shale correction
-        phie_n = phin - (vsh * nphi_shale)
+        phie_n = phin - (vsh * self._neutron_shale_porosity(nphi_shale, nphi_matrix))
         phie_n = np.clip(phie_n, 0, 0.40)
 
         self.results["PHIE_N"] = phie_n
@@ -618,11 +699,15 @@ class PetrophysicsCalculator:
         rhob_shale: float = 2.45,
         rho_matrix: float = 2.65,
         rho_fluid: float = 1.0,
+        nphi_matrix: float = None,
+        dn_combination: str = "Average",
+        gas_flag: pd.Series = None,
     ) -> pd.Series:
         """
         Calculate effective porosity from density-neutron crossplot (PHIE_DN).
 
-        Uses shale-corrected N-D crossplot.
+        Uses shale-corrected N-D crossplot, combined like PHIT (Average or RMS,
+        RMS on gas-flagged samples).
 
         Args:
             vsh: Vshale series
@@ -630,6 +715,9 @@ class PetrophysicsCalculator:
             rhob_shale: Shale bulk density
             rho_matrix: Matrix density
             rho_fluid: Fluid density
+            nphi_matrix: Matrix neutron response used for PHIN
+            dn_combination: "Average" or "RMS"
+            gas_flag: Boolean series of gas samples (RMS there)
 
         Returns:
             Effective density-neutron porosity series
@@ -644,15 +732,16 @@ class PetrophysicsCalculator:
 
         # Corrected porosities
         phid_corr = phid - (vsh * phid_shale)
-        phin_corr = phin - (vsh * nphi_shale)
+        phin_corr = phin - (vsh * self._neutron_shale_porosity(nphi_shale, nphi_matrix))
 
         # Clip negative values
         phid_corr = np.maximum(phid_corr, 0)
         phin_corr = np.maximum(phin_corr, 0)
 
-        # RMS average
-        phie_dn = np.sqrt((phid_corr**2 + phin_corr**2) / 2)
-        phie_dn = np.clip(phie_dn, 0, 0.40)
+        phie_dn = self.combine_density_neutron(
+            phid_corr, phin_corr, dn_combination, gas_flag
+        )
+        phie_dn = pd.Series(np.clip(phie_dn, 0, 0.40), index=self.data.index)
 
         self.results["PHIE_DN"] = phie_dn
         return phie_dn
@@ -671,6 +760,10 @@ class PetrophysicsCalculator:
         gas_nphi_factor: float = 0.30,
         gas_rhob_factor: float = 0.15,
         primary_method: str = "PHIE_DN",
+        nphi_matrix: float = None,
+        dn_combination: str = "Average",
+        gas_crossover_min: float = 0.02,
+        gas_vsh_max: float = 0.40,
     ) -> Dict[str, pd.Series]:
         """
         Calculate all effective porosity methods.
@@ -688,12 +781,23 @@ class PetrophysicsCalculator:
             gas_nphi_factor: Neutron gas correction factor (0.2-0.4 typical)
             gas_rhob_factor: Density gas correction factor (0.1-0.2 typical)
             primary_method: User's preferred PHIE method (PHIE_DN, PHIE_D, PHIE_N, PHIE_S, PHIE_GAS)
+            nphi_matrix: Matrix neutron response used for PHIN (neutron shale correction)
+            dn_combination: "Average" or "RMS" for PHIE_DN (RMS on gas samples)
+            gas_crossover_min: Minimum PHID - PHIN to flag gas
+            gas_vsh_max: Maximum Vsh for a gas flag
 
         Returns:
             Dictionary with all PHIE calculations
         """
         if vsh is None:
             vsh = self.results.get("VSH", self._make_series(0))
+
+        # The gas flag exists whenever the correction is on, whatever the primary method.
+        gas_flag = None
+        if gas_correction:
+            gas_flag = self.calculate_gas_flag(vsh, gas_crossover_min, gas_vsh_max)
+        elif "GAS_FLAG" in self.results.columns:
+            self.results.drop(columns=["GAS_FLAG"], inplace=True)
 
         # Reset the selected primary on every run so an unsuccessful reuse
         # cannot expose a PHIE series or method choice from an earlier run.
@@ -705,12 +809,13 @@ class PetrophysicsCalculator:
         results["PHIE_D"] = self.calculate_phie_density(
             vsh, rhob_shale, rho_matrix, rho_fluid
         )
-        results["PHIE_N"] = self.calculate_phie_neutron(vsh, nphi_shale)
+        results["PHIE_N"] = self.calculate_phie_neutron(vsh, nphi_shale, nphi_matrix)
         results["PHIE_S"] = self.calculate_phie_sonic(
             vsh, dt_shale, dt_matrix, dt_fluid
         )
         results["PHIE_DN"] = self.calculate_phie_density_neutron(
-            vsh, nphi_shale, rhob_shale, rho_matrix, rho_fluid
+            vsh, nphi_shale, rhob_shale, rho_matrix, rho_fluid,
+            nphi_matrix, dn_combination, gas_flag,
         )
 
         # Gas correction (if enabled)
@@ -723,6 +828,9 @@ class PetrophysicsCalculator:
                 rho_fluid=rho_fluid,
                 gas_nphi_factor=gas_nphi_factor,
                 gas_rhob_factor=gas_rhob_factor,
+                nphi_matrix=nphi_matrix,
+                gas_crossover_min=gas_crossover_min,
+                gas_vsh_max=gas_vsh_max,
             )
 
         # Determine available methods. A method needs a meaningful fraction of
@@ -787,6 +895,9 @@ class PetrophysicsCalculator:
         rho_fluid: float = 1.0,
         gas_nphi_factor: float = 0.30,
         gas_rhob_factor: float = 0.15,
+        nphi_matrix: float = None,
+        gas_crossover_min: float = 0.02,
+        gas_vsh_max: float = 0.40,
     ) -> pd.Series:
         """
         Calculate effective porosity with gas correction (PHIE_GAS).
@@ -796,11 +907,13 @@ class PetrophysicsCalculator:
         correction factors to compensate for the gas effect.
 
         Gas Correction Method:
-        1. Detect gas zones using neutron-density crossover (PHIN < PHID)
+        1. Detect gas zones: (PHID - PHIN) >= gas_crossover_min and VSH <= gas_vsh_max
         2. For gas zones:
            - PHIN_corrected = PHIN / (1 - gas_nphi_factor)
            - PHID_corrected = PHID * (1 - gas_rhob_factor)
-        3. Calculate PHIE from corrected values with shale correction
+        3. Calculate PHIE from corrected values with shale correction, averaged
+           (the correction already removes the gas effect, so no RMS on top) and
+           capped per sample at PHIT, then at 0.45
 
         Args:
             vsh: Vshale series
@@ -810,6 +923,9 @@ class PetrophysicsCalculator:
             rho_fluid: Fluid density
             gas_nphi_factor: Neutron correction factor (0.2-0.4, higher = more correction)
             gas_rhob_factor: Density correction factor (0.1-0.2, higher = more correction)
+            nphi_matrix: Matrix neutron response used for PHIN
+            gas_crossover_min: Minimum PHID - PHIN to flag gas
+            gas_vsh_max: Maximum Vsh for a gas flag
 
         Returns:
             Gas-corrected effective porosity series
@@ -826,9 +942,10 @@ class PetrophysicsCalculator:
         # Shale porosity from density
         phid_shale = (rho_matrix - rhob_shale) / (rho_matrix - rho_fluid)
 
-        # Detect gas zones: neutron < density (crossover)
+        # Detect gas zones: neutron below density by a minimum, in clean rock.
         # Gas effect causes PHIN to read low, PHID to read high
-        gas_zone = phin < phid
+        gas_zone = self.calculate_gas_flag(vsh, gas_crossover_min, gas_vsh_max)
+        gas_zone = np.asarray(gas_zone, dtype=bool)
 
         # Initialize corrected porosities
         phid_corr = phid.copy()
@@ -851,25 +968,24 @@ class PetrophysicsCalculator:
 
         # Apply shale correction
         phid_corr = phid_corr - (vsh * phid_shale)
-        phin_corr = phin_corr - (vsh * nphi_shale)
+        phin_corr = phin_corr - (vsh * self._neutron_shale_porosity(nphi_shale, nphi_matrix))
 
         # Clip negative values
         phid_corr = np.maximum(phid_corr, 0)
         phin_corr = np.maximum(phin_corr, 0)
 
-        # RMS average (same as PHIE_DN)
-        phie_gas = np.sqrt((phid_corr**2 + phin_corr**2) / 2)
+        # Average of the corrected pair, never above that sample's total porosity
+        phie_gas = (phid_corr + phin_corr) / 2
+        phit = self.results.get("PHIT")
+        if phit is not None:
+            phit = np.asarray(phit, dtype=float)
+            phie_gas = np.where(np.isfinite(phit), np.minimum(phie_gas, phit), phie_gas)
         phie_gas = np.clip(phie_gas, 0, 0.45)
 
         # Convert back to Series
         phie_gas = pd.Series(phie_gas, index=self.data.index)
 
         self.results["PHIE_GAS"] = phie_gas
-
-        # Also store gas zone flag for diagnostics
-        self.results["GAS_FLAG"] = pd.Series(
-            gas_zone.astype(int), index=self.data.index
-        )
 
         return phie_gas
 

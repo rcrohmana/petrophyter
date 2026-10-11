@@ -177,6 +177,9 @@ class AppModel(QObject):
         self._gas_correction_enabled: bool = False
         self._gas_nphi_factor: float = 0.30  # Neutron correction (0.2-0.4 typical)
         self._gas_rhob_factor: float = 0.15  # Density correction (0.1-0.2 typical)
+        self._gas_crossover_min: float = 0.02  # PHID - PHIN needed to flag gas (v/v)
+        self._gas_vsh_max: float = 0.40  # no gas flag above this Vsh
+        self._dn_combination: str = "Average"  # PHIT / PHIE_DN: Average or RMS
 
         # =====================================================================
         # FORMATION TEMPERATURE (P3): degF, degF/100 ft; Rw entered at rw_ref_temp
@@ -884,6 +887,30 @@ class AppModel(QObject):
     @gas_rhob_factor.setter
     def gas_rhob_factor(self, value: float):
         self._gas_rhob_factor = value
+
+    @property
+    def gas_crossover_min(self) -> float:
+        return self._gas_crossover_min
+
+    @gas_crossover_min.setter
+    def gas_crossover_min(self, value: float):
+        self._gas_crossover_min = value
+
+    @property
+    def gas_vsh_max(self) -> float:
+        return self._gas_vsh_max
+
+    @gas_vsh_max.setter
+    def gas_vsh_max(self, value: float):
+        self._gas_vsh_max = value
+
+    @property
+    def dn_combination(self) -> str:
+        return self._dn_combination
+
+    @dn_combination.setter
+    def dn_combination(self, value: str):
+        self._dn_combination = value
 
     # =========================================================================
     # METHODS

@@ -1,15 +1,15 @@
 {
  "analysis_mode": "Whole Well",
- "avg_phie_pay": 0.2816729846109307,
- "avg_sw_pay": 0.03949323116051629,
+ "avg_phie_pay": 0.23146600260103214,
+ "avg_sw_pay": 0.05074261794747159,
  "avg_vsh_pay": 0.17723076870741994,
  "data_points": 50,
  "gr_max": 39.699098521619945,
  "gr_min": 30.205844942958024,
  "gross_sand": 24.489795918367236,
- "hcpv_gross": 12.437151274378358,
- "hcpv_net_pay": 6.627490984158184,
- "hcpv_net_res": 6.627490984158184,
+ "hcpv_gross": 10.360848293075408,
+ "hcpv_net_pay": 5.3877359225575825,
+ "hcpv_net_res": 5.3877359225575825,
  "net_pay": 24.489795918367236,
  "net_reservoir": 24.489795918367236,
  "ng_pay": 1.0,
@@ -19,6 +19,10 @@
    "a": {
     "source": "project",
     "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
    },
    "dt_fluid": {
     "source": "project",
@@ -43,6 +47,14 @@
    "gas_correction_enabled": {
     "source": "project",
     "value": true
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
    },
    "gr_baseline": {
     "source": "auto",
@@ -153,17 +165,17 @@
  "solver_diagnostics": {
   "SW_DW": {
    "failed": 0,
-   "no_root": 31
+   "no_root": 11
   },
   "SW_WS": {
    "failed": 0,
    "no_root": 0
   }
  },
- "swirr_mean": 0.07968011136620251,
+ "swirr_mean": 0.09475111703584263,
  "swirr_method": "All Methods",
  "warnings": [
-  "SW_DW: 31 no-root, 0 failed solver points."
+  "SW_DW: 11 no-root, 0 failed solver points."
  ],
  "zones": []
 }

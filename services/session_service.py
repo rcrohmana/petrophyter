@@ -86,6 +86,9 @@ _SESSION_DEFAULTS = {
     "gas_correction_enabled": False,
     "gas_nphi_factor": 0.30,
     "gas_rhob_factor": 0.15,
+    "gas_crossover_min": 0.02,
+    "gas_vsh_max": 0.40,
+    "dn_combination": "Average",
     "temp_correction": False,
     "surface_temp": 80.0,
     "temp_gradient": 1.5,
@@ -737,6 +740,12 @@ class SessionService(QObject):
             model.gas_nphi_factor = session_data['gas_nphi_factor']
         if 'gas_rhob_factor' in session_data:
             model.gas_rhob_factor = session_data['gas_rhob_factor']
+        if 'gas_crossover_min' in session_data:
+            model.gas_crossover_min = session_data['gas_crossover_min']
+        if 'gas_vsh_max' in session_data:
+            model.gas_vsh_max = session_data['gas_vsh_max']
+        if session_data.get('dn_combination') in ('Average', 'RMS'):
+            model.dn_combination = session_data['dn_combination']
 
         # Fields introduced after the original 1.2 schema.
         for field in (

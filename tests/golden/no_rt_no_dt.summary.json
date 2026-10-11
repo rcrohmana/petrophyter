@@ -20,6 +20,10 @@
     "source": "project",
     "value": 0.62
    },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
    "dt_fluid": {
     "source": "project",
     "value": 189.0
@@ -43,6 +47,14 @@
    "gas_correction_enabled": {
     "source": "project",
     "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
    },
    "gr_baseline": {
     "source": "auto",
@@ -151,7 +163,7 @@
  "rw_source": "manual",
  "selected_formations": [],
  "solver_diagnostics": {},
- "swirr_mean": 0.28550053173854034,
+ "swirr_mean": 0.3124247430548857,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [
   "Water saturation defaulted to 1.0 because no RT curve was available."

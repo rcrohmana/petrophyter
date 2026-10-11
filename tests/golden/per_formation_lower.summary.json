@@ -1,15 +1,15 @@
 {
  "analysis_mode": "Per-Formation",
- "avg_phie_pay": 0.180856871065075,
- "avg_sw_pay": 0.17496210818605668,
+ "avg_phie_pay": 0.17248013698325237,
+ "avg_sw_pay": 0.1848287964494744,
  "avg_vsh_pay": 0.193292947628788,
  "data_points": 60,
  "gr_max": 88.46178696080887,
  "gr_min": 38.36282133753379,
  "gross_sand": 25.252525252523128,
- "hcpv_gross": 4.94272630847781,
- "hcpv_net_pay": 3.782364368108087,
- "hcpv_net_res": 3.782364368108087,
+ "hcpv_gross": 4.493059354608685,
+ "hcpv_net_pay": 3.5684461628658344,
+ "hcpv_net_res": 3.5684461628658344,
  "net_pay": 25.252525252523128,
  "net_reservoir": 25.252525252523128,
  "ng_pay": 1.0,
@@ -19,6 +19,10 @@
    "a": {
     "source": "project",
     "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
    },
    "dt_fluid": {
     "source": "project",
@@ -43,6 +47,14 @@
    "gas_correction_enabled": {
     "source": "project",
     "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
    },
    "gr_baseline": {
     "source": "auto",
@@ -149,6 +161,10 @@
     "source": "project",
     "value": 0.62
    },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
    "dt_fluid": {
     "source": "project",
     "value": 189.0
@@ -172,6 +188,14 @@
    "gas_correction_enabled": {
     "source": "project",
     "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
    },
    "gr_baseline": {
     "source": "auto",
@@ -282,7 +306,7 @@
   "Lower"
  ],
  "solver_diagnostics": {},
- "swirr_mean": 0.2802931180708407,
+ "swirr_mean": 0.3051239776536887,
  "swirr_method": "Hierarchical (Recommended)",
  "warnings": [],
  "zone_diagnostics": {
@@ -296,8 +320,8 @@
    "limiting": "vsh_cutoff",
    "net_pay": 25.252525252523128,
    "net_reservoir": 25.252525252523128,
-   "pass_phi": 0.5833333333333334,
-   "pass_sw": 0.8,
+   "pass_phi": 0.5166666666666667,
+   "pass_sw": 0.7833333333333333,
    "pass_vsh": 0.4166666666666667,
    "status": "ok",
    "valid": 60
@@ -305,12 +329,12 @@
  },
  "zones": [
   {
-   "avg_phie_pay": 0.180856871065075,
-   "avg_sw_pay": 0.17496210818605668,
+   "avg_phie_pay": 0.17248013698325237,
+   "avg_sw_pay": 0.1848287964494744,
    "avg_vsh_pay": 0.193292947628788,
    "bottom": 1100.0,
    "gross_sand": 25.252525252523128,
-   "hcpv_net_pay": 3.7823643681080865,
+   "hcpv_net_pay": 3.5684461628658335,
    "net_pay": 25.252525252523128,
    "net_reservoir": 25.252525252523128,
    "ng_pay": 1.0,

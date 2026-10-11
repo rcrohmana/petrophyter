@@ -378,3 +378,37 @@ def test_the_relocated_folder_is_tried_first_for_other_files(three_wells, tmp_pa
     assert relocate_missing_sources(data, prompt) == 2
     assert asked == ["a.las"]            # c.las was found in the remembered folder, silently
     assert data["wells"][2]["sources"] == [str(moved / "c.las")]
+
+
+def test_porosity_keys_round_trip_with_a_zone_override(tmp_path):
+    model = AppModel()
+    model.dn_combination, model.gas_crossover_min, model.gas_vsh_max = "RMS", 0.03, 0.30
+    model.set_entry("dn_combination", "manual", "Average", scope="project", zone="LOWER")
+    model.set_entry("gas_crossover_min", "manual", 0.05, scope="project", zone="LOWER")
+    path = str(tmp_path / "p.json")
+    svc = SessionService()
+    assert svc.save_session(model, path)
+    saved = json.loads(open(path, encoding="utf-8").read())
+    assert saved["_session_version"] == "2.1"
+    flat = saved["global_params"]
+    assert flat["dn_combination"] == "RMS"
+    assert flat["gas_crossover_min"] == 0.03 and flat["gas_vsh_max"] == 0.30
+
+    fresh = AppModel()
+    assert svc.apply_session_to_model(fresh, svc.load_session(path))
+    assert (fresh.dn_combination, fresh.gas_crossover_min, fresh.gas_vsh_max) == ("RMS", 0.03, 0.30)
+    lower = fresh.project.zone_params["LOWER"]
+    assert lower["dn_combination"]["value"] == "Average"
+    assert lower["gas_crossover_min"]["value"] == 0.05
+
+
+def test_old_session_without_porosity_keys_keeps_defaults(tmp_path):
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({"_session_version": "2.1", "rw": 0.1}))
+    svc = SessionService()
+    model = AppModel()
+    assert svc.apply_session_to_model(model, svc.load_session(str(path)))
+    assert (model.dn_combination, model.gas_crossover_min, model.gas_vsh_max) == ("Average", 0.02, 0.40)
+    path.write_text(json.dumps({"_session_version": "2.1", "dn_combination": "Bogus"}))
+    assert svc.apply_session_to_model(model, svc.load_session(str(path)))
+    assert model.dn_combination == "Average"

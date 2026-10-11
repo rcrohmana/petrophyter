@@ -75,6 +75,10 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "gas_correction_enabled": False,
     "gas_nphi_factor": 0.30,
     "gas_rhob_factor": 0.15,
+    "gas_crossover_min": 0.02,
+    "gas_vsh_max": 0.40,
+    # PHIT and PHIE_DN from PHID and PHIN: "Average" or "RMS" (RMS on gas-flagged samples).
+    "dn_combination": "Average",
     # Formation temperature (degF, degF/100 ft) and the Arps correction of Rw.
     "temp_correction": False,
     "surface_temp": 80.0,
@@ -250,10 +254,18 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
         calc.calculate_porosity_neutron(nphi_curve, resolve_nphi_matrix(p))
     if has_sonic:
         calc.calculate_porosity_sonic(dt_curve, dt_matrix, dt_fluid)
-    if has_density or has_neutron:
-        calc.calculate_phit_neutron_density()
+    # Gas samples are flagged whenever the correction is on, whatever the primary
+    # PHIE method; PHIT then uses RMS there (Gaymard-Poupon).
+    gas_flag = None
+    if p["gas_correction_enabled"] and has_density and has_neutron:
+        gas_flag = calc.calculate_gas_flag(vsh, p["gas_crossover_min"], p["gas_vsh_max"])
+    if has_density or has_neutron or has_sonic:
+        calc.calculate_phit_neutron_density(
+            dn_combination=p["dn_combination"], gas_flag=gas_flag
+        )
     else:
-        warnings.append("PHIT was not calculated because no RHOB or NPHI curve was available.")
+        warnings.append(
+            "PHIT was not calculated because no RHOB, NPHI or DT curve was available.")
 
     calc.calculate_all_phie(
         vsh=vsh,
@@ -268,6 +280,10 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
         gas_nphi_factor=p["gas_nphi_factor"],
         gas_rhob_factor=p["gas_rhob_factor"],
         primary_method=p["primary_phie_method"],
+        nphi_matrix=resolve_nphi_matrix(p),
+        dn_combination=p["dn_combination"],
+        gas_crossover_min=p["gas_crossover_min"],
+        gas_vsh_max=p["gas_vsh_max"],
     )
     partial = getattr(calc, "phie_partial", None)
     if partial is not None:
