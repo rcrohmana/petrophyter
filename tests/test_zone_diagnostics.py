@@ -51,6 +51,13 @@ def test_no_reservoir_when_gross_but_nothing_passes_phie():
     assert "check the cutoff and the porosity inputs" in text
 
 
+def test_thin_gross_is_not_reported_as_zero_ft():
+    # One gross sample at a zone boundary (0.5 ft) read "0 ft gross" before.
+    d = _diag([0.1] + [0.9] * 9, [0.03] * 10, [0.3] * 10)
+    d["gross"] = 0.5
+    assert "passes 0% of 0.5 ft gross." in zone_diagnostic_note(d)[1]
+
+
 def test_no_pay_when_reservoir_but_nothing_passes_sw():
     d = _diag([0.1] * 10, [0.2] * 10, [0.9] * 10)
     assert d["status"] == "no_pay" and d["limiting"] == "sw_cutoff"

@@ -1139,6 +1139,11 @@ def zone_diagnostic_note(diag):
     return base[0], f"{base[1]} {text}"
 
 
+def _ft(value):
+    """A thickness for a note: one decimal below 10 ft, so 0.5 ft does not read 0."""
+    return f"{value:.1f}" if value < 10 else f"{value:.0f}"
+
+
 def _zone_status_note(diag):
     status, c = diag.get("status"), diag.get("cutoffs") or {}
     if status == "no_data":
@@ -1149,11 +1154,11 @@ def _zone_status_note(diag):
                         "check the cutoff if the zone should be reservoir.")
     if status == "no_reservoir":
         return "warning", (f"No net reservoir: PHIE cutoff {c['phi_cutoff']:.2f} passes 0% of "
-                           f"{diag['gross']:.0f} ft gross. Tight rock, or check the cutoff and "
+                           f"{_ft(diag['gross'])} ft gross. Tight rock, or check the cutoff and "
                            "the porosity inputs (matrix, shale point).")
     if status == "no_pay":
         return "info", (f"No net pay: the Sw cutoff {c['sw_cutoff']:.2f} passes 0% of "
-                        f"{diag['net_reservoir']:.0f} ft net reservoir. May be water-bearing; "
+                        f"{_ft(diag['net_reservoir'])} ft net reservoir. May be water-bearing; "
                         "check the cutoff and the Rw inputs if pay is expected.")
     return None
 

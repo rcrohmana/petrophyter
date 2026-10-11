@@ -42,7 +42,7 @@ sessions from 1.7.1 and older show a notice and every well is out of date until 
 
 ### Quality
 
-- Hand-worked formula values and Hypothesis property tests; 1319 tests.
+- Hand-worked formula values and Hypothesis property tests; 1320 tests.
 
 ## v1.7.1 (Build 20261011)
 
