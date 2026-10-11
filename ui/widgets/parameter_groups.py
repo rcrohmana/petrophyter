@@ -1925,7 +1925,9 @@ class FieldModeControl(QWidget):
             layout.insertWidget(index, box)
 
     def eventFilter(self, obj, event):
-        if obj is self.anchor:
+        # getattr: Qt can still deliver the anchor's hide event while the window is
+        # torn down, after this wrapper's Python attributes are gone.
+        if obj is getattr(self, "anchor", None):
             if event.type() == QEvent.Type.HideToParent:
                 self._anchor_visible = False
                 self._sync_visible()
