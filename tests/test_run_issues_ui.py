@@ -265,7 +265,7 @@ def test_core_samples_in_log_gaps_line(window, qtbot, monkeypatch):
     monkeypatch.setattr(diag, "_plot_depth_track_with_core", lambda *a: [])
     ds.core_data = _CoreStub()
     diag.update_display()
-    assert "3 core samples in log gaps" in diag.core_warnings.text()
+    assert "3 core samples beside a log gap excluded" in diag.core_warnings.text()
     assert diag.core_warnings.property("status") == "warning"
 
 

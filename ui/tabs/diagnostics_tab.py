@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QBrush, QColor, QFont
 import logging
 import pandas as pd
 import numpy as np
@@ -26,13 +26,119 @@ import numpy as np
 from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import HistogramPlot, CrossPlot, PlotWidget
 from ..widgets.table_model import PandasTableModel
+from modules.pipeline import (
+    INCONSISTENT_POROSITY_SHARE, SW_COLUMN_MAP, SW_MODEL_NAMES, UPPER_BOUND_SHARE,
+    ZONE_NO_SHALE_NOTE,
+)
 from services.issues import collect_issues
-from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
+from themes.colors import get_color, get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 from themes.helpers import set_status
 from themes.icon_loader import get_icon
 
 
 logger = logging.getLogger(__name__)
+
+
+CHECK_STATE_ROLE = Qt.ItemDataRole.UserRole + 1   # "warning" on a cell above its threshold
+SW_CHECK_COLUMNS = [
+    "Model", "Zone", "Samples", "No porosity", "At upper bound", "At lower bound",
+    "BVH capped", "PHIE > PHIT", "No root", "Failed",
+]
+# column -> (summary key, share of the zone's samples above which the cell is a warning)
+_CHECK_KEYS = {
+    3: ("no_porosity", None),
+    4: ("at_upper_bound", UPPER_BOUND_SHARE),
+    5: ("at_lower_bound", None),
+    6: ("bvh_exceeds_phie", INCONSISTENT_POROSITY_SHARE),
+    7: ("phie_above_phit", INCONSISTENT_POROSITY_SHARE),
+}
+_SOLVER_MODELS = ("SW_WS", "SW_DW")
+_CHECK_TIPS = {
+    4: "Warning above 10 % of the zone's samples (the run warning counts clean samples only)",
+    6: "Warning above 5 % of the zone's samples: PHIT-based hydrocarbon volume limited to PHIE",
+    7: "Warning above 5 % of the zone's samples: effective porosity above total porosity",
+}
+
+
+def build_sw_check_rows(solver_diagnostics, n_samples=None):
+    """``(rows, warn_cells)`` for the Sw checks table, one row per computed model and zone.
+
+    A model without formation zones gets a "Whole well" row (``n_samples`` samples).
+    ``warn_cells`` holds ``(row, column)`` of cells above their threshold.
+    """
+    rows, warn = [], set()
+    for column in SW_COLUMN_MAP.values():
+        entry = (solver_diagnostics or {}).get(column)
+        if not entry:
+            continue
+        zones = entry.get("zones")
+        parts = list(zones.items()) if zones else [("Whole well", dict(entry))]
+        for zone, counts in parts:
+            samples = counts.get("samples", n_samples if not zones else None)
+            row = [SW_MODEL_NAMES[column], str(zone), "-" if samples is None else str(samples)]
+            r = len(rows)
+            for c in range(3, 8):
+                key, share = _CHECK_KEYS[c]
+                value = int(counts.get(key, 0))
+                row.append(str(value))
+                if share is not None and samples and value > share * samples:
+                    warn.add((r, c))
+            if column in _SOLVER_MODELS:
+                row += [str(int(counts.get("no_root", 0))), str(int(counts.get("failed", 0)))]
+                if counts.get("no_root"):
+                    warn.add((r, 8))
+                if counts.get("failed"):
+                    warn.add((r, 9))
+            else:
+                row += ["-", "-"]
+            rows.append(row)
+    return rows, warn
+
+
+class SwChecksTableModel(PandasTableModel):
+    """Sw checks table; cells above their threshold carry the warning state."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.warn_cells = set()
+
+    def set_checks(self, rows, warn_cells):
+        self.warn_cells = set(warn_cells)
+        self.set_dataframe(pd.DataFrame(rows, columns=SW_CHECK_COLUMNS))
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if index.isValid():
+            cell = (index.row(), index.column())
+            warn = cell in self.warn_cells
+            if role == CHECK_STATE_ROLE:
+                return "warning" if warn else None
+            if role == Qt.ItemDataRole.ForegroundRole and warn:
+                return QBrush(QColor(get_color("warning")))
+            if role == Qt.ItemDataRole.ToolTipRole and warn:
+                return _CHECK_TIPS.get(index.column(), "Above the warning threshold")
+        return super().data(index, role)
+
+
+def swirr_summary_lines(summary):
+    """``(lines, warn)`` describing the Swirr method used and its limits; empty without a method."""
+    method = (summary or {}).get("swirr_method")
+    diag = (summary or {}).get("swirr_diagnostics") or {}
+    if not method and not diag:
+        return [], False
+    lines = [f"Swirr method used: {diag.get('method_used') or method}"]
+    warn = False
+    if diag:
+        total = int(diag.get("samples", 0))
+        for key, text in (
+            ("floor_samples", "raised to the 0.05 floor"),
+            ("limited_by_sw", "limited to Sw"),
+            ("limited_to_max", "limited to 0.60"),
+            ("fallback_samples", "taken from Buckles (fallback)"),
+        ):
+            n = int(diag.get(key, 0))
+            lines.append(f"{n} of {total} samples {text}")
+            warn = warn or n > 0
+    return lines, warn
 
 
 class SelectedMethodTableModel(PandasTableModel):
@@ -204,6 +310,30 @@ class DiagnosticsTab(QWidget):
         self.sw_warnings = QLabel("")
         self.sw_warnings.setWordWrap(True)
         content_layout.addWidget(self.sw_warnings)
+
+        # Sw solver and porosity checks per model and zone (C3, C6, C14), Swirr (C7, C15)
+        self.sw_checks_group = QGroupBox("Sw Solver and Porosity Checks")
+        sw_checks_layout = QVBoxLayout(self.sw_checks_group)
+        self.sw_checks_empty = QLabel("No Sw model diagnostics in this run")
+        set_status(self.sw_checks_empty, "muted")
+        sw_checks_layout.addWidget(self.sw_checks_empty)
+        self.sw_checks_table = QTableView()
+        self.sw_checks_model = SwChecksTableModel()
+        self.sw_checks_table.setModel(self.sw_checks_model)
+        self.sw_checks_table.setMinimumHeight(160)
+        self.sw_checks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        sw_checks_layout.addWidget(self.sw_checks_table)
+        self.swirr_summary = QLabel("")
+        self.swirr_summary.setWordWrap(True)
+        sw_checks_layout.addWidget(self.swirr_summary)
+        self.zone_notes_table = QTableView()
+        self.zone_notes_model = PandasTableModel()
+        self.zone_notes_table.setModel(self.zone_notes_model)
+        self.zone_notes_table.setMaximumHeight(120)
+        self.zone_notes_table.horizontalHeader().setStretchLastSection(True)
+        sw_checks_layout.addWidget(self.zone_notes_table)
+        self.sw_checks_group.setVisible(False)
+        content_layout.addWidget(self.sw_checks_group)
 
         # =====================================================================
         # PERMEABILITY VALIDATION
@@ -463,6 +593,8 @@ class DiagnosticsTab(QWidget):
                     )
         self.sw_warnings.setText("\n".join(solver_warnings))
         set_status(self.sw_warnings, "warning" if solver_warnings else None)
+
+        self._update_sw_checks(results, summary)
 
         sw_cols = ["SW_ARCHIE", "SW_INDO", "SW_SIMAN", "SW_WS", "SW_DW"]
         available_sw = [
@@ -821,7 +953,7 @@ class DiagnosticsTab(QWidget):
                 )
                 if n_gaps > 0:
                     noun = "sample" if n_gaps == 1 else "samples"
-                    warnings.append(f"{n_gaps} core {noun} in log gaps")
+                    warnings.append(f"{n_gaps} core {noun} beside a log gap excluded")
 
                 if warnings:
                     self.core_warnings.setText("\n".join(warnings))
@@ -833,6 +965,28 @@ class DiagnosticsTab(QWidget):
                     set_status(self.core_warnings, "success")
         else:
             self.core_group.setVisible(False)
+
+    def _update_sw_checks(self, results, summary):
+        """Fill the Sw checks table, the Swirr lines and the no-shale zone notes."""
+        summary = summary or {}
+        rows, warn = build_sw_check_rows(summary.get("solver_diagnostics"), len(results))
+        self.sw_checks_group.setVisible(True)
+        self.sw_checks_empty.setVisible(not rows)
+        self.sw_checks_table.setVisible(bool(rows))
+        self.sw_checks_model.set_checks(rows, warn)
+
+        lines, swirr_warn = swirr_summary_lines(summary)
+        self.swirr_summary.setText("\n".join(lines))
+        self.swirr_summary.setVisible(bool(lines))
+        set_status(self.swirr_summary, "warning" if swirr_warn else None)
+
+        notes = [
+            [str(zone), diag["note"]]
+            for zone, diag in (summary.get("zone_diagnostics") or {}).items()
+            if diag.get("note") == ZONE_NO_SHALE_NOTE
+        ]
+        self.zone_notes_model.set_dataframe(pd.DataFrame(notes, columns=["Zone", "Note"]))
+        self.zone_notes_table.setVisible(bool(notes))
 
     def _plot_depth_track_with_core(self, core, results):
         """Plot depth tracks with log curves and report unavailable overlays."""
@@ -1087,6 +1241,11 @@ class DiagnosticsTab(QWidget):
         self.sw_stats_model.set_dataframe(pd.DataFrame())
         self.sw_warnings.setText("")
         set_status(self.sw_warnings, None)
+        self.sw_checks_model.set_checks([], set())
+        self.zone_notes_model.set_dataframe(pd.DataFrame())
+        self.swirr_summary.setText("")
+        set_status(self.swirr_summary, None)
+        self.sw_checks_group.setVisible(False)
 
         # Reset permeability section
         self.perm_crossplot.clear()

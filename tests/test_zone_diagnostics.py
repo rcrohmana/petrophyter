@@ -240,3 +240,18 @@ def test_clean_sand_zone_vsh_uses_the_well_baseline_and_says_so():
     assert ZONE_NO_SHALE_NOTE in summary["param_sources"]["LOWER"]["gr_baseline"]["source"]
     level, text = zone_diagnostic_note(summary["zone_diagnostics"]["LOWER"])
     assert ZONE_NO_SHALE_NOTE in text
+
+
+def test_no_shale_zone_row_gets_the_info_tint(qtbot):
+    from modules.pipeline import ZONE_NO_SHALE_NOTE
+
+    model, zones = _model()
+    diag = model.project.active.summary["zone_diagnostics"]
+    diag[zones[0]] = _diagnostics("ok", None, note=ZONE_NO_SHALE_NOTE)
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    zm = tab.zones_model
+    assert zm.index(0, 0).data(ROW_STATE_ROLE) == "info"
+    assert ZONE_NO_SHALE_NOTE in zm.index(0, 0).data(TIP)
+    assert zm.index(1, 0).data(ROW_STATE_ROLE) == "info"      # other rows keep their tint
