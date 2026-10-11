@@ -646,3 +646,92 @@ def test_shale_selection_mode_change_live_syncs_model(window):
     window.params_window.shale_params_widget.selection_mode_combo.setCurrentText("Quantile")
 
     assert window.model.shale_selection_mode == "quantile"
+
+
+# ---- U2 parameter provenance: Summary and Diagnostics read the run's snapshot ------------
+def _run_model(vsh_cutoff=0.25):
+    from models.project import WellDataset
+    from modules.pipeline import run_pipeline
+    from tests.golden.cases import FULL_MAPPING, fixture_frame
+
+    model = AppModel()
+    data = fixture_frame("sample_log_data")
+    ds = WellDataset("W:A", "Alpha")
+    ds.las_data = data
+    ds.curve_mapping = dict(FULL_MAPPING)
+    model.project.add_well(ds)
+    results, summary = run_pipeline(data, FULL_MAPPING, {"vsh_cutoff": vsh_cutoff})
+    model.set_analysis_results(results, summary)
+    return model, ds
+
+
+def test_summary_shows_the_cutoffs_of_the_run_with_a_hint_when_settings_changed(qtbot):
+    model, ds = _run_model(0.25)
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.vsh_cutoff_label.text() == "Vsh cutoff: 0.25"
+    assert tab.cutoff_hint.text() == ""
+    model.vsh_cutoff = 0.40                     # live setting changes after the run
+    ds.stale = True
+    model.project.well_updated.emit("W:A")
+    assert tab.vsh_cutoff_label.text() == "Vsh cutoff: 0.25"       # still the run's value
+    assert tab.cutoff_hint.text() == "Current settings differ — Run to update"
+    assert tab.cutoff_hint.property("status") == "muted"
+
+
+def test_summary_cutoffs_before_a_run_show_a_dash_not_live_values(qtbot):
+    model = AppModel()
+    model.vsh_cutoff = 0.33
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.vsh_cutoff_label.text() == "Vsh cutoff: —"
+    assert "0.33" not in tab.vsh_cutoff_label.text()
+    assert tab.cutoff_hint.text() == "Run to see the parameters used"
+
+
+def test_summary_cutoffs_vary_by_zone(qtbot):
+    model, _ds = _run_model(0.40)
+    sources = model.summary["param_sources"]
+    sources["UPPER"] = {"vsh_cutoff": {"value": 0.25, "source": "zone"}}
+    sources["LOWER"] = {"vsh_cutoff": {"value": 0.40, "source": "project"}}
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.vsh_cutoff_label.text() == "Vsh cutoff: varies by zone (0.25–0.40)"
+    assert tab.phi_cutoff_label.text().startswith("PHIE cutoff: 0.")
+
+
+def test_diagnostics_shale_block_reads_the_run_snapshot(qtbot):
+    model, ds = _run_model()
+    model.summary["param_sources"]["(well)"]["rho_shale"]["value"] = 2.61
+    model.rho_shale = 2.99                      # live value must not show
+    tab = DiagnosticsTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert "2.61" in tab.shale_current_label.text()
+    assert "2.99" not in tab.shale_current_label.text()
+    assert tab.shale_hint.text() == ""
+    ds.stale = True
+    model.project.well_updated.emit("W:A")
+    assert tab.shale_hint.text() == "Current settings differ — Run to update"
+
+
+def test_export_run_wells_runs_those_wells_and_returns_to_the_export_tab(window, monkeypatch):
+    runs = []
+    monkeypatch.setattr(window, "_start_runs", lambda keys, force: runs.append((list(keys), force)))
+    window.tab_widget.setCurrentWidget(window.summary_tab)
+    # Nothing started (e.g. nothing to run): a later unrelated batch must not jump tabs.
+    window.export_tab.run_wells_requested.emit(["W:B"])
+    window._return_to_export_tab({"cancelled": False})
+    assert window.tab_widget.currentWidget() is window.summary_tab
+    runs.clear()
+    monkeypatch.setattr(window.batch_runner, "is_running", lambda: True)
+    window.export_tab.run_wells_requested.emit(["W:B"])
+    assert runs == [(["W:B"], True)]
+    window._return_to_export_tab({"cancelled": False})
+    assert window.tab_widget.currentWidget() is window.export_tab
+    window.tab_widget.setCurrentWidget(window.summary_tab)
+    window._return_to_export_tab({"cancelled": False})        # only after an export-started run
+    assert window.tab_widget.currentWidget() is window.summary_tab

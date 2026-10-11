@@ -202,3 +202,259 @@ def test_las_export_survives_input_curves_named_like_results(tmp_path):
     assert ExportService().export_las_wells([ds], str(out))
     header = (out / "Xray.las").read_text(encoding="utf-8").split("~A")[1].splitlines()[0].split()
     assert "PHIE_IN" in header and "SW_IN" in header
+
+
+# ---- U2 / U3: parameter provenance, export freshness and provenance ------------------
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
+
+from services.export_service import (
+    PROVENANCE_SHEET, _summary_frame, blockers_text, export_blockers, las_frame,
+    provenance_block,
+)
+from version import APP_BUILD, APP_VERSION
+
+
+def _stale(ds):
+    ds.stale = True
+    ds.run_time = "2026-10-11T09:00:00+00:00"
+    ds.run_params_hash = "abc123"
+
+
+def test_export_blockers_by_state(model):
+    beta, gamma = model.project.get("W:B"), model.project.get("W:C")
+    _stale(beta)
+    broken = _well("W:D", "Delta")
+    broken.error = "boom"
+    model.project.add_well(broken, activate=False)
+    failed_empty = _well("W:E", "Echo", run=False)
+    failed_empty.error = "no formation"
+    model.project.add_well(failed_empty, activate=False)
+    blockers = export_blockers(model.project.wells)
+    assert [d.key for d in blockers["ready"]] == ["W:A"]
+    assert [d.key for d in blockers["out_of_date"]] == ["W:B"]
+    assert [d.key for d in blockers["failed"]] == ["W:D"]
+    assert [d.key for d in blockers["failed_no_results"]] == ["W:E"]
+    assert [d.key for d in blockers["no_results"]] == ["W:C"]
+    assert blockers_text(blockers, with_ready=True) == "1 well ready · 1 out of date · 2 latest run failed"
+    assert blockers_text(blockers) == "1 well out of date · 2 latest run failed"
+    assert gamma.status == "loaded"
+
+
+def test_field_total_excludes_failed_well_and_counts_stale(model):
+    alpha_net = wells_summary_frame(model.project.wells).loc[0, "Net"]
+    beta = model.project.get("W:B")
+    beta.error = "formation not found"
+    frame = wells_summary_frame(model.project.wells)
+    total = frame.iloc[-1]
+    assert total["Status"] == "1 well"
+    assert total["Net"] == pytest.approx(alpha_net)
+    row = frame[frame["Well"] == "Beta/Two"].iloc[0]
+    assert row["Status"] == "Error: formation not found"
+    assert np.isnan(row["Net"]) and np.isnan(row["HCPV"])
+    beta.error = None
+    _stale(beta)
+    frame = wells_summary_frame(model.project.wells)
+    assert frame.iloc[-1]["Status"] == "2 wells (1 out of date)"
+    assert frame.iloc[-1]["Net"] == pytest.approx(frame.loc[0, "Net"] + frame.loc[1, "Net"])
+
+
+def test_summary_tab_issues_column(qtbot, model):
+    model.project.get("W:A").summary["warnings"] = ["PHIE missing", "Rw fallback"]
+    model.project.get("W:B").error = "boom"
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab._refresh_multi()
+    assert tab.wells_model.columnCount() == 14
+    assert tab.wells_model.headerData(13, Qt.Orientation.Horizontal) == "Issues"
+
+    def cell(row):
+        return tab.wells_model.index(row, 13).data()
+
+    assert cell(0) == "2 warnings"
+    assert cell(1) == "boom"
+    assert cell(2) == ""
+
+
+def test_summary_sheet_has_parameter_table_not_json(tmp_path, model):
+    ds = model.project.get("W:A")
+    path = tmp_path / "one.xlsx"
+    assert ExportService().export_excel(ds.results, ds.summary, str(path))
+    summary = pd.read_excel(path, sheet_name="Summary")
+    assert list(summary.columns) == ["Parameter", "Scope", "Value", "Source"]
+    assert not any('"(well)"' in str(v) for v in summary["Value"].dropna())   # no JSON dump
+    assert "param_sources" not in set(summary["Parameter"])
+    well_rows = summary[summary["Scope"] == "well"]
+    row = well_rows[well_rows["Parameter"] == "vsh_cutoff"].iloc[0]
+    assert row["Value"] == pytest.approx(0.4) and row["Source"] == "project"
+
+
+def test_summary_frame_scopes_zone_and_temperature():
+    frame = _summary_frame({"net_pay": 1.5, "param_sources": {
+        "(well)": {"rw": {"value": 0.1, "source": "project"}},
+        "UPPER": {"rw": {"value": 0.04, "source": "zone"}},
+        "temperature": {"tvd_source": "TVD curve TVDKB"},
+    }})
+    rows = {(r.Parameter, r.Scope): (r.Value, r.Source) for r in frame.itertuples()}
+    assert rows[("net_pay", "")] == (1.5, "")
+    assert rows[("rw", "well")] == (0.1, "project")
+    assert rows[("rw", "UPPER")] == (0.04, "zone")
+    assert rows[("tvd_source", "temperature")] == ("TVD curve TVDKB", "")
+
+
+def test_every_format_carries_version_and_run_time(tmp_path, model):
+    alpha = model.project.get("W:A")
+    alpha.run_time = "2026-10-11T09:00:00+00:00"
+    alpha.run_params_hash = "abc123"
+    svc = ExportService()
+    block = provenance_block(alpha)
+    assert block["App version"] == APP_VERSION and block["Build"] == APP_BUILD
+    assert block["Run time"] == alpha.run_time and block["Status at export"] == "Current"
+    # single-well Excel: key/value rows
+    xlsx = tmp_path / "one.xlsx"
+    assert svc.export_excel(alpha.results, alpha.summary, str(xlsx), block)
+    sheet = pd.read_excel(xlsx, sheet_name=PROVENANCE_SHEET)
+    values = dict(zip(sheet["Item"], sheet["Value"]))
+    assert values["App version"] == APP_VERSION and values["Run time"] == alpha.run_time
+    # all-wells Excel: one row per well
+    allx = tmp_path / "all.xlsx"
+    assert svc.export_excel_wells(model.project.wells, str(allx))
+    sheet = pd.read_excel(allx, sheet_name=PROVENANCE_SHEET)
+    assert list(sheet["Well"]) == ["Alpha", "Beta/Two"]
+    assert set(sheet["App version"]) == {APP_VERSION}
+    assert sheet.loc[0, "Run time"] == alpha.run_time
+    # LAS: ~OTHER section before the data
+    las = tmp_path / "one.las"
+    assert svc.export_las(las_frame(alpha), alpha.well_info, str(las), block)
+    text = las.read_text(encoding="utf-8")
+    assert "~OTHER" in text and text.index("~OTHER") < text.index("~A ")
+    assert f"Exported by Petrophyter {APP_VERSION} (Build {APP_BUILD})" in text
+    assert alpha.run_time in text and "Param hash abc123" in text
+    out = tmp_path / "las"
+    assert svc.export_las_wells(model.project.wells, str(out))
+    assert f"Petrophyter {APP_VERSION}" in (out / "Alpha.las").read_text(encoding="utf-8")
+
+
+def test_csv_sidecar_and_unchanged_csv(tmp_path, model):
+    alpha = model.project.get("W:A")
+    alpha.run_time = "2026-10-11T09:00:00+00:00"
+    svc = ExportService()
+    plain = tmp_path / "plain.csv"
+    assert svc.export_csv(alpha.results, str(plain))
+    assert not (tmp_path / "plain.provenance.txt").exists()
+    with_prov = tmp_path / "res.csv"
+    assert svc.export_csv(alpha.results, str(with_prov), provenance_block(alpha))
+    assert with_prov.read_bytes() == plain.read_bytes()
+    side = (tmp_path / "res.provenance.txt").read_text(encoding="utf-8")
+    assert f"App version: {APP_VERSION}" in side and "Run time: 2026-10-11T09:00:00" in side
+    allc = tmp_path / "all.csv"
+    assert svc.export_csv_wells(model.project.wells, str(allc))
+    side = (tmp_path / "all.provenance.txt").read_text(encoding="utf-8")
+    assert "Well: Alpha" in side and "Well: Beta/Two" in side
+    assert pd.read_csv(allc).columns[0] == "WELL"
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]   # no temp files left
+
+
+# ---- Export tab: status line and confirmation ----------------------------------------
+@pytest.fixture
+def export_tab(qtbot, model, monkeypatch):
+    tab = ExportTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: ("", ""))
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: "")
+    return tab
+
+
+def _click(monkeypatch, which):
+    """Patch the modal: record its buttons, then click the button named ``which``."""
+    seen = {}
+
+    def fake_exec(self):
+        seen["buttons"] = [b.text().replace("&", "") for b in self.buttons()]
+        seen["text"] = self.text()
+        seen["info"] = self.informativeText()
+        for button in self.buttons():
+            if button.text().replace("&", "") == which:
+                button.click()
+        return 0
+
+    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    return seen
+
+
+def test_export_status_line(export_tab, model):
+    assert export_tab.status_line.text() == "Ready — results current"
+    assert export_tab.status_line.property("status") == "success"
+    _stale(model.project.get("W:A"))
+    model.project.well_updated.emit("W:A")
+    assert export_tab.status_line.text() == "1 well out of date"
+    assert export_tab.status_line.property("status") == "warning"
+    assert export_tab.csv_btn.isEnabled()                 # the dialog decides, not the button
+    model.project.get("W:B").error = "boom"
+    export_tab.scope_combo.setCurrentIndex(1)
+    assert export_tab.status_line.text() == "1 well out of date · 1 latest run failed"
+
+
+def test_clean_scope_exports_without_dialog(export_tab, monkeypatch):
+    seen = _click(monkeypatch, "Cancel")
+    export_tab._on_export_csv()
+    assert seen == {}
+
+
+def test_dialog_has_three_buttons_and_cancel_exports_nothing(export_tab, model, monkeypatch):
+    _stale(model.project.get("W:A"))
+    model.project.get("W:B").error = "boom"
+    export_tab.scope_combo.setCurrentIndex(1)
+    seen = _click(monkeypatch, "Cancel")
+    asked = []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: asked.append(1) or ("", ""))
+    export_tab._on_export_excel()
+    assert set(seen["buttons"]) == {"Run out-of-date wells", "Export last successful results", "Cancel"}
+    assert len(seen["buttons"]) == 3
+    assert seen["text"] == "0 wells ready · 1 out of date · 1 latest run failed"
+    assert "latest run failed are left out" in seen["info"]
+    assert asked == []
+
+
+def test_dialog_run_button_emits_keys_and_does_not_export(export_tab, model, monkeypatch):
+    _stale(model.project.get("W:B"))
+    export_tab.scope_combo.setCurrentIndex(1)
+    _click(monkeypatch, "Run out-of-date wells")
+    asked, got = [], []
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: asked.append(1) or ("", ""))
+    export_tab.run_wells_requested.connect(got.append)
+    export_tab._on_export_csv()
+    assert got == [["W:B"]] and asked == []
+
+
+def test_dialog_export_button_exports_with_status_written(export_tab, model, tmp_path, monkeypatch):
+    _stale(model.project.get("W:B"))
+    export_tab.scope_combo.setCurrentIndex(1)
+    seen = _click(monkeypatch, "Export last successful results")
+    path = str(tmp_path / "all.xlsx")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (path, ""))
+    export_tab._on_export_excel()
+    assert "Run out-of-date wells" in seen["buttons"]
+    summary = pd.read_excel(path, sheet_name="Summary")
+    assert summary.iloc[-1]["Status"] == "2 wells (1 out of date)"
+    prov = pd.read_excel(path, sheet_name=PROVENANCE_SHEET)
+    assert list(prov["Status at export"]) == ["Current", "Out of date"]
+
+
+def test_failed_well_without_results_is_named_and_left_out(export_tab, model, monkeypatch):
+    model.project.get("W:C").error = "no formation"
+    export_tab.scope_combo.setCurrentIndex(1)
+    seen = _click(monkeypatch, "Cancel")
+    export_tab._on_export_csv()
+    assert set(seen["buttons"]) == {"Export last successful results", "Cancel"}
+    assert "Not exported" in seen["info"] and "Gamma" in seen["info"]
+
+
+def test_single_well_export_writes_provenance(export_tab, tmp_path, monkeypatch):
+    path = str(tmp_path / "one.csv")
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (path, ""))
+    export_tab._on_export_csv()
+    assert (tmp_path / "one.csv").exists() and (tmp_path / "one.provenance.txt").exists()

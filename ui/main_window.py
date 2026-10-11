@@ -352,6 +352,8 @@ class MainWindow(QMainWindow):
         # Export signals
         self.export_tab.export_csv.connect(self._on_export_csv)
         self.export_tab.export_excel.connect(self._on_export_excel)
+        self.export_tab.run_wells_requested.connect(self._on_export_run_wells)
+        self.batch_runner.finished.connect(self._return_to_export_tab)
         self.export_service.export_complete.connect(self.export_tab.show_export_success)
         self.export_service.export_error.connect(self.export_tab.show_export_error)
 
@@ -1955,6 +1957,22 @@ class MainWindow(QMainWindow):
     # =========================================================================
     # EXPORT
     # =========================================================================
+
+    def _on_export_run_wells(self, keys: list):
+        """Export tab asked to run its out-of-date wells; come back to it when done."""
+        if self._busy or not keys:
+            return
+        self._start_runs(list(keys), force=True)
+        # Only a batch that started returns to the Export tab when it finishes.
+        self._export_return = self.batch_runner.is_running()
+
+    def _return_to_export_tab(self, report: dict):
+        """After a batch started from the Export tab, show that tab again (no export)."""
+        if not getattr(self, "_export_return", False):
+            return
+        self._export_return = False
+        if not report.get("cancelled"):
+            self.tab_widget.setCurrentWidget(self.export_tab)
 
     def _on_export_csv(self, file_path: str):
         """Handle CSV export."""

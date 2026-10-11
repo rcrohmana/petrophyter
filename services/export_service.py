@@ -15,6 +15,8 @@ from contextlib import contextmanager
 import pandas as pd
 
 from modules.las_handler import export_merged_las
+from services.issues import collect_issues, issue_counts
+from version import APP_BUILD, APP_VERSION
 
 
 @contextmanager
@@ -39,19 +41,54 @@ def _atomic_target(file_path: str, temporary_suffix: str = None):
         raise
 
 
+SUMMARY_COLUMNS = ["Parameter", "Scope", "Value", "Source"]
+
+
+def _param_source_rows(param_sources: dict) -> list:
+    """``summary["param_sources"]`` as (Parameter, Scope, Value, Source) rows.
+
+    Scope is ``well``, the zone name or ``temperature``. Entries that hold a
+    ``value`` and a ``source`` fill those columns; the flat temperature record
+    gives one row per field with an empty Source.
+    """
+    rows = []
+    for scope, table in (param_sources or {}).items():
+        label = "well" if scope == "(well)" else str(scope)
+        if not isinstance(table, dict):
+            continue
+        for name, entry in table.items():
+            if isinstance(entry, dict) and ("value" in entry or "source" in entry):
+                value, source = entry.get("value"), entry.get("source")
+            else:
+                value, source = entry, None
+            if isinstance(value, (dict, list, tuple, set)):
+                value = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
+            rows.append((str(name), label, "" if value is None else value,
+                         "" if source is None else str(source)))
+    return rows
+
+
 def _summary_frame(summary: dict) -> pd.DataFrame:
-    """Serialize summary values into Excel-safe key/value rows."""
+    """Serialize summary values into Excel-safe rows.
+
+    Columns Parameter, Scope, Value, Source. Plain summary values have an
+    empty Scope and Source; ``param_sources`` becomes one row per parameter
+    and scope (well / zone name / temperature) instead of a JSON string.
+    """
     if not isinstance(summary, dict):
         raise ValueError("summary must be a dictionary")
 
-    rows = []
+    rows, sources = [], []
     for key, value in summary.items():
+        if key == "param_sources" and isinstance(value, dict):
+            sources = _param_source_rows(value)
+            continue
         if isinstance(value, (dict, list, tuple, set)):
             value = json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
         elif value is None:
             value = ""
-        rows.append((str(key), value))
-    return pd.DataFrame(rows, columns=["Parameter", "Value"])
+        rows.append((str(key), "", value, ""))
+    return pd.DataFrame(rows + sources, columns=SUMMARY_COLUMNS)
 
 
 def _validate_results(results: pd.DataFrame) -> None:
@@ -145,6 +182,7 @@ def _write_excel_sheet(writer, df: pd.DataFrame, sheet_name: str) -> None:
 # ---------------------------------------------------------------------------
 SUMMARY_SHEET = "Summary"
 ZONES_SHEET = "Zones"
+PROVENANCE_SHEET = "Provenance"
 FIELD_TOTAL_LABEL = "Field total"
 
 WELL_COLUMNS = [
@@ -210,22 +248,148 @@ def qc_score(ds) -> float:
     return _num(getattr(report, "overall_quality_score", None))
 
 
+FIELD_TOTAL_RULE = (
+    "The Field total adds up wells whose results are current or out of date. "
+    "Wells whose latest run failed are left out of it."
+)
+
+
+def export_blockers(wells) -> dict:
+    """The wells of an export scope by freshness (P0-UI/UX U3).
+
+    ``ready`` (run, current), ``out_of_date`` (stale), ``failed`` (latest run
+    failed, earlier results kept), ``failed_no_results`` (latest run failed,
+    nothing to export) and ``no_results`` (never run). Each value is a list of
+    datasets in the order given.
+    """
+    out = {"ready": [], "out_of_date": [], "failed": [],
+           "failed_no_results": [], "no_results": []}
+    for ds in wells:
+        has_results = getattr(ds, "results", None) is not None and ds.calculated
+        status = ds.status
+        if status == "error":
+            out["failed" if has_results else "failed_no_results"].append(ds)
+        elif status == "stale" and has_results:
+            out["out_of_date"].append(ds)
+        elif status == "run_ok" and has_results:
+            out["ready"].append(ds)
+        else:
+            out["no_results"].append(ds)
+    return out
+
+
+def _plural(n: int, word: str = "well") -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
+def blockers_text(blockers: dict, with_ready: bool = False) -> str:
+    """``"2 wells out of date · 1 latest run failed"`` (empty when all is current)."""
+    stale = len(blockers["out_of_date"])
+    failed = len(blockers["failed"]) + len(blockers["failed_no_results"])
+    parts = []
+    if with_ready:
+        parts.append(f"{_plural(len(blockers['ready']))} ready")
+        if stale:
+            parts.append(f"{stale} out of date")
+    elif stale:
+        parts.append(f"{_plural(stale)} out of date")
+    if failed:
+        parts.append(f"{failed} latest run failed")
+    return " · ".join(parts)
+
+
+# Status at export, as written in the provenance block.
+PROVENANCE_STATUS = {
+    "run_ok": "Current", "stale": "Out of date", "error": "Latest run failed",
+    "loaded": "Not run", "empty": "Empty",
+}
+
+
+def provenance_block(ds) -> dict:
+    """What produced a well's exported numbers (P0-UI/UX U3), as ordered key/value pairs.
+
+    App version and build, the run time (UTC), the well's status at export,
+    the parameter hash of the run and the issue counts of the last run.
+    """
+    counts = issue_counts(collect_issues(ds))
+    return {
+        "Well": well_label(ds),
+        "App version": APP_VERSION,
+        "Build": APP_BUILD,
+        "Run time": getattr(ds, "run_time", None) or "unknown",
+        "Status at export": PROVENANCE_STATUS.get(ds.status, ds.status),
+        "Parameter hash": getattr(ds, "run_params_hash", None) or "unknown",
+        "Errors": counts["error"],
+        "Warnings": counts["warning"],
+        "Info": counts["info"],
+    }
+
+
+def provenance_lines(block: dict) -> list:
+    """The block as plain ``Key: value`` lines (CSV sidecar and LAS ``~Other``)."""
+    return [f"{key}: {value}" for key, value in block.items()]
+
+
+def _las_other_lines(block: dict) -> list:
+    return [
+        f"Exported by Petrophyter {block['App version']} (Build {block['Build']})",
+        f"Run time {block['Run time']} (UTC)",
+        f"Status {block['Status at export']}",
+        f"Param hash {block['Parameter hash']}",
+        f"Issues {block['Errors']} errors, {block['Warnings']} warnings, {block['Info']} info",
+    ]
+
+
+def _las_with_provenance(content: str, block: dict) -> str:
+    """Insert a ``~OTHER`` section before the ``~A`` data section."""
+    other = ["~OTHER INFORMATION"] + [f" {line}" for line in _las_other_lines(block)] + [""]
+    match = re.search(r"^~A", content, re.MULTILINE)
+    if match is None:
+        return content + "\n" + "\n".join(other)
+    return content[:match.start()] + "\n".join(other) + content[match.start():]
+
+
+def _provenance_frame(block: dict) -> pd.DataFrame:
+    """Key/value rows of one well's block (single-well Excel)."""
+    return pd.DataFrame(list(block.items()), columns=["Item", "Value"])
+
+
+def _write_sidecar(file_path: str, blocks: list) -> None:
+    """``<name>.provenance.txt`` next to a CSV, written atomically."""
+    stem = os.path.splitext(os.fspath(file_path))[0]
+    target = stem + ".provenance.txt"
+    lines = [f"Exported by Petrophyter {APP_VERSION} (Build {APP_BUILD})",
+             f"Data file: {os.path.basename(os.fspath(file_path))}", ""]
+    for block in blocks:
+        lines.extend(provenance_lines(block))
+        lines.append("")
+    with _atomic_target(target, ".txt") as temporary_path:
+        with open(temporary_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("\n".join(lines))
+
+
 def wells_summary_frame(wells) -> pd.DataFrame:
     """One row per well plus a ``Field total`` row (when any well has a summary).
 
-    Field total: Gross, Net and HCPV are sums over wells that have a summary
-    (run or out of date; not-run and error wells are excluded). N/G is
+    Field total rule: Gross, Net and HCPV are sums over wells whose results
+    are current or out of date. Wells whose latest run failed are excluded,
+    because their current settings produce no result and their earlier
+    numbers stand for a configuration that no longer exists; they keep their
+    row with the error and blank numbers, as do not-run wells with their
+    status. The Field row's Status reads ``"4 wells (1 out of date)"``. N/G is
     total Net / total Gross. Avg PHIE and Avg Sw are weighted by each well's
     net pay thickness (sum(avg_i * net_i) / sum(net_i), skipping wells whose
-    average is undefined). Not-run wells show their status with blank numbers.
+    average is undefined).
     """
     rows = []
     for ds in wells:
         row = {c: _NAN for c in WELL_COLUMNS}
-        row.update({"Well": well_label(ds),
-                    "Status": STATUS_LABELS.get(ds.status, ds.status),
+        status = STATUS_LABELS.get(ds.status, ds.status)
+        if ds.status == "error" and ds.error:
+            status = f"{status}: {' '.join(str(ds.error).split())[:120]}"
+        row.update({"Well": well_label(ds), "Status": status,
                     "Rw source": "", "Rsh source": ""})
-        summary = ds.summary if ds.summary and ds.calculated else None
+        summary = ds.summary if ds.summary and ds.calculated and ds.status != "error" else None
         if summary:
             row.update({
                 "Gross": _num(summary.get("gross_sand")),
@@ -243,6 +407,8 @@ def wells_summary_frame(wells) -> pd.DataFrame:
         rows.append(row)
     df = pd.DataFrame(rows, columns=WELL_COLUMNS)
     included = df[df["Gross"].notna() | df["Net"].notna()]
+    n_stale = sum(1 for ds, keep in zip(wells, df.index.isin(included.index))
+                  if keep and ds.status == "stale")
     if len(df) and len(included):
         net = included["Net"].fillna(0.0)
 
@@ -257,7 +423,9 @@ def wells_summary_frame(wells) -> pd.DataFrame:
         net_total = float(net.sum())
         total = {c: _NAN for c in WELL_COLUMNS}
         total.update({
-            "Well": FIELD_TOTAL_LABEL, "Status": f"{len(included)} wells",
+            "Well": FIELD_TOTAL_LABEL,
+            "Status": _plural(len(included)) + (
+                f" ({n_stale} out of date)" if n_stale else ""),
             "Gross": gross_total, "Net": net_total,
             "N/G": net_total / gross_total if gross_total > 0 else _NAN,
             "Avg PHIE": weighted("Avg PHIE"), "Avg Sw": weighted("Avg Sw"),
@@ -273,7 +441,7 @@ def zones_frame(wells) -> pd.DataFrame:
     """Well x zone rows from each well's ``summary["zones"]`` (empty when none)."""
     rows = []
     for ds in wells:
-        summary = ds.summary if ds.summary and ds.calculated else None
+        summary = ds.summary if ds.summary and ds.calculated and ds.status != "error" else None
         for zone in (summary or {}).get("zones") or []:
             params = zone.get("params") or {}
 
@@ -336,13 +504,15 @@ def _export_wells_excel(wells, file_path):
     if not ready:
         raise ValueError("no well has results to export")
     names = unique_names([well_label(ds) for ds in ready], 31,
-                         reserved=(SUMMARY_SHEET, ZONES_SHEET))
+                         reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET))
     zones = zones_frame(ready)
+    provenance = pd.DataFrame([provenance_block(ds) for ds in wells_with_results(wells)])
     with _atomic_target(file_path, ".xlsx") as temporary_path:
         with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
             _write_excel_sheet(writer, wells_summary_frame(wells), SUMMARY_SHEET)
             if len(zones):
                 _write_excel_sheet(writer, zones, ZONES_SHEET)
+            _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
             for ds, sheet in zip(ready, names):
                 _write_excel_sheet(writer, ds.results, sheet)
 
@@ -358,12 +528,18 @@ class ExportService(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
     
-    def export_csv(self, results: pd.DataFrame, file_path: str) -> bool:
-        """Export results to CSV file without corrupting an existing target."""
+    def export_csv(self, results: pd.DataFrame, file_path: str, provenance: dict = None) -> bool:
+        """Export results to CSV file without corrupting an existing target.
+
+        With ``provenance`` (see :func:`provenance_block`) a sidecar
+        ``<name>.provenance.txt`` is written next to the CSV; the CSV is unchanged.
+        """
         try:
             _validate_results(results)
             with _atomic_target(file_path) as temporary_path:
                 spreadsheet_safe(results, csv=True).to_csv(temporary_path, index=False)
+            if provenance:
+                _write_sidecar(file_path, [provenance])
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -375,8 +551,12 @@ class ExportService(QObject):
             self.export_error.emit(f"CSV export failed: {str(e)}")
             return False
 
-    def export_excel(self, results: pd.DataFrame, summary: dict, file_path: str) -> bool:
-        """Export results and a nested-value-safe summary to Excel."""
+    def export_excel(self, results: pd.DataFrame, summary: dict, file_path: str,
+                     provenance: dict = None) -> bool:
+        """Export results and a nested-value-safe summary to Excel.
+
+        With ``provenance`` a ``Provenance`` sheet of key/value rows is added.
+        """
         try:
             _validate_results(results)
             summary_df = _summary_frame(summary)
@@ -384,6 +564,9 @@ class ExportService(QObject):
                 with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
                     _write_excel_sheet(writer, results, "Results")
                     _write_excel_sheet(writer, summary_df, "Summary")
+                    if provenance:
+                        _write_excel_sheet(writer, _provenance_frame(provenance),
+                                           PROVENANCE_SHEET)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -395,12 +578,18 @@ class ExportService(QObject):
             self.export_error.emit(f"Excel export failed: {str(e)}")
             return False
 
-    def export_las(self, merged_df: pd.DataFrame, well_info: dict, file_path: str) -> bool:
-        """Export merged data to LAS using UTF-8 and an atomic target."""
+    def export_las(self, merged_df: pd.DataFrame, well_info: dict, file_path: str,
+                   provenance: dict = None) -> bool:
+        """Export merged data to LAS using UTF-8 and an atomic target.
+
+        With ``provenance`` the file gets a ``~OTHER`` section before the data.
+        """
         try:
             if not isinstance(merged_df, pd.DataFrame):
                 raise ValueError("merged_df must be a pandas DataFrame")
             las_content = export_merged_las(merged_df, well_info)
+            if provenance:
+                las_content = _las_with_provenance(las_content, provenance)
             with _atomic_target(file_path) as temporary_path:
                 with open(temporary_path, "w", encoding="utf-8") as handle:
                     handle.write(las_content)
@@ -421,6 +610,7 @@ class ExportService(QObject):
             frame = combined_results(wells)
             with _atomic_target(file_path) as temporary_path:
                 spreadsheet_safe(frame, csv=True).to_csv(temporary_path, index=False)
+            _write_sidecar(file_path, [provenance_block(ds) for ds in wells_with_results(wells)])
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -460,7 +650,8 @@ class ExportService(QObject):
             os.makedirs(directory, exist_ok=True)
             names = unique_names([well_label(ds) for ds in ready])
             for ds, name in zip(ready, names):
-                las_content = export_merged_las(las_frame(ds), ds.well_info)
+                las_content = _las_with_provenance(
+                    export_merged_las(las_frame(ds), ds.well_info), provenance_block(ds))
                 with _atomic_target(os.path.join(directory, f"{name}.las")) as tmp:
                     with open(tmp, "w", encoding="utf-8") as handle:
                         handle.write(las_content)
@@ -482,11 +673,14 @@ class ExportService(QObject):
         spreadsheet_safe(results, csv=True).to_csv(buffer, index=False)
         return buffer.getvalue()
 
-    def get_excel_bytes(self, results: pd.DataFrame, summary: dict) -> bytes:
+    def get_excel_bytes(self, results: pd.DataFrame, summary: dict,
+                        provenance: dict = None) -> bytes:
         """Get Excel data as bytes using the same summary schema as file export."""
         _validate_results(results)
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             _write_excel_sheet(writer, results, "Results")
             _write_excel_sheet(writer, _summary_frame(summary), "Summary")
+            if provenance:
+                _write_excel_sheet(writer, _provenance_frame(provenance), PROVENANCE_SHEET)
         return buffer.getvalue()

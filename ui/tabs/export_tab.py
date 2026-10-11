@@ -21,7 +21,14 @@ from PyQt6.QtCore import Qt, pyqtSignal
 import pandas as pd
 from ..widgets.table_model import PandasTableModel
 from themes.icon_loader import get_icon
-from services.export_service import ExportService, default_file_stem, las_frame, wells_with_results
+from themes.helpers import set_status
+from services.export_service import (
+    ExportService, FIELD_TOTAL_RULE, blockers_text, default_file_stem, export_blockers,
+    las_frame, provenance_block, well_label, wells_with_results,
+)
+
+# Answers of the freshness confirmation.
+CONFIRM_RUN, CONFIRM_EXPORT, CONFIRM_CANCEL = "run", "export", "cancel"
 
 SCOPE_ACTIVE = "Active well"
 SCOPE_ALL = "All wells"
@@ -33,6 +40,7 @@ class ExportTab(QWidget):
     export_csv = pyqtSignal(str)  # file path
     export_excel = pyqtSignal(str)  # file path
     export_succeeded = pyqtSignal(str)  # message for the banner
+    run_wells_requested = pyqtSignal(list)  # keys of the out-of-date wells to run first
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -87,6 +95,11 @@ class ExportTab(QWidget):
         # =====================================================================
         preview_group = QGroupBox("Results Preview")
         preview_layout = QVBoxLayout(preview_group)
+
+        # Freshness of the wells in the export scope
+        self.status_line = QLabel("")
+        self.status_line.setWordWrap(True)
+        preview_layout.addWidget(self.status_line)
 
         # Filter controls
         filter_layout = QHBoxLayout()
@@ -189,6 +202,68 @@ class ExportTab(QWidget):
             enabled = bool(self.model.calculated and self.model.results is not None)
         for button in self.buttons:
             button.setEnabled(enabled)
+        self._update_status_line(enabled)
+
+    def _scope_wells(self) -> list:
+        project = self.model.project
+        if self.export_scope() == "all":
+            return list(project.wells)
+        return [project.active] if project.active is not None else []
+
+    def _update_status_line(self, enabled: bool):
+        """Say whether the wells in scope are current (set_status colours it)."""
+        if not enabled:
+            self.status_line.setText("")
+            set_status(self.status_line, None)
+            return
+        text = blockers_text(export_blockers(self._scope_wells()))
+        if text:
+            self.status_line.setText(text)
+            set_status(self.status_line, "warning")
+        else:
+            self.status_line.setText("Ready — results current")
+            set_status(self.status_line, "success")
+
+    # ---- freshness confirmation ----
+    def _confirm_export(self, blockers: dict) -> str:
+        """Ask what to do about out-of-date or failed wells (a confirmation, so a modal).
+
+        Returns ``CONFIRM_RUN``, ``CONFIRM_EXPORT`` or ``CONFIRM_CANCEL``.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Results are not current")
+        box.setText(blockers_text(blockers, with_ready=True))
+        notes = [FIELD_TOTAL_RULE]
+        left_out = [well_label(ds) for ds in blockers["failed_no_results"]]
+        if left_out:
+            notes.append("Not exported (latest run failed, no earlier results): "
+                         + ", ".join(left_out) + ".")
+        box.setInformativeText(" ".join(notes))
+        run_btn = None
+        if blockers["out_of_date"]:
+            run_btn = box.addButton("Run out-of-date wells",
+                                    QMessageBox.ButtonRole.AcceptRole)
+        export_btn = box.addButton("Export last successful results",
+                                   QMessageBox.ButtonRole.ActionRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if run_btn is not None and clicked is run_btn:
+            return CONFIRM_RUN
+        if clicked is export_btn:
+            return CONFIRM_EXPORT
+        return CONFIRM_CANCEL
+
+    def _proceed(self) -> bool:
+        """True when the export may go ahead; asks first if a well is stale or failed."""
+        blockers = export_blockers(self._scope_wells())
+        if not (blockers["out_of_date"] or blockers["failed"] or blockers["failed_no_results"]):
+            return True
+        answer = self._confirm_export(blockers)
+        if answer == CONFIRM_RUN:
+            self.run_wells_requested.emit([ds.key for ds in blockers["out_of_date"]])
+        return answer == CONFIRM_EXPORT
 
     def _stem(self, prefix: str = "petrophyter_results") -> str:
         project = self.model.project
@@ -197,6 +272,8 @@ class ExportTab(QWidget):
 
     def _on_export_csv(self):
         """Handle CSV export."""
+        if not self._proceed():
+            return
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save CSV",
@@ -207,11 +284,14 @@ class ExportTab(QWidget):
             return
         if self.export_scope() == "all":
             self._service.export_csv_wells(self.model.project.wells, file_path)
-        else:
-            self.export_csv.emit(file_path)
+        elif self.model.calculated and self.model.results is not None:
+            self._service.export_csv(self.model.results, file_path,
+                                     provenance_block(self.model.project.active))
 
     def _on_export_excel(self):
         """Handle Excel export."""
+        if not self._proceed():
+            return
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Excel",
@@ -222,11 +302,15 @@ class ExportTab(QWidget):
             return
         if self.export_scope() == "all":
             self._service.export_excel_wells(self.model.project.wells, file_path)
-        else:
-            self.export_excel.emit(file_path)
+        elif (self.model.calculated and self.model.results is not None
+              and self.model.summary is not None):
+            self._service.export_excel(self.model.results, self.model.summary, file_path,
+                                       provenance_block(self.model.project.active))
 
     def _on_export_las(self):
         """Handle LAS export: one file (active well) or a folder of files (all wells)."""
+        if not self._proceed():
+            return
         project = self.model.project
         if self.export_scope() == "all":
             directory = QFileDialog.getExistingDirectory(self, "Choose Folder for LAS Files")
@@ -243,7 +327,8 @@ class ExportTab(QWidget):
             "LAS Files (*.las);;All Files (*)",
         )
         if file_path:
-            self._service.export_las(las_frame(ds), ds.well_info, file_path)
+            self._service.export_las(las_frame(ds), ds.well_info, file_path,
+                                     provenance_block(ds))
 
     def update_display(self):
         """Update display with analysis results."""

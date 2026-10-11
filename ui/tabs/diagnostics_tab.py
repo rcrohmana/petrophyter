@@ -106,9 +106,13 @@ class DiagnosticsTab(QWidget):
         # Current values
         current_frame = QFrame()
         current_layout = QVBoxLayout(current_frame)
-        current_layout.addWidget(QLabel("<b>Current Values (Used):</b>"))
+        current_layout.addWidget(QLabel("<b>Used in last run:</b>"))
         self.shale_current_label = QLabel("-")
         current_layout.addWidget(self.shale_current_label)
+        self.shale_hint = QLabel("")
+        set_status(self.shale_hint, "muted")
+        current_layout.addWidget(self.shale_hint)
+        self.model.project.well_updated.connect(self._update_shale_hint)
         shale_layout.addWidget(current_frame)
 
         # Statistical values
@@ -353,16 +357,24 @@ class DiagnosticsTab(QWidget):
         # =====================================================================
         # SHALE PARAMETERS
         # =====================================================================
-        rho_shale = self.model.rho_shale
-        nphi_shale = self.model.nphi_shale
-        dt_shale = self.model.dt_shale
-        method = self.model.shale_method_used
+        # The run's snapshot (summary["param_sources"]), not the live settings.
+        snapshot = ((summary or {}).get("param_sources") or {}).get("(well)") or {}
+
+        def used(name, live):
+            value = (snapshot.get(name) or {}).get("value")
+            return float(value) if value is not None else live
+
+        rho_shale = used("rho_shale", self.model.rho_shale)
+        nphi_shale = used("nphi_shale", self.model.nphi_shale)
+        dt_shale = used("dt_shale", self.model.dt_shale)
+        method = (snapshot.get("rho_shale") or {}).get("source") or self.model.shale_method_used
+        self._update_shale_hint()
 
         self.shale_current_label.setText(
             f"ρ shale: {rho_shale:.2f} g/cc\n"
             f"NPHI shale: {nphi_shale:.2f}\n"
             f"DT shale: {dt_shale:.1f} µs/ft\n"
-            f"Method: {method}"
+            f"Source: {method}"
         )
 
         # Get statistical values from calculated_shale
@@ -1048,11 +1060,18 @@ class DiagnosticsTab(QWidget):
         self._show_run_issues(issues, has_run=has_run)
         self._scroll.verticalScrollBar().setValue(0)
 
+    def _update_shale_hint(self, *_):
+        """Muted hint when the current settings differ from the last run."""
+        active = self.model.project.active
+        stale = bool(self.model.calculated and active is not None and active.stale)
+        self.shale_hint.setText("Current settings differ — Run to update" if stale else "")
+
     def reset_ui(self):
         """Reset UI to fresh state for New Project."""
         self._show_run_issues([], has_run=False)
         # Reset shale parameters section
         self.shale_current_label.setText("-")
+        self.shale_hint.setText("")
         self.shale_stat_label.setText("-")
         self.shale_dev_label.setText("-")
         self.shale_warnings.setText("")

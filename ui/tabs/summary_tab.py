@@ -27,12 +27,20 @@ from services.export_service import (
     FIELD_TOTAL_LABEL, WELL_COLUMNS, wells_summary_frame, well_label,
 )
 from modules.pipeline import zone_diagnostic_note
+from services.issues import collect_issues, issue_counts
+from themes.helpers import set_status
 from themes.colors import get_color, get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
 
 ZONE_TABLE_COLUMNS = [
     "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw",
     "HCPV", "a", "m", "n", "Rw", "Cutoffs (Vsh/Phi/Sw)",
 ]
+WELL_TABLE_COLUMNS = WELL_COLUMNS + ["Issues"]
+CUTOFF_PARAMS = (
+    ("vsh_cutoff", "Vsh cutoff"), ("phi_cutoff", "PHIE cutoff"), ("sw_cutoff", "Sw cutoff"),
+)
+HINT_NO_RUN = "Run to see the parameters used"
+HINT_STALE = "Current settings differ — Run to update"
 _MAX_TABLE_ROWS = 10
 STATE_ROLE = Qt.ItemDataRole.UserRole + 1     # "warning" | "info" on a zone row
 _STATE_COLORS = {"warning": "warning", "info": "text_muted"}
@@ -52,6 +60,14 @@ def _fmt(value, digits=1, percent=False) -> str:
 
 def _entry_value(params: dict, name: str):
     return (params.get(name) or {}).get("value")
+
+
+def _as_float(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
 
 
 class _AnnotatedTableModel(PandasTableModel):
@@ -95,6 +111,16 @@ def _fit_table(table: QTableView, rows: int):
     shown = min(max(rows, 1), _MAX_TABLE_ROWS)
     header = table.horizontalHeader().height() or 28
     table.setFixedHeight(header + shown * table.verticalHeader().defaultSectionSize() + 6)
+
+
+def _issues_cell(ds) -> str:
+    """Warning count of the well's last run, or the error text of a failed well."""
+    if ds.status == "error":
+        return " ".join(str(ds.error).split())[:80]
+    warnings = issue_counts(collect_issues(ds))["warning"]
+    if not warnings:
+        return ""
+    return f"{warnings} warning" if warnings == 1 else f"{warnings} warnings"
 
 
 def _make_table() -> tuple:
@@ -202,17 +228,23 @@ class SummaryTab(QWidget):
         # =====================================================================
         # CUTOFF PARAMETERS
         # =====================================================================
-        cutoff_group = QGroupBox("Cutoff Parameters Used")
-        cutoff_layout = QHBoxLayout(cutoff_group)
+        cutoff_group = QGroupBox("Used in last run")
+        cutoff_box = QVBoxLayout(cutoff_group)
+        cutoff_layout = QHBoxLayout()
 
-        self.vsh_cutoff_label = QLabel("Vsh cutoff: -")
-        self.phi_cutoff_label = QLabel("PHIE cutoff: -")
-        self.sw_cutoff_label = QLabel("Sw cutoff: -")
+        self.vsh_cutoff_label = QLabel("Vsh cutoff: —")
+        self.phi_cutoff_label = QLabel("PHIE cutoff: —")
+        self.sw_cutoff_label = QLabel("Sw cutoff: —")
 
         cutoff_layout.addWidget(self.vsh_cutoff_label)
         cutoff_layout.addWidget(self.phi_cutoff_label)
         cutoff_layout.addWidget(self.sw_cutoff_label)
         cutoff_layout.addStretch()
+        cutoff_box.addLayout(cutoff_layout)
+
+        self.cutoff_hint = QLabel(HINT_NO_RUN)
+        set_status(self.cutoff_hint, "muted")
+        cutoff_box.addWidget(self.cutoff_hint)
 
         content_layout.addWidget(cutoff_group)
 
@@ -256,8 +288,34 @@ class SummaryTab(QWidget):
 
     # ---- zones and multi-well tables ----
     def _refresh_multi(self):
+        self._update_cutoffs()
         self._update_zones()
         self._update_wells()
+
+    def _update_cutoffs(self):
+        """Cutoffs of the last run (the run's snapshot, never the live settings)."""
+        labels = (self.vsh_cutoff_label, self.phi_cutoff_label, self.sw_cutoff_label)
+        summary = self.model.summary if self.model.calculated else None
+        sources = (summary or {}).get("param_sources") or {}
+        if not sources:
+            for label, (_key, text) in zip(labels, CUTOFF_PARAMS):
+                label.setText(f"{text}: —")
+            self.cutoff_hint.setText(HINT_NO_RUN)
+            return
+        well = sources.get("(well)") or {}
+        zones = [t for name, t in sources.items() if name not in ("(well)", "temperature")]
+        for label, (key, text) in zip(labels, CUTOFF_PARAMS):
+            value = _as_float(_entry_value(well, key))
+            zone_values = [v for v in (_as_float(_entry_value(t, key)) for t in zones)
+                           if v is not None]
+            reference = value if value is not None else (zone_values or [None])[0]
+            if reference is not None and any(abs(v - reference) > 1e-12 for v in zone_values):
+                span = f"{min(zone_values):.2f}–{max(zone_values):.2f}"
+                label.setText(f"{text}: varies by zone ({span})")
+            else:
+                label.setText(f"{text}: {value:.2f}" if value is not None else f"{text}: —")
+        active = self.model.project.active
+        self.cutoff_hint.setText(HINT_STALE if active is not None and active.stale else "")
 
     def _update_zones(self):
         summary = self.model.summary if self.model.calculated else None
@@ -318,7 +376,7 @@ class SummaryTab(QWidget):
         self.wells_group.setVisible(len(wells) >= 2)
         self._row_keys = []
         if len(wells) < 2:
-            self.wells_model.set_table(pd.DataFrame(columns=WELL_COLUMNS))
+            self.wells_model.set_table(pd.DataFrame(columns=WELL_TABLE_COLUMNS))
             return
         frame = wells_summary_frame(wells)
         show_zones = self.wells_zone_check.isChecked()
@@ -332,14 +390,16 @@ class SummaryTab(QWidget):
                 _fmt(line["Avg Sw"], 1, True), _fmt(line["HCPV"], 4),
                 _fmt(line["Rw"], 4), line["Rw source"], _fmt(line["Rsh"], 2),
                 line["Rsh source"], _fmt(line["QC score"], 0),
+                "" if ds is None else _issues_cell(ds),
             ])
             keys.append(ds.key if ds is not None else None)
             if is_total:
                 bold_rows.add(len(rows) - 1)
                 tooltips[(len(rows) - 1, 0)] = (
-                    "Gross, Net and HCPV are summed over wells with results; "
-                    "N/G = total Net / total Gross; Avg PHIE and Avg Sw are "
-                    "weighted by each well's net pay thickness.")
+                    "Gross, Net and HCPV are summed over wells whose results are "
+                    "current or out of date; wells whose latest run failed are "
+                    "left out. N/G = total Net / total Gross; Avg PHIE and Avg Sw "
+                    "are weighted by each well's net pay thickness.")
             elif ds is not None and ds.stale:
                 tooltips[(len(rows) - 1, 1)] = "Results are out of date; re-run the analysis."
             elif ds is not None and ds.error:
@@ -356,12 +416,12 @@ class SummaryTab(QWidget):
                         _fmt(_entry_value(params, "rw"), 4),
                         str((params.get("rw") or {}).get("source", "")),
                         _fmt(_entry_value(params, "rsh"), 2),
-                        str((params.get("rsh") or {}).get("source", "")), "",
+                        str((params.get("rsh") or {}).get("source", "")), "", "",
                     ])
                     keys.append(ds.key)
         self._row_keys = keys
         self.wells_model.set_table(
-            pd.DataFrame(rows, columns=WELL_COLUMNS), tooltips, bold_rows)
+            pd.DataFrame(rows, columns=WELL_TABLE_COLUMNS), tooltips, bold_rows)
         _fit_table(self.wells_table, len(rows))
 
     def _on_well_row_clicked(self, index):
@@ -439,11 +499,6 @@ class SummaryTab(QWidget):
         # Update bar chart
         self._update_bar_chart(summary)
 
-        # Update cutoff labels
-        self.vsh_cutoff_label.setText(f"Vsh cutoff: {self.model.vsh_cutoff:.2f}")
-        self.phi_cutoff_label.setText(f"PHIE cutoff: {self.model.phi_cutoff:.2f}")
-        self.sw_cutoff_label.setText(f"Sw cutoff: {self.model.sw_cutoff:.2f}")
-
         self._refresh_multi()
 
     def _update_bar_chart(self, summary: dict):
@@ -520,11 +575,6 @@ class SummaryTab(QWidget):
 
         # Clear bar chart
         self.bar_chart.clear()
-
-        # Reset cutoff labels
-        self.vsh_cutoff_label.setText("Vsh cutoff: -")
-        self.phi_cutoff_label.setText("PHIE cutoff: -")
-        self.sw_cutoff_label.setText("Sw cutoff: -")
 
         self._refresh_multi()
 

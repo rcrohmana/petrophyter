@@ -54,7 +54,7 @@ def test_single_well_excel_has_no_formula_cells(tmp_path):
     assert wb["Results"]["D1"].value == "=BAD_CURVE"
     assert wb["Results"]["D2"].value == "=1+1"
     assert wb["Results"]["B2"].value == -2.5
-    values = {r[0].value: r[1].value for r in wb["Summary"].iter_rows(min_row=2)}
+    values = {r[0].value: r[2].value for r in wb["Summary"].iter_rows(min_row=2)}
     assert values["well"] == "=1+1"
     assert values["neg"] == -2.5
 
