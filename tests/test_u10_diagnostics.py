@@ -70,10 +70,10 @@ def test_rows_per_model_and_zone_with_thresholds():
     assert [r[:3] for r in rows] == [
         ["Archie", "UPPER", "100"], ["Archie", "LOWER", "100"], ["Waxman-Smits", "UPPER", "50"]]
     col = SW_CHECK_COLUMNS.index
-    assert (0, col("At upper bound")) in warn            # 11 > 10 % of 100
+    assert (0, col("Sw > 1.05")) in warn            # 11 > 10 % of 100
     assert (0, col("PHIE > PHIT")) in warn               # 6 > 5 % of 100
     assert (0, col("BVH capped")) not in warn            # 5 is not above 5 %
-    assert (1, col("At upper bound")) not in warn
+    assert (1, col("Sw > 1.05")) not in warn
     assert (1, col("No porosity")) not in warn           # a count, no threshold
     assert (2, col("No root")) in warn
     assert rows[0][col("No root")] == "-"                # not a solver model
@@ -106,11 +106,11 @@ def test_tab_table_warning_state_and_empty_state(qtbot):
     assert m.rowCount() == 2
     assert _cell(m, 0, "Model").data(DISPLAY) == "Dual-Water"
     assert _cell(m, 0, "Zone").data(DISPLAY) == zones[0]
-    assert _cell(m, 0, "At upper bound").data(CHECK_STATE_ROLE) == "warning"
+    assert _cell(m, 0, "Sw > 1.05").data(CHECK_STATE_ROLE) == "warning"
     assert _cell(m, 0, "Failed").data(CHECK_STATE_ROLE) == "warning"
     assert _cell(m, 0, "Samples").data(CHECK_STATE_ROLE) is None
-    assert _cell(m, 1, "At upper bound").data(CHECK_STATE_ROLE) is None
-    assert _cell(m, 0, "At upper bound").data(Qt.ItemDataRole.ForegroundRole) is not None
+    assert _cell(m, 1, "Sw > 1.05").data(CHECK_STATE_ROLE) is None
+    assert _cell(m, 0, "Sw > 1.05").data(Qt.ItemDataRole.ForegroundRole) is not None
 
     tab.reset_ui()
     assert m.rowCount() == 0 and not tab.sw_checks_group.isVisibleTo(tab)
@@ -179,3 +179,26 @@ def test_real_run_fills_the_table(qtbot):
     assert names and names <= {"Archie", "Indonesian", "Simandoux", "Waxman-Smits", "Dual-Water"}
     assert tab.sw_checks_model.index(0, 1).data(DISPLAY) == "Whole well"
     assert tab.sw_checks_model.index(0, 2).data(DISPLAY) == str(len(ds.results))
+
+
+def test_every_table_scrolls_sideways_instead_of_squeezing(qtbot):
+    from PyQt6.QtWidgets import QHeaderView, QTableView
+
+    model, ds = _model()
+    tab = DiagnosticsTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    tables = tab.findChildren(QTableView)
+    assert len(tables) == 7
+    for table in tables:
+        header = table.horizontalHeader()
+        assert not header.stretchLastSection(), table.objectName()
+        assert table.horizontalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        for col in range(header.count()):
+            assert header.sectionResizeMode(col) == QHeaderView.ResizeMode.ResizeToContents
+
+    table = tab.sw_checks_table
+    table.resize(200, 300)
+    table.show()
+    qtbot.waitExposed(table)
+    assert table.horizontalScrollBar().maximum() > 0     # the numbers are reachable by scrolling

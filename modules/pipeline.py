@@ -682,7 +682,7 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
     ``SW_DIAGNOSTIC_KEYS``; ``no_root`` and ``failed`` are the solver counts of
     Waxman-Smits and Dual-Water. Appends a warning to ``warnings`` per model and
     zone where more than 5 % of the samples have inconsistent porosities or more
-    than 10 % of the clean samples sit at the upper Sw bound (Sw > 1 before clipping).
+    than 10 % of the clean samples sit at the upper Sw bound (Sw > 1.05 before clipping).
     """
     frames = {}
     for calc in calcs:
@@ -731,7 +731,7 @@ def _sw_solver_diagnostics(calcs, labels, index, vsh, vsh_cutoffs, default_cutof
             if n_clean and n_upper > UPPER_BOUND_SHARE * n_clean:
                 warnings.add(
                     "SW_AT_BOUND",
-                    f"{name}{where}: Sw > 1 before clipping in {n_upper} clean samples: "
+                    f"{name}{where}: Sw > 1.05 before clipping in {n_upper} clean samples: "
                     "check Rw, m, n or Rt.",
                     zone=zone,
                 )

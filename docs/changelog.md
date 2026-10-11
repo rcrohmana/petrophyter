@@ -30,8 +30,8 @@ sessions from 1.7.1 and older show a notice and every well is out of date until 
 - Settings for the corrections: D-N combination, gas Crossover min and Gas Vsh max (per well and zone),
   Primary Vsh. Calculate Rw/Rsh shows its sample counts and warnings; the Permeability page shows the result's
   source, calibration notes and the Swirr mismatch warning while keeping Apply; temperature readout warns.
-- Diagnostics: Sw Solver and Porosity Checks per model and zone, Swirr method used and its limits, zones
-  without shale.
+- Diagnostics: Sw Solver and Porosity Checks per model and zone (Sw above 1.05 before clipping is
+  counted), Swirr method used and its limits, zones without shale; tables scroll sideways.
 - Run issues carry codes, severities and field targets; counts below their limit are notes, so a normal run
   is a success banner.
 
@@ -42,7 +42,7 @@ sessions from 1.7.1 and older show a notice and every well is out of date until 
 
 ### Quality
 
-- Hand-worked formula values and Hypothesis property tests; 1320 tests.
+- Hand-worked formula values and Hypothesis property tests; 1322 tests.
 
 ## v1.7.1 (Build 20261011)
 

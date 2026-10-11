@@ -19,13 +19,6 @@
    "zone": null
   },
   {
-   "code": "SW_AT_BOUND",
-   "severity": "warning",
-   "target": "diagnostics",
-   "text": "Archie: Sw > 1 before clipping in 9 clean samples: check Rw, m, n or Rt.",
-   "zone": null
-  },
-  {
    "code": "BVH_CAPPED",
    "severity": "warning",
    "target": "diagnostics",
@@ -197,7 +190,7 @@
  "solver_diagnostics": {
   "SW_ARCHIE": {
    "at_lower_bound": 0,
-   "at_upper_bound": 9,
+   "at_upper_bound": 4,
    "bvh_exceeds_phie": 0,
    "failed": 0,
    "no_phit": 0,
@@ -238,7 +231,6 @@
  "swirr_method": "Buckles Number",
  "warnings": [
   "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
-  "Archie: Sw > 1 before clipping in 9 clean samples: check Rw, m, n or Rt.",
   "Waxman-Smits: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 27 of 60 samples. Check that PHIE and PHIT come from the same inputs.",
   "Dual-Water: the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 23 of 60 samples. Check that PHIE and PHIT come from the same inputs."
  ],

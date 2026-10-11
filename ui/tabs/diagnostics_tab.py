@@ -39,9 +39,18 @@ from themes.icon_loader import get_icon
 logger = logging.getLogger(__name__)
 
 
+def make_scrollable(table):
+    """Columns sized to their contents, with a horizontal scroll bar when they do not fit."""
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setHorizontalScrollMode(QTableView.ScrollMode.ScrollPerPixel)
+
+
 CHECK_STATE_ROLE = Qt.ItemDataRole.UserRole + 1   # "warning" on a cell above its threshold
 SW_CHECK_COLUMNS = [
-    "Model", "Zone", "Samples", "No porosity", "At upper bound", "At lower bound",
+    "Model", "Zone", "Samples", "No porosity", "Sw > 1.05", "At lower bound",
     "BVH capped", "PHIE > PHIT", "No root", "Failed",
 ]
 # column -> (summary key, share of the zone's samples above which the cell is a warning)
@@ -54,7 +63,8 @@ _CHECK_KEYS = {
 }
 _SOLVER_MODELS = ("SW_WS", "SW_DW")
 _CHECK_TIPS = {
-    4: "Warning above 10 % of the zone's samples (the run warning counts clean samples only)",
+    4: "Sw above 1.05 before clipping. Warning above 10 % of the zone's samples "
+       "(the run warning counts clean samples only)",
     6: "Warning above 5 % of the zone's samples: PHIT-based hydrocarbon volume limited to PHIE",
     7: "Warning above 5 % of the zone's samples: effective porosity above total porosity",
 }
@@ -286,7 +296,7 @@ class DiagnosticsTab(QWidget):
         self.phie_stats_model = SelectedMethodTableModel()
         self.phie_stats_table.setModel(self.phie_stats_model)
         self.phie_stats_table.setMaximumWidth(300)
-        self._phie_stats_header = self.phie_stats_table.horizontalHeader()
+        make_scrollable(self.phie_stats_table)
         plot_stats_layout.addWidget(self.phie_stats_table, stretch=1)
 
         por_layout.addLayout(plot_stats_layout)
@@ -311,6 +321,7 @@ class DiagnosticsTab(QWidget):
         self.sw_stats_model = PandasTableModel()
         self.sw_stats_table.setModel(self.sw_stats_model)
         self.sw_stats_table.setMaximumWidth(300)
+        make_scrollable(self.sw_stats_table)
         sw_layout.addWidget(self.sw_stats_table, stretch=1)
 
         content_layout.addWidget(sw_group)
@@ -328,8 +339,8 @@ class DiagnosticsTab(QWidget):
         self.sw_checks_table = QTableView()
         self.sw_checks_model = SwChecksTableModel()
         self.sw_checks_table.setModel(self.sw_checks_model)
-        self.sw_checks_table.setMinimumHeight(160)
-        self.sw_checks_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.sw_checks_table.setMinimumHeight(260)
+        make_scrollable(self.sw_checks_table)
         sw_checks_layout.addWidget(self.sw_checks_table)
         self.swirr_summary = QLabel("")
         self.swirr_summary.setWordWrap(True)
@@ -338,7 +349,7 @@ class DiagnosticsTab(QWidget):
         self.zone_notes_model = PandasTableModel()
         self.zone_notes_table.setModel(self.zone_notes_model)
         self.zone_notes_table.setMaximumHeight(120)
-        self.zone_notes_table.horizontalHeader().setStretchLastSection(True)
+        make_scrollable(self.zone_notes_table)
         sw_checks_layout.addWidget(self.zone_notes_table)
         self.sw_checks_group.setVisible(False)
         content_layout.addWidget(self.sw_checks_group)
@@ -357,6 +368,7 @@ class DiagnosticsTab(QWidget):
         self.perm_stats_model = PandasTableModel()
         self.perm_stats_table.setModel(self.perm_stats_model)
         self.perm_stats_table.setMaximumWidth(300)
+        make_scrollable(self.perm_stats_table)
         perm_layout.addWidget(self.perm_stats_table, stretch=1)
 
         content_layout.addWidget(perm_group)
@@ -410,6 +422,7 @@ class DiagnosticsTab(QWidget):
         self.core_por_stats_model = PandasTableModel()
         self.core_por_stats.setModel(self.core_por_stats_model)
         self.core_por_stats.setMaximumWidth(280)
+        make_scrollable(self.core_por_stats)
         por_valid_layout.addWidget(self.core_por_stats, stretch=1)
 
         core_layout.addLayout(por_valid_layout)
@@ -425,6 +438,7 @@ class DiagnosticsTab(QWidget):
         self.core_perm_stats_model = PandasTableModel()
         self.core_perm_stats.setModel(self.core_perm_stats_model)
         self.core_perm_stats.setMaximumWidth(280)
+        make_scrollable(self.core_perm_stats)
         perm_valid_layout.addWidget(self.core_perm_stats, stretch=1)
 
         core_layout.addLayout(perm_valid_layout)
@@ -1156,9 +1170,6 @@ class DiagnosticsTab(QWidget):
             )
         self.phie_stats_model.set_dataframe(pd.DataFrame(stats_data))
         self.phie_stats_model.set_selected_row(selected_row)
-        header = self._phie_stats_header
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
         # Update warnings
         warnings = []

@@ -192,6 +192,9 @@ def pay_summary(gross_flag, res_flag, pay_flag, vsh, phie, sw, dz) -> Dict[str, 
 
 # A porosity at or below this holds no hydrocarbon: every Sw model returns 1.0.
 SW_MIN_POROSITY = 0.001
+# Sw above this before clipping is counted at the upper bound; a water leg scatters
+# a little above 1, so 1.0 itself would flag half of every water zone.
+SW_UPPER_TOLERANCE = 1.05
 
 
 def _effective_sw_detail(swt, phit, phie):
@@ -1168,14 +1171,15 @@ class PetrophysicsCalculator:
     def _finish_sw(self, key, raw, solve, no_porosity, upper=None, lower=None, extra=None):
         """Clip ``raw`` Sw to [0, 1], apply the validity rule, and record the bound counts.
 
-        ``upper``/``lower`` default to the samples whose unclipped Sw is at or
-        beyond 1 / 0; solver models pass their own masks (bracket fallbacks).
+        ``upper``/``lower`` default to the samples whose unclipped Sw is above
+        ``SW_UPPER_TOLERANCE`` / at or below 0; solver models pass their own masks
+        (bracket fallbacks).
         ``extra`` adds more per-sample flag columns to ``self.sw_flags[key]``.
         """
         raw = np.asarray(raw, dtype=float)
         with np.errstate(invalid="ignore"):
             if upper is None:
-                upper = solve & (raw >= 1.0)
+                upper = solve & (raw > SW_UPPER_TOLERANCE)
             if lower is None:
                 lower = solve & (raw <= 0.0)
         sw = np.where(solve, np.clip(raw, 0.0, 1.0), np.nan)
@@ -1543,7 +1547,8 @@ class PetrophysicsCalculator:
             swt_arr[solve] = solved
             no_root[solve] = ~bracketed
             failed_all[solve] = failed
-            upper[solve] = ~bracketed & fallback_up
+            beyond = ws_func(np.full(f_star.shape, SW_UPPER_TOLERANCE)) < 0
+            upper[solve] = ~bracketed & fallback_up & beyond
             lower[solve] = ~bracketed & ~fallback_up
         swt_arr[no_phi] = 1.0
 
@@ -1662,7 +1667,8 @@ class PetrophysicsCalculator:
             swt_arr[solve] = solved
             no_root[solve] = ~bracketed
             failed_all[solve] = failed
-            upper[solve] = ~bracketed & fallback_up
+            beyond = dw_func(np.full(f_t.shape, SW_UPPER_TOLERANCE)) < 0
+            upper[solve] = ~bracketed & fallback_up & beyond
             lower[solve] = ~bracketed & ~fallback_up
         swt_arr[no_phi] = 1.0
 

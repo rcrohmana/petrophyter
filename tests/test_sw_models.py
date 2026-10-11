@@ -305,6 +305,15 @@ class TestBoundCounts:
         assert flags["at_upper_bound"].tolist() == [True, False, False]
         assert flags["at_lower_bound"].sum() == 0
 
+    def test_water_leg_scatter_up_to_the_tolerance_is_not_counted(self):
+        # Archie a=0.62 m=2.15 n=2 Rw=0.05 at PHIE 0.2: Sw = 1 at Rt ~ 0.99 ohm.m;
+        # Rt 0.95 gives Sw ~ 1.02 (scatter, not counted), Rt 0.80 gives Sw ~ 1.11.
+        calc =PetrophysicsCalculator(pd.DataFrame({"RT": [0.95, 0.80]}))
+        sw = calc.calculate_sw_archie("RT", pd.Series([0.2, 0.2]))
+        assert sw.tolist() == [1.0, 1.0]
+        flags = calc.sw_flags["SW_ARCHIE"]
+        assert flags["at_upper_bound"].tolist() == [False, True]
+
     def test_solver_fallbacks_are_counted_as_bounds(self):
         # Very low RT: conductivity above the model at Sw 1; very high RT: below it at the lower end.
         calc = PetrophysicsCalculator(pd.DataFrame({"RT": [1e-3, 1e9, 20.0]}))
@@ -330,7 +339,7 @@ class TestBoundCounts:
                   "vsh_baseline_method": "Custom (Manual)"}
         _, summary = run_pipeline(self._clean_well(0.5), _MAPPING, params)
         assert summary["solver_diagnostics"]["SW_ARCHIE"]["at_upper_bound"] == 20
-        assert "Archie: Sw > 1 before clipping in 20 clean samples: check Rw, m, n or Rt." \
+        assert "Archie: Sw > 1.05 before clipping in 20 clean samples: check Rw, m, n or Rt." \
             in summary["warnings"]
 
     def test_no_warning_for_a_hydrocarbon_well(self):

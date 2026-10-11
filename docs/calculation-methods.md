@@ -116,7 +116,7 @@ every limited sample is counted per model and per zone in `summary["solver_diagn
 
 | Count | Meaning |
 |---|---|
-| `at_upper_bound` | Sw above 1 before the limit (and the Waxman-Smits / Dual-Water solver's upper fallback) |
+| `at_upper_bound` | Sw above 1.05 before the limit (and the Waxman-Smits / Dual-Water solver's upper fallback with its root above 1.05); a water leg scatters a little above 1, so that scatter is not counted |
 | `at_lower_bound` | Sw below 0 (Dual-Water: below Swb) before the limit, and the solver's lower fallback |
 | `no_porosity` | porosity ≤ 0.001, Sw set to 1 |
 | `no_phit` | Waxman-Smits / Dual-Water sample with PHIE but no PHIT, left empty |
@@ -124,7 +124,7 @@ every limited sample is counted per model and per zone in `summary["solver_diagn
 | `no_root`, `failed` | solver counts of Waxman-Smits and Dual-Water |
 
 The run warns when more than 10 % of a zone's clean samples (Vsh below the Vsh cutoff) sit at the upper bound
-("Sw > 1 before clipping in N clean samples: check Rw, m, n or Rt"), and when more than 5 % of a zone's
+("Sw > 1.05 before clipping in N clean samples: check Rw, m, n or Rt"), and when more than 5 % of a zone's
 samples have inconsistent porosities. Smaller counts are listed as information. The Diagnostics tab shows the
 counts per model and zone.
 
