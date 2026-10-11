@@ -17,6 +17,16 @@ A format 2.1 session stores:
 - `active_key`: the active well;
 - `_app_version`: the Petrophyter version that saved the file *(v1.7.1)*.
 
+**Sessions from 1.7.1 and older** *(v1.7.2)*. Version 1.7.2 corrects several calculations (porosity,
+Dual-Water and Waxman-Smits Sw, auto Rw, pay thickness and averages; see the
+[v1.7.2 release notes](releases/v1.7.2.md)). A session saved by 1.7.1 or older, or without `_app_version`,
+loads with the new defaults and a note in the load banner: "Saved by Petrophyter 1.7.1. Calculations changed
+in 1.7.2 …; Run to see the corrected results." Results are never stored in a session, so every well is out of
+date until you run the analysis. The corrections are not options and there is no legacy mode; the only way
+back to a previous number is a setting such as **D-N combination: RMS**, which reproduces the old PHIT.
+The new parameters `dn_combination`, `gas_crossover_min`, `gas_vsh_max` and `vsh_primary_method` are saved with
+the other parameters; version 1.7.1 and older ignore them.
+
 **Merged wells** *(v1.7.1)*. Each merged well keeps its own merge step and gap limit, so a project with wells merged at different steps restores each one as it was merged. Sessions saved by v1.7.0 and older stored the last merge step of the project for every merged well; such wells are merged again under the v1.7.1 rules (no edge extrapolation, resistivity interpolated in log10) with that step, and a banner note names the step and the row count. If a merged well's row count looks wrong, import it again with **Merge LAS Files**.
 
 Loading a 2.0 or 2.1 session replaces the loaded wells: the LAS, tops, and core files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
@@ -27,7 +37,7 @@ When you load a session, each file is compared with its stored hash before the w
 
 - **Same hash.** The well loads as before.
 - **Changed.** The file is still read, and the banner says `a.las changed since the session was saved (hash differs); results will differ from the saved project`. The well needs a run, as every restored well does.
-- **Missing.** Petrophyter asks you to locate the file (`Locate a.las�`). Pick the file where it is now. A file with the same hash loads with no note; a different file loads with the *changed* note. **Cancel** skips the file, and the well is skipped with a note, as in earlier versions. The folder you pick is tried first, without asking, for the other missing files of the same session.
+- **Missing.** Petrophyter asks you to locate the file (`Locate a.las…`). Pick the file where it is now. A file with the same hash loads with no note; a different file loads with the *changed* note. **Cancel** skips the file, and the well is skipped with a note, as in earlier versions. The folder you pick is tried first, without asking, for the other missing files of the same session.
 
 A session saved by v1.7.0 or v1.7.1 has no hashes: it loads as before, with no note and no prompt.
 
