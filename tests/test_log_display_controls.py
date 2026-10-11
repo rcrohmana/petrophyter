@@ -190,3 +190,18 @@ def test_engine_combo_without_pyqtgraph_is_disabled_with_a_tooltip(qtbot, monkey
     qtbot.addWidget(widget)
     assert not widget.engine_combo.model().item(0).isEnabled()
     assert "pyqtgraph" in widget.engine_combo.toolTip()
+
+
+def test_engine_selector_sits_in_the_advanced_row(qtbot):
+    widget = LogDisplayTab(_model())
+    qtbot.addWidget(widget)
+    widget.show()
+    assert widget.advanced_row.isAncestorOf(widget.engine_combo)
+    assert not widget.engine_combo.isVisible()
+    assert "plot engine" in widget.advanced_btn.toolTip()
+    widget.advanced_btn.setChecked(True)
+    assert widget.engine_combo.isVisible()
+    widget.engine_combo.setCurrentIndex(1)
+    assert widget.engine_combo.currentText() in widget.advanced_btn.toolTip()
+    widget.advanced_btn.setChecked(False)
+    assert not widget.engine_combo.isVisible()

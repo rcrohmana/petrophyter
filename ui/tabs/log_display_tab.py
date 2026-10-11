@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QButtonGroup,
     QRadioButton,
+    QToolButton,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -58,8 +59,11 @@ class LogDisplayTab(QWidget):
         # =====================================================================
         controls_layout = QHBoxLayout()
 
-        # Engine selector
-        controls_layout.addWidget(QLabel("Plot Engine:"))
+        # Engine selector: an advanced option, in a row the Advanced button shows (U13)
+        self.advanced_row = QWidget()
+        advanced_layout = QHBoxLayout(self.advanced_row)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.addWidget(QLabel("Plot Engine:"))
         self.engine_combo = QComboBox()
 
         self.engine_combo.addItems(["Interactive (pyqtgraph)", "Classic (matplotlib)"])
@@ -75,9 +79,9 @@ class LogDisplayTab(QWidget):
             )
 
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
-        controls_layout.addWidget(self.engine_combo)
-
-        controls_layout.addSpacing(20)
+        advanced_layout.addWidget(self.engine_combo)
+        advanced_layout.addStretch()
+        self.advanced_row.setVisible(False)
 
         # Depth range controls
         controls_layout.addWidget(QLabel("Top Depth:"))
@@ -133,7 +137,16 @@ class LogDisplayTab(QWidget):
         controls_layout.addWidget(self.hcpv_mode_combo)
 
         controls_layout.addStretch()
+        self.advanced_btn = QToolButton()
+        self.advanced_btn.setText("Advanced")
+        self.advanced_btn.setCheckable(True)
+        self.advanced_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_btn.toggled.connect(self._on_advanced_toggled)
+        controls_layout.addWidget(self.advanced_btn)
         layout.addLayout(controls_layout)
+        layout.addWidget(self.advanced_row)
+        self._update_advanced_tip()
 
         # =====================================================================
         # STACKED PLOT AREA (interactive / classic) - FIXED HEIGHT
@@ -283,12 +296,23 @@ class LogDisplayTab(QWidget):
             self.xplot_bottom_spin.setValue(self.bottom_spin.value())
             self._update_crossplots()
 
+    def _on_advanced_toggled(self, shown: bool):
+        """Show or hide the advanced options row (plot engine)."""
+        self.advanced_row.setVisible(shown)
+        self.advanced_btn.setArrowType(
+            Qt.ArrowType.DownArrow if shown else Qt.ArrowType.RightArrow)
+
+    def _update_advanced_tip(self):
+        self.advanced_btn.setToolTip(
+            f"Advanced options · plot engine: {self.engine_combo.currentText()}")
+
     def _on_engine_changed(self, index: int):
         """Switch between interactive and classic plot engines."""
         if HAS_PYQTGRAPH:
             self.plot_stack.setCurrentIndex(index)
         else:
             self.plot_stack.setCurrentIndex(1)  # Always classic if no pyqtgraph
+        self._update_advanced_tip()
 
         # Refresh current view
         if self.model.calculated and self.model.results is not None:

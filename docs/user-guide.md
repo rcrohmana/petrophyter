@@ -298,7 +298,7 @@ Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated
 
 A six-track composite log with a shared depth axis. Controls above the log:
 
-- **Plot Engine:** **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
+- **Plot Engine** (under **Advanced** at the right of the controls; its tooltip names the engine in use): **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
 - **Top Depth** and **Bottom Depth:** the visible depth range.
 - **Show Formation Tops:** toggles the formation overlay in either engine; it is disabled, with a tooltip, when the well has no tops.
 - **Zone shading:** shades each zone in the log tracks.
@@ -389,7 +389,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 
 ## Troubleshooting
 
-- **Plot Engine shows Interactive (requires pyqtgraph) and it cannot be selected.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Plot Engine**.
+- **Plot Engine shows Interactive (requires pyqtgraph) and it cannot be selected.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Advanced → Plot Engine**.
 - **Run Analysis is greyed out.** Load a LAS file first. The action is also disabled while a run is in progress.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Run All Wells skips a well.** Its results are up to date. Use **Run Analysis** (`F5`) to rerun the active well anyway.
