@@ -36,6 +36,9 @@ class WellSnapshot:
     params: dict
     formation_tops: object = None
     params_hash: str = ""
+    # What the user had set (AppModel.param_state) and the tops, for Revert (U12).
+    state: Optional[dict] = field(default=None, repr=False, compare=False)
+    tops: Optional[list] = field(default=None, repr=False, compare=False)
     # The dataset the snapshot was taken from (identity check on delivery).
     dataset: object = field(default=None, repr=False, compare=False)
 
@@ -52,6 +55,8 @@ def snapshot_well(model, ds, params_hash: Optional[str] = None) -> WellSnapshot:
         params=params,
         formation_tops=ds.formation_tops,
         params_hash=params_hash if params_hash is not None else model.well_params_hash(ds),
+        state=model.param_state(ds),
+        tops=model.well_tops(ds),
         dataset=ds,
     )
 
@@ -294,6 +299,8 @@ class BatchRunner(QObject):
             return
         if deliver:
             self._report["ok"].append(key)
+            snap.dataset.last_run = {"params": snap.params, "state": snap.state,
+                                     "tops": snap.tops}
             self.well_completed.emit(key, results, summary, snap.params_hash)
         self._complete_one()
 

@@ -311,6 +311,7 @@ class MainWindow(QMainWindow):
         self.params_window.calculate_perm_clicked.connect(self._on_calculate_perm)
 
         self.params_window.parameters_updated.connect(self._on_parameters_updated)
+        self.params_window.revert_applied.connect(self._on_params_reverted)
         self.model.parameters_changed.connect(self._on_parameters_updated)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
 
@@ -712,6 +713,13 @@ class MainWindow(QMainWindow):
         if not self._restoring:
             self._recompute_stale([key] if key else None)
 
+    def _on_params_reverted(self, key: str):
+        """Revert to last run restored parameters: reload the well's controls (U12)."""
+        if key == self.model.project.active_key:
+            self._refresh_active_well_ui()
+        # Project values are shared, so any well's stale state may have changed.
+        self._recompute_stale()
+
     def _on_tops_or_core_changed(self, *_):
         active = self.model.project.active_key
         if active is not None and not self._restoring:
@@ -725,6 +733,10 @@ class MainWindow(QMainWindow):
         stale = bool(active is not None and active.calculated and active.stale)
         if stale:
             set_status(self.stale_label, "warning")
+            pw = getattr(self, "params_window", None)
+            lines = pw.change_lines() if pw is not None else []
+            self.stale_label.setToolTip(
+                "Changes since the last run:\n" + "\n".join(lines) if lines else "")
         self.stale_label.setVisible(stale)
         self.data_browser.set_results_stale(stale)
 

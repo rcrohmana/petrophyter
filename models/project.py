@@ -35,7 +35,7 @@ class WellDataset:
         "qc_report", "results", "summary", "merge_report", "calculated",
         "calculated_shale", "shale_method_used", "calculated_rw",
         "calculated_rsh", "calculated_C", "calculated_P", "calculated_Q",
-        "run_params_hash", "error", "run_time",
+        "run_params_hash", "error", "run_time", "last_run",
     )
 
     def __init__(self, key: str = "", display_name: str = ""):
@@ -106,6 +106,9 @@ class WellDataset:
         self.error = None
         # UTC ISO time of the last successful run (P0-UI/UX U3); not saved.
         self.run_time = None
+        # The last successful run's {"params", "state", "tops"} for the change summary
+        # and Revert (U12); not saved, so a loaded session has none.
+        self.last_run = None
         self.stale = False
 
     @property

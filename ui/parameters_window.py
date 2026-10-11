@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -64,6 +64,7 @@ class ParametersWindow(QDialog):
     calculate_shale_clicked = pyqtSignal()
     apply_shale_clicked = pyqtSignal()
     calculate_perm_clicked = pyqtSignal()
+    revert_applied = pyqtSignal(str)   # well key whose last-run parameters were restored
     apply_perm_clicked = pyqtSignal()
 
     def __init__(self, model, parent=None):
@@ -190,8 +191,19 @@ class ParametersWindow(QDialog):
 
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.hide)
+        # U12: what changed since the active well's last run, and Revert
+        self.changes_label = QLabel("")
+        self.changes_label.setVisible(False)
+        self.revert_btn = QPushButton("Revert to last run")
+        self.revert_btn.setToolTip(
+            "Restore the parameters the active well's last run used. Project values "
+            "are shared, so other wells get them back too.")
+        self.revert_btn.clicked.connect(self._on_revert)
+        self.revert_btn.setVisible(False)
         footer = QHBoxLayout()
         footer.setContentsMargins(12, 8, 12, 8)
+        footer.addWidget(self.changes_label, 1)
+        footer.addWidget(self.revert_btn)
         footer.addStretch()
         footer.addWidget(close_btn)
         main = QHBoxLayout()
@@ -272,6 +284,80 @@ class ParametersWindow(QDialog):
         self.model.scope_changed.connect(self.refresh_scope_view)
         self.model.project.active_well_changed.connect(self.refresh_scope_view)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
+        for signal in (self.model.parameters_changed, self.model.scoped_params_changed,
+                       self.model.project.active_well_changed,
+                       self.model.project.well_updated):
+            signal.connect(self.refresh_change_summary)
+
+    # ---- U12: changes since the last run, Revert ----
+    def current_changes(self):
+        """``param_diff.param_changes`` for the active well, or None without a last run."""
+        from modules.param_diff import param_changes
+
+        ds = self.model.active_well
+        last = getattr(ds, "last_run", None) if ds is not None else None
+        if last is None or not ds.calculated:
+            return None
+        return param_changes(last["params"], self.model.params_for_well(ds),
+                             last["tops"], self.model.well_tops(ds))
+
+    def change_lines(self) -> list:
+        """One line per change since the active well's last run (empty without one)."""
+        from modules.param_diff import describe
+
+        return [describe(c) for c in self.current_changes() or []]
+
+    def refresh_change_summary(self, *_args):
+        from modules.param_diff import describe, summary_text
+
+        ds = self.model.active_well
+        changes = self.current_changes()
+        label, btn = self.changes_label, self.revert_btn
+        if changes is None:
+            calculated = ds is not None and ds.calculated
+            label.setText("Parameters of the last run are not available" if calculated else "")
+            label.setToolTip("")
+            set_status(label, "muted")
+            label.setVisible(calculated)
+            btn.setVisible(False)
+            return
+        if changes:
+            label.setText(summary_text(changes))
+            label.setToolTip("\n".join(describe(c) for c in changes))
+            set_status(label, "warning")
+        else:
+            label.setText("No changes since the last run")
+            label.setToolTip("")
+            set_status(label, "muted")
+        label.setVisible(True)
+        btn.setVisible(True)
+        btn.setEnabled(any(c["revertible"] for c in changes))
+
+    def _confirm_revert(self, lines: list, shared: bool) -> bool:
+        text = "Restore the parameters of the last run?\n\n" + "\n".join(lines)
+        if shared:
+            text += ("\n\nProject values are shared: other wells use the restored "
+                     "project values too.")
+        answer = QMessageBox.question(
+            self, "Revert to last run", text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _on_revert(self):
+        from modules.param_diff import describe
+
+        ds = self.model.active_well
+        changes = self.current_changes()
+        if not changes or ds is None:
+            return
+        state = ds.last_run["state"]
+        if not self._confirm_revert([describe(c) for c in changes],
+                                    self.model.project_state_differs(state)):
+            return
+        self.model.restore_param_state(ds, state)
+        self.revert_applied.emit(ds.key)
+        self.refresh_change_summary()
 
     def _on_params_changed(self, *args):
         """Handle parameter changes."""
@@ -281,6 +367,7 @@ class ParametersWindow(QDialog):
         self.parameters_updated.emit()
         self._update_temperature_readout()
         self.refresh_curve_details()
+        self.refresh_change_summary()
 
     def update_available_curves(self, curves: list, detected: dict = None):
         """Update curve mapping combos."""

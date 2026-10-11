@@ -1029,6 +1029,63 @@ class AppModel(QObject):
         params["_tops"] = [(fm.name, fm.top_depth, fm.bottom_depth) for fm in tops]
         return params_hash(params)
 
+    @staticmethod
+    def well_tops(ds: WellDataset) -> list:
+        """The well's tops as (name, top, bottom) tuples, as hashed for stale tracking."""
+        tops = getattr(ds.formation_tops, "formations", None) or []
+        return [(fm.name, fm.top_depth, fm.bottom_depth) for fm in tops]
+
+    def param_state(self, well: Optional[WellDataset] = None) -> dict:
+        """Everything the user edits that a well's parameters come from (U12), detached.
+
+        Project values and shale-selection settings, project zone entries, and the
+        well's overrides, zone overrides, curve mapping, analysis mode and formations.
+        """
+        from modules.shale_estimation import SHALE_SETTING_DEFAULTS
+
+        ds = well if well is not None else self._well
+        # analysis_mode / selected_formations read the active well; they are kept per well.
+        project = {k: v for k, v in self.project_params().items()
+                   if k not in ("analysis_mode", "selected_formations")}
+        return copy.deepcopy({
+            "project": project,
+            "shale_settings": {k: getattr(self, k, d) for k, d in SHALE_SETTING_DEFAULTS.items()},
+            "zone_params": self.project.zone_params,
+            "overrides": ds.overrides,
+            "zone_overrides": ds.zone_overrides,
+            "curve_mapping": ds.curve_mapping,
+            "analysis_mode": ds.analysis_mode,
+            "selected_formations": list(ds.selected_formations),
+        })
+
+    def project_state_differs(self, state: dict) -> bool:
+        """True when restoring ``state`` would change values other wells use too."""
+        current = self.param_state(self._well)
+        return any(current[k] != state[k]
+                   for k in ("project", "shale_settings", "zone_params"))
+
+    def restore_param_state(self, well: WellDataset, state: dict):
+        """Put back the parameters of ``state`` (from :meth:`param_state`) for ``well``.
+
+        Project values are shared, so other wells see the restored project values
+        too. Emits ``parameters_changed`` and ``scoped_params_changed`` once.
+        """
+        state = copy.deepcopy(state)
+        blocked = self.blockSignals(True)
+        try:
+            for key, value in {**state["project"], **state["shale_settings"]}.items():
+                setattr(self, key, value)
+            self.project.zone_params = state["zone_params"]
+            well.overrides = state["overrides"]
+            well.zone_overrides = state["zone_overrides"]
+            well.curve_mapping = state["curve_mapping"]
+            well.analysis_mode = state["analysis_mode"]
+            well.selected_formations = state["selected_formations"]
+        finally:
+            self.blockSignals(blocked)
+        self.parameters_changed.emit()
+        self.scoped_params_changed.emit(well.key)
+
     # =========================================================================
     # PARAMETER SCOPES (spec §4)
     # =========================================================================

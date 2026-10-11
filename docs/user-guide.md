@@ -226,6 +226,8 @@ A well's results are out of date when its current effective parameters (includin
 
 The existing result tabs keep showing the previous run until you run the analysis again. Changing a value back to what was used clears the flag, and so does running the analysis or loading new data.
 
+**What changed, and Revert.** At the bottom of the Parameters window, a line lists what changed since the active well's last run, for example **2 changes since the last run: m: 2 → 2.25; UPPER SAND · rw: 0.05 → 0.06**; hover it for the full list (the stale-results label in the status bar has the same list in its tooltip). A zone is listed only where it does not simply follow the well. **Revert to last run** puts back the parameters that run used, after a confirmation: project values, project zone values, the well's own and zone values, curve mapping, and analysis scope. Project values are shared, so other wells get the restored project values too; the confirmation says so. Formation tops are data, not parameters: a tops change is listed but not reverted. After loading a session there is no last run yet (results are not saved), so the line appears after the first run.
+
 ## Running the analysis
 
 Choose **Analysis → Run Analysis** (`F5`) or click **Run Analysis** on the toolbar to analyse the active well; it always runs, even when the results are up to date. The action is disabled until a LAS file is loaded and while the active well is running. Because the `F5` shortcut is application-wide, it also works while the Parameters window has focus.
