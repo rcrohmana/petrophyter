@@ -18,6 +18,7 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from modules.las_utils import mask_nonpositive
 from modules.param_scopes import (
     GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
     ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
@@ -268,6 +269,16 @@ def _compute_porosity(calc, vsh, data, curve_mapping, p, warnings):
         gas_rhob_factor=p["gas_rhob_factor"],
         primary_method=p["primary_phie_method"],
     )
+    partial = getattr(calc, "phie_partial", None)
+    if partial is not None:
+        method, fraction = partial
+        if method is None:
+            warnings.append("PHIE has no valid samples: no porosity method produced a value, "
+                            "so Sw, pay and HCPV are NaN.")
+        else:
+            warnings.append(
+                f"PHIE from {method} covers {fraction * 100:.0f} % of the samples; the rest "
+                "have no porosity and are excluded from pay and HCPV")
 
 
 @dataclass
@@ -673,8 +684,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
 
     phie = calc.results.get("PHIE")
     if phie is None:
-        phie = pd.Series([0.15] * len(data), index=data.index)
-        warnings.append("PHIE defaulted to 0.15 because no usable porosity method was available.")
+        # Never fabricate porosity: a sample without one has NaN Sw and no pay.
+        phie = pd.Series(np.nan, index=data.index)
 
     if has_rt:
         selected = p["sw_methods"]
@@ -927,11 +938,28 @@ def run_pipeline(
     data = data.copy()
     warnings = []
 
+    # Resistivity, density and slowness cannot be <= 0 (tool-off or casing
+    # readings): NaN, counted. Session-restored frames bypass the parser.
+    for logical in ("RT", "RHOB", "DT"):
+        mnemonic = curve_mapping.get(logical, logical)
+        for name, count in mask_nonpositive(data, [mnemonic]).items():
+            warnings.append(f"{logical}: {count} samples ≤ 0 set to NaN" if name == logical
+                            else f"{logical} ({name}): {count} samples ≤ 0 set to NaN")
+
     analysis_mode = p["analysis_mode"]
     selected_formations = p["selected_formations"]
     data = _filter_formations(data, p, formation_tops)
+    missing = []
+    if p["analysis_mode"] == "Per-Formation" and selected_formations and formation_tops:
+        missing = formation_tops.missing_formations(selected_formations)
     if len(data) == 0:
+        if missing and len(missing) == len(selected_formations):
+            raise PipelineError(
+                f"none of the selected formations ({', '.join(missing)}) "
+                "exists in this well's tops")
         raise PipelineError("No data in selected formation(s)")
+    if missing:
+        warnings.append(f"Selected formations not in this well's tops: {', '.join(missing)}")
 
     labels = None
     if formation_tops is not None and getattr(formation_tops, "formations", None):
@@ -1039,6 +1067,11 @@ def run_pipeline(
     if labels is not None:
         calc.results["ZONE"] = labels
     results = calc.export_results()
+    renamed = getattr(calc, "renamed_inputs", [])
+    if renamed:
+        warnings.append(
+            f"input curves {', '.join(renamed)} kept as "
+            f"{', '.join(c + '_IN' for c in renamed)}")
     summary["gr_min"] = gr_min
     summary["gr_max"] = gr_max
     summary["rw"] = rw

@@ -746,9 +746,24 @@ class PetrophysicsCalculator:
                     selected = fallback
                     break
 
+        self.phie_partial = None
         if selected:
             self.results["PHIE"] = results[selected]
             self.phie_method_used = selected  # Store which method was used
+        else:
+            # No method clears the bar: never fabricate porosity. PHIE is the
+            # method with the largest valid fraction (first candidate on a
+            # tie), NaN where it has no value, or all-NaN when none has any.
+            present = [c for c in candidates if c in results]
+            best = max(present, key=_valid_fraction, default=None)
+            if best is not None and _valid_fraction(best) > 0:
+                self.results["PHIE"] = results[best]
+                self.phie_method_used = best
+                self.phie_partial = (best, _valid_fraction(best))
+            else:
+                self.results["PHIE"] = pd.Series(np.nan, index=self.data.index)
+                self.phie_method_used = None
+                self.phie_partial = (None, 0.0)
 
         return results
 
@@ -2022,9 +2037,15 @@ class PetrophysicsCalculator:
         Returns:
             DataFrame with results
         """
+        self.renamed_inputs = []
         if include_original:
-            return pd.concat(
-                [self.data, self.results.drop(columns=["DEPTH"], errors="ignore")],
-                axis=1,
-            )
+            computed = self.results.drop(columns=["DEPTH"], errors="ignore")
+            # Input curves named like a result column are kept as <NAME>_IN so
+            # the columns stay unique and the measured data stays visible.
+            clash = [c for c in self.data.columns if c in computed.columns]
+            original = self.data
+            if clash:
+                original = self.data.rename(columns={c: f"{c}_IN" for c in clash})
+                self.renamed_inputs = clash
+            return pd.concat([original, computed], axis=1)
         return self.results

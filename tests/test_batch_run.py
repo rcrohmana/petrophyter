@@ -330,3 +330,14 @@ def test_tops_change_marks_the_active_well_stale(two_wells, qtbot):
     window.model.formation_tops = make_tops()
     a, b = (window.model.project.get(k) for k in ("WELL:A", "WELL:B"))
     assert a.stale and not b.stale
+
+
+def test_unmatched_formation_selection_fails_the_well_not_skips_it(qtbot, runner):
+    model = _model(["WELL:A", "WELL:B"])
+    model.project.get("WELL:B").formation_tops = make_tops()
+    model.analysis_mode = "Per-Formation"
+    model.selected_formations = ["Missing"]
+    report, done, failed = _run(qtbot, runner, model)
+    assert "WELL:B" in report["failed"]
+    assert "none of the selected formations" in report["failed"]["WELL:B"]
+    assert "WELL:B" not in report["skipped"] and "WELL:B" not in done

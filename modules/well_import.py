@@ -121,6 +121,9 @@ class ImportPlan:
                 by_target.setdefault(row.target_key, []).append(row)
         return {k: v for k, v in by_target.items() if len(v) > 1}
 
+    def _tvd_noun(self) -> str:
+        return "core" if self.kind == "core" else "tops"
+
     def blockers(self) -> List[str]:
         """Reasons the OK button must stay disabled (empty = the plan can be applied)."""
         out: List[str] = []
@@ -133,9 +136,9 @@ class ImportPlan:
         for key, rows in self._conflicts().items():
             names = " and ".join(r.file_well for r in rows)
             out.append(f"{names} are assigned to the same well ({self._display(key)})")
-        if self.kind == "core" and getattr(self.parsed, "depth_is_tvd", False) \
+        if self.kind in ("core", "tops") and getattr(self.parsed, "depth_is_tvd", False) \
                 and not self.options.tvd_confirmed:
-            out.append("Confirm that TVD core depths may be used")
+            out.append(f"Confirm that TVD {self._tvd_noun()} depths may be used")
         if not out and self.changes() == 0:
             out.append("No well would receive data")
         return out
@@ -463,9 +466,9 @@ def _plan_notes(parsed, plan: ImportPlan) -> List[str]:
         notes.append(f"{len(parsed.filled_rows)} blank well cell(s) continue the well above")
     if plan.no_well_rows:
         notes.append(f"{len(plan.no_well_rows)} row(s) without a well (excluded)")
+    if getattr(parsed, "tvd_warning", None):
+        notes.append(parsed.tvd_warning)
     if plan.kind == "core":
-        if parsed.tvd_warning:
-            notes.append(parsed.tvd_warning)
         if parsed.porosity_warning:
             notes.append(parsed.porosity_warning)
     return notes
@@ -512,8 +515,9 @@ def build_parts(plan: ImportPlan, wells: List[WellRef]) -> Dict[str, object]:
     """
     if plan.effective_unit is None:
         raise ValueError("Choose the depth unit (M or FT)")
-    if plan.kind == "core" and plan.parsed.depth_is_tvd and not plan.options.tvd_confirmed:
-        raise ValueError("Confirm that TVD core depths may be used")
+    if plan.kind in ("core", "tops") and getattr(plan.parsed, "depth_is_tvd", False) \
+            and not plan.options.tvd_confirmed:
+        raise ValueError(f"Confirm that TVD {plan._tvd_noun()} depths may be used")
     if plan._conflicts():
         raise ValueError("Two file wells are assigned to the same well")
     refs = {w.key: w for w in wells}
@@ -543,6 +547,7 @@ def import_record(plan: ImportPlan, row: ImportRow) -> dict:
         "depth_unit": plan.effective_unit,
         "fill_down": bool(plan.parsed.fill_down),
         "last_bottom": plan.options.last_bottom,
+        "tvd_confirmed": bool(plan.options.tvd_confirmed),
     }
     if plan.kind == "core":
         record["porosity_scale"] = row.porosity_scale

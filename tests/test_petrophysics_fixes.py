@@ -354,10 +354,11 @@ class TestPhieAvailabilityThreshold:
             vsh=pd.Series([0.0] * n), primary_method="PHIE_DN"
         )
 
-        # The >=50% availability contract must not be bypassed by the old
-        # any-valid-point safety net.
-        assert calc.phie_method_used is None
-        assert "PHIE" not in calc.results.columns
+        # No method clears the >=50% bar: PHIE is the best partial method
+        # (NaN elsewhere), never a fabricated value (I11).
+        assert calc.phie_method_used == "PHIE_DN"
+        assert calc.phie_partial[0] == "PHIE_DN"
+        assert calc.results["PHIE"].notna().sum() == 1
 
     def test_reuse_clears_stale_primary_when_no_method_is_available(self):
         n = 10
@@ -383,5 +384,6 @@ class TestPhieAvailabilityThreshold:
             vsh=pd.Series([0.0] * n), primary_method="PHIE_DN"
         )
 
-        assert "PHIE" not in calc.results
+        assert calc.results["PHIE"].isna().all()
         assert calc.phie_method_used is None
+        assert calc.phie_partial == (None, 0.0)

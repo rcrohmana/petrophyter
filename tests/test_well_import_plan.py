@@ -387,7 +387,8 @@ def test_import_record_keys(tmp_path):
     plan = plan_for(path, [ref("BKS-01")])
     rec = import_record(plan, plan.rows[0])
     assert set(rec) == {"path", "file_well", "spellings", "columns", "delimiter", "decimal",
-                        "encoding", "sheet", "depth_unit", "fill_down", "last_bottom"}
+                        "encoding", "sheet", "depth_unit", "fill_down", "last_bottom",
+                        "tvd_confirmed"}
     assert rec["path"] == path and rec["file_well"] == "BKS-01"
     assert rec["spellings"] == ["BKS-01", "bks 01"]
     assert rec["columns"] == {"well": "Well", "name": "Formation",
@@ -395,6 +396,7 @@ def test_import_record_keys(tmp_path):
     assert (rec["delimiter"], rec["decimal"], rec["depth_unit"]) == (",", ".", "FT")
     assert rec["fill_down"] is False and rec["last_bottom"] == "log_bottom"
     assert rec["sheet"] is None
+    assert rec["tvd_confirmed"] is False
 
 
 def test_columns_override_round_trips_through_record(tmp_path):

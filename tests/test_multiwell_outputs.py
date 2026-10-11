@@ -186,3 +186,19 @@ def test_zone_shading_toggle(qtbot, model):
     tab.plot_stack.setCurrentIndex(0)
     tab.show_zones_check.setChecked(True)
     tab.show_zones_check.setChecked(False)
+
+
+def test_las_export_survives_input_curves_named_like_results(tmp_path):
+    data = fixture_frame("sample_log_data")
+    data["PHIE"] = 0.11
+    data["SW"] = 0.9
+    ds = WellDataset("W:X", "Xray")
+    ds.las_data = data
+    ds.curve_mapping = dict(FULL_MAPPING)
+    results, summary = run_pipeline(data, FULL_MAPPING, {})
+    ds.results, ds.summary, ds.calculated = results, summary, True
+    assert results.columns.is_unique and "PHIE_IN" in results.columns
+    out = tmp_path / "las"
+    assert ExportService().export_las_wells([ds], str(out))
+    header = (out / "Xray.las").read_text(encoding="utf-8").split("~A")[1].splitlines()[0].split()
+    assert "PHIE_IN" in header and "SW_IN" in header

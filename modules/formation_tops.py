@@ -98,6 +98,8 @@ class FormationTops:
         self.depth_unit_detected = False
         self.depth_unit_warning: Optional[str] = None
         self.converted_to_feet = False
+        self.depth_is_tvd = False
+        self.tvd_warning: Optional[str] = None
         self.last_error: Optional[str] = None
         # Optional well column of a multi-well tops file.
         self.well_column: Optional[str] = None
@@ -153,6 +155,8 @@ class FormationTops:
         self.depth_unit_detected = False
         self.depth_unit_warning = None
         self.converted_to_feet = False
+        self.depth_is_tvd = False
+        self.tvd_warning = None
         self.last_error = None
         self.well_column = None
         self.well_kind = 'name'
@@ -317,6 +321,16 @@ class FormationTops:
         # Detect the depth unit from the top/bottom column names (or a unit row).
         self._detect_depth_unit(top_col, bottom_col, table.unit_row_unit)
 
+        # A top/bottom column that is TVD does not match MD logs (as for core).
+        for col in (top_col, bottom_col):
+            if col and set(_tokenize(col)) & {'tvd', 'tvdss'}:
+                self.depth_is_tvd = True
+                self.tvd_warning = (
+                    f"Formation tops look like TVD (column '{original.get(col, col)}'); "
+                    "logs are on MD. Import only if the well is vertical or the logs are on TVD.")
+                logger.warning(self.tvd_warning)
+                break
+
         top_num = pd.to_numeric(df[top_col], errors='coerce')
         bottom_num = pd.to_numeric(df[bottom_col], errors='coerce') if bottom_col else None
 
@@ -453,6 +467,8 @@ class FormationTops:
         part.depth_unit_detected = self.depth_unit_detected
         part.depth_unit_warning = self.depth_unit_warning
         part.converted_to_feet = self.converted_to_feet
+        part.depth_is_tvd = self.depth_is_tvd
+        part.tvd_warning = self.tvd_warning
         part.well_column = self.well_column
         part.well_kind = self.well_kind
         part.table_read = self.table_read
@@ -648,6 +664,11 @@ class FormationTops:
             })
         return pd.DataFrame(data)
     
+    def missing_formations(self, formation_names: List[str]) -> List[str]:
+        """The names in ``formation_names`` that match no formation (case-insensitive)."""
+        known = {fm.name.lower() for fm in self.formations}
+        return [n for n in formation_names if n.lower() not in known]
+
     def filter_by_formations(self, data: pd.DataFrame,
                              formation_names: List[str],
                              depth_col: str = 'DEPTH') -> pd.DataFrame:
@@ -660,7 +681,8 @@ class FormationTops:
             depth_col: Depth column name
             
         Returns:
-            Filtered DataFrame
+            Filtered DataFrame; empty when none of the names exists in the tops
+            (use :meth:`missing_formations` to report which were not found).
         """
         if depth_col not in data.columns:
             return data
@@ -688,8 +710,9 @@ class FormationTops:
             masks.append(lower & upper)
         
         if not masks:
-            return data
-        
+            # None of the names exists in the tops: analyse nothing, not the whole well.
+            return data.iloc[0:0].copy()
+
         combined_mask = masks[0]
         for mask in masks[1:]:
             combined_mask = combined_mask | mask

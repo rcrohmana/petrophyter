@@ -214,3 +214,15 @@ def test_sheet_combo_appears_for_workbooks_with_several_sheets(qtbot, tmp_path):
     assert dialog.plan.rows[0].depth_range == (1000.0, 1100.0)
     pick(dialog.sheet_combo, "Second")
     assert dialog.plan.rows[0].depth_range == (1500.0, 1600.0)
+
+
+def test_tops_tvd_depth_needs_a_confirmation(qtbot, tmp_path):
+    text = ("Well,Formation,Top TVD (ft),Bottom TVD (ft)\n"
+            "BKS-01,A,1000,1100\nBKS-01,B,1100,1200\n")
+    dialog = make(qtbot, write(tmp_path, text), [ref("BKS-01")])
+    assert dialog.tvd_check.isVisibleTo(dialog)
+    assert not dialog.ok_button.isEnabled()
+    assert "TVD tops" in dialog.ok_button.toolTip()
+    dialog.tvd_check.setChecked(True)
+    dialog.tvd_check.clicked.emit(True)
+    assert dialog.ok_button.isEnabled()

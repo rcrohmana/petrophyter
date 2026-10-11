@@ -199,7 +199,7 @@ class MultiWellImportDialog(QDialog):
         row.addWidget(self.sheet_label)
         row.addWidget(self.sheet_combo)
 
-        self.tvd_check = QCheckBox("Core depths are TVD; use them as measured depth")
+        self.tvd_check = QCheckBox("Depths are TVD; use them as measured depth")
         self.tvd_check.setObjectName("tvd_check")
         self.tvd_check.clicked.connect(self._on_tvd_changed)
         row.addWidget(self.tvd_check)
@@ -283,7 +283,7 @@ class MultiWellImportDialog(QDialog):
             index = self.sheet_combo.findData(wanted) if isinstance(wanted, str) else int(wanted)
             self.sheet_combo.setCurrentIndex(max(index, 0))
             self.sheet_combo.blockSignals(False)
-        tvd = self.kind == "core" and bool(getattr(self.parsed, "depth_is_tvd", False))
+        tvd = self.kind in ("core", "tops") and bool(getattr(self.parsed, "depth_is_tvd", False))
         self.tvd_check.setVisible(tvd)
         self.tvd_check.blockSignals(True)
         self.tvd_check.setChecked(bool(self.options.tvd_confirmed))

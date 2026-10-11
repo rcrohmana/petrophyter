@@ -169,3 +169,17 @@ def test_range_query_uses_half_open_shared_boundary():
     )
 
     assert [fm.name for fm in tops.get_formations_in_range(5100, 5100)] == ["B"]
+
+
+@pytest.mark.parametrize("header,flag", [
+    ("Top TVD (m)\tBottom TVD (m)", True),
+    ("TVD Top (m)\tTVD Bottom (m)", True),
+    ("Top TVDSS (m)\tBottom TVDSS (m)", True),
+    ("Top (m)\tBottom (m)", False),
+])
+def test_tvd_header_flags_tops(header, flag):
+    tops = FormationTops()
+    assert tops.read_tops_from_buffer(_buf(f"Formation\t{header}\nA\t1000\t1100\n"))
+    assert tops.depth_is_tvd is flag
+    assert bool(tops.tvd_warning) is flag
+    assert tops._new_part().depth_is_tvd is flag
