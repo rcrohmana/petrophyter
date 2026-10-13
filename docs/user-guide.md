@@ -403,7 +403,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 
 - **Theme:** choose **View → Theme → Light** or **View → Theme → Dark**. The whole application, including icons, plots, the Parameters window, and dialogs, switches immediately. Petrophyter remembers your choice.
 - **Data Browser:** choose **View → Data Browser** (`Ctrl+B`) to hide or show the panel and give the result tabs more room. A check mark indicates that it is visible.
-- **Layout:** Petrophyter remembers the window geometry, splitter position, Data Browser visibility, and active tab between runs.
+- **Layout:** Petrophyter remembers the window geometry, splitter position and Data Browser visibility between runs. It always opens on the **Data QC** tab.
 
 ## Keyboard shortcuts
 

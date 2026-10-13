@@ -452,7 +452,7 @@ class MainWindow(QMainWindow):
         settings.setValue(
             "ui/dataBrowserVisible", self.actions_["toggle_browser"].isChecked()
         )
-        settings.setValue("ui/activeTab", self.tab_widget.currentIndex())
+        settings.remove("ui/activeTab")  # the app always opens on Data QC
         settings.setValue("ui/paramsWindowGeometry", self.params_window.saveGeometry())
         settings.setValue("ui/paramsWindowPage", self.params_window.current_page())
         self.params_window.close()
@@ -480,9 +480,7 @@ class MainWindow(QMainWindow):
         page = settings.value("ui/paramsWindowPage", "scope", type=str)
         if page in {key for key, _title, _menu, _icon in PAGES}:
             self.params_window.open_page(page, show=False)
-        tab = settings.value("ui/activeTab", 0, type=int)
-        if 0 <= tab < self.tab_widget.count():
-            self.tab_widget.setCurrentIndex(tab)
+        self.tab_widget.setCurrentWidget(self.qc_tab)
 
     def _toggle_browser(self, checked: bool):
         """Show or hide the left panel (retargeted to the Data Browser in Task 12C)."""

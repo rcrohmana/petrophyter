@@ -322,16 +322,18 @@ def test_session_restore_guard_resets_flag(window):
     assert window._restoring is False
 
 
-def test_ui_state_persists(qtbot):
+def test_app_always_opens_on_data_qc(qtbot):
+    settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
+    settings.setValue("ui/activeTab", 4)  # an index saved by an older version
     w1 = MainWindow()
     qtbot.addWidget(w1)
-    w1.tab_widget.setCurrentIndex(3)
+    assert w1.tab_widget.currentWidget() is w1.qc_tab
+    w1.tab_widget.setCurrentWidget(w1.rock_tab)
     w1.close()
-    settings = QSettings(QSettings.defaultFormat(), QSettings.Scope.UserScope, "Petrophyter Team", "Petrophyter")
-    assert settings.value("ui/activeTab", type=int) == 3
+    assert settings.value("ui/activeTab") is None
     w2 = MainWindow()
     qtbot.addWidget(w2)
-    assert w2.tab_widget.currentIndex() == 3
+    assert w2.tab_widget.currentWidget() is w2.qc_tab
     w2.close()
 
 
