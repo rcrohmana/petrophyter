@@ -20,9 +20,10 @@ Key capabilities include:
 - Shale-volume, porosity, water-saturation, Swirr, and permeability calculations
 - Archie, Indonesian, Simandoux, Waxman-Smits, and Dual-Water saturation models
 - Core-calibrated permeability and statistical core-data validation
+- Rock typing from core (RQI/FZI with k-means, or Winland R35), applied to every well through the logs, with permeability, net pay, and HCPV per rock type
 - HCPV and configurable net-pay analysis
 - Formation-top overlays and quality-control diagnostics
-- Interactive GPU-accelerated six-track log visualization
+- Interactive GPU-accelerated six-track log visualization, plus a Rock Type track when rock typing is on
 - Excel, CSV, and LAS export, per well or for all wells with a field summary
 - JSON session save and load of the whole multi-well project
 - Light and Dark application themes
@@ -53,10 +54,10 @@ See [Installation](docs/installation.md) for dependency versions and complete se
 1. **Load data:** Use **File → Open LAS File(s)…** (`Ctrl+O`). Select several files to load several wells at once, or to merge files from the same well.
 2. **Configure:** In the Parameters window (`Ctrl+P`), select calculation methods and adjust shale, matrix, fluid, and cutoff parameters.
 3. **Analyze:** Run the petrophysical calculations (`F5`), or every well at once (`Ctrl+Shift+R`).
-4. **Review:** Inspect logs, crossplots, diagnostics, core validation, and net-pay results.
+4. **Review:** Inspect logs, crossplots, diagnostics, core validation, rock types, and net-pay results.
 5. **Export:** Save the results or session for later use.
 
-See the [User Guide](docs/user-guide.md) for multi-LAS merging, core validation, session handling, and keyboard shortcuts.
+See the [User Guide](docs/user-guide.md) for multi-LAS merging, core validation, rock typing, session handling, and keyboard shortcuts.
 
 ## Documentation
 
@@ -65,7 +66,7 @@ Documentation is organized by topic so every reader can access technical and ope
 | Topic | Contents |
 |---|---|
 | [Installation](docs/installation.md) | Prerequisites, setup, and dependency versions |
-| [User Guide](docs/user-guide.md) | Data-loading and analysis workflows, core validation, and shortcuts |
+| [User Guide](docs/user-guide.md) | Data-loading and analysis workflows, core validation, rock typing, and shortcuts |
 | [Supported Data Formats](docs/data-formats.md) | LAS support and complete core/formation column requirements |
 | [Calculation Methods](docs/calculation-methods.md) | Equations, models, presets, parameter ranges, net pay, and QC |
 | [Visualization and Export](docs/visualization-and-export.md) | Interactive and classic plots, crossplots, and output formats |
