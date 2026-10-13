@@ -47,6 +47,25 @@ def mixed_depth_step_data():
     })
 
 
+# Literal rock-type definitions (as Project.rock_types stores them) for the
+# rock_typing_enabled case: three FZI types, pooled over the project.
+ROCK_TYPE_SET = {
+    "n_rt": 3, "centers": [-0.3, 0.35, 0.85], "boundaries": [0.025, 0.6],
+    "fzi": [0.5011872336272722, 2.2387211385683394, 7.079457843841379],
+    "n_samples": [20, 30, 25], "sd": [0.1, 0.1, 0.1], "feature_range": [-0.6, 1.1],
+    "k_rmse_log10": [0.2, 0.2, 0.2], "edited": False, "basis": "golden literal",
+}
+ROCK_TYPE_SETTINGS = {
+    "seed": 0, "restarts": 10, "min_samples": 20, "min_per_rt": 5, "reservoir_only": True,
+    "min_phie": 0.02, "use_core_labels": True, "margin_min": 0.05, "lorenz": True,
+    "r35_column": True, "perm_rt_column": True, "ob_phi_factor": 1.0, "ob_k_factor": 1.0,
+    "core_phi_min": 0.01, "core_phi_max": 0.5,
+}
+ROCK_TYPE_DEFS = {
+    "version": 1, "method": "fzi", "feature": "log10_fzi", "fit_scope": "project",
+    "sets": {"*": ROCK_TYPE_SET}, "settings": ROCK_TYPE_SETTINGS,
+}
+
 CASES = {
     "defaults_whole_well": {"data": "sample_log_data", "params": {}},
     "gas_all_sw_models": {
@@ -95,6 +114,13 @@ CASES = {
     },
     "no_rt_no_dt": {"data": "sample_log_data", "drop": ["RT", "DT"], "params": {}},
     "mixed_depth_step": {"builder": mixed_depth_step_data, "params": {}},
+    # Rock typing on, no core (log-derived types), PERM_RT as primary permeability.
+    "rock_typing_enabled": {
+        "data": "sample_log_data",
+        "params": {"rock_typing_enabled": True, "perm_primary": "Rock type"},
+        "rock_types": ROCK_TYPE_DEFS,
+        "tops": True,
+    },
 }
 
 
@@ -118,4 +144,24 @@ def build_case(name):
         data = data.drop(columns=[curve])
         mapping[curve] = "None"
     tops = make_tops() if spec.get("tops") else None
-    return data, mapping, dict(spec["params"]), tops
+    params = dict(spec["params"])
+    if spec.get("rock_types"):
+        # What AppModel.params_for_well hands the pipeline for an uncored well.
+        defs = spec["rock_types"]
+        params["rock_types"] = {
+            "method": defs["method"], "feature": defs["feature"], "fit_scope": defs["fit_scope"],
+            "set": defs["sets"]["*"], "zone_sets": {}, "settings": dict(defs["settings"]),
+            "basis": "pooled", "core_max_dist": 2.0}
+        params["rock_core"] = None
+    return data, mapping, params, tops
+
+
+def apply_to_model(model, name, params):
+    """Set a case's params on an AppModel; definitions go to ``Project.rock_types``."""
+    for key, value in params.items():
+        if key in ("rock_types", "rock_core"):
+            continue
+        assert hasattr(model, key), key
+        setattr(model, key, value)
+    if CASES[name].get("rock_types"):
+        model.project.rock_types = CASES[name]["rock_types"]

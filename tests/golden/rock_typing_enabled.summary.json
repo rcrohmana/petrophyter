@@ -1,0 +1,950 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.16910576614734796,
+ "avg_sw_pay": 0.18944930640081353,
+ "avg_vsh_pay": 0.18855926434485826,
+ "data_points": 100,
+ "gr_max": 88.41562199612135,
+ "gr_min": 42.68115511379288,
+ "gross_sand": 37.37373737373724,
+ "hcpv_gross": 6.565657432044237,
+ "hcpv_net_pay": 5.1227731854213205,
+ "hcpv_net_res": 5.1227731854213205,
+ "issues": [
+  {
+   "code": "RSH_AUTO_CLAMPED",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+   "zone": null
+  },
+  {
+   "code": "ROCK_TYPES_UNCORED",
+   "severity": "warning",
+   "target": null,
+   "text": "No core labels for this well: rock types are log-derived with the project definitions.",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_MAXED",
+   "severity": "warning",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum.",
+   "zone": null
+  }
+ ],
+ "net_pay": 37.37373737373724,
+ "net_reservoir": 37.37373737373724,
+ "ng_pay": 1.0,
+ "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     42.68115511379288,
+     88.41562199612135
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "perm_primary": {
+    "source": "project",
+    "value": "Rock type"
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "LOWER": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     42.68115511379288,
+     88.41562199612135
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "perm_primary": {
+    "source": "project",
+    "value": "Rock type"
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "UPPER": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     42.68115511379288,
+     88.41562199612135
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "perm_primary": {
+    "source": "project",
+    "value": "Rock type"
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 6.320114492375608,
+ "rock_types": {
+  "agreement": {
+   "confusion": [
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0
+    ]
+   ],
+   "fraction": null,
+   "n": 0
+  },
+  "basis": "pooled",
+  "by_rt": [
+   {
+    "avg_phie_pay": NaN,
+    "avg_sw_pay": NaN,
+    "avg_vsh_pay": NaN,
+    "fzi": 0.5011872336272722,
+    "gross_sand": 0.0,
+    "hcpv_net_pay": 0.0,
+    "net_pay": 0.0,
+    "net_reservoir": 0.0,
+    "ng_pay": 0.0,
+    "ng_reservoir": 0.0,
+    "pct_core": 0.0,
+    "perm_geomean": null,
+    "phih_pay": 0.0,
+    "rt": 1,
+    "samples": 0
+   },
+   {
+    "avg_phie_pay": 0.10823306186221923,
+    "avg_sw_pay": 0.28180320050013347,
+    "avg_vsh_pay": 0.29925345880487925,
+    "fzi": 2.2387211385683394,
+    "gross_sand": 6.060606060606119,
+    "hcpv_net_pay": 0.47110690078495554,
+    "net_pay": 6.060606060606119,
+    "net_reservoir": 6.060606060606119,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 7.766911610065005,
+    "phih_pay": 0.6559579506801229,
+    "rt": 2,
+    "samples": 6
+   },
+   {
+    "avg_phie_pay": 0.1808875798799537,
+    "avg_sw_pay": 0.17875393266515308,
+    "avg_vsh_pay": 0.1671345815461442,
+    "fzi": 7.079457843841379,
+    "gross_sand": 31.313131313131123,
+    "hcpv_net_pay": 4.651666284636365,
+    "net_pay": 31.313131313131123,
+    "net_reservoir": 31.313131313131123,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 426.94293255685636,
+    "phih_pay": 5.664156541695486,
+    "rt": 3,
+    "samples": 31
+   }
+  ],
+  "by_zone_rt": [
+   {
+    "avg_phie_pay": NaN,
+    "avg_sw_pay": NaN,
+    "avg_vsh_pay": NaN,
+    "fzi": null,
+    "gross_sand": 0.0,
+    "hcpv_net_pay": 0.0,
+    "net_pay": 0.0,
+    "net_reservoir": 0.0,
+    "ng_pay": 0.0,
+    "ng_reservoir": 0.0,
+    "pct_core": 0.0,
+    "perm_geomean": null,
+    "phih_pay": 0.0,
+    "rt": 0,
+    "samples": 31,
+    "zone": "UPPER"
+   },
+   {
+    "avg_phie_pay": 0.10570064140960224,
+    "avg_sw_pay": 0.3805389317676489,
+    "avg_vsh_pay": 0.30162786499655836,
+    "fzi": 2.2387211385683394,
+    "gross_sand": 3.0303030303031164,
+    "hcpv_net_pay": 0.1984164613346629,
+    "net_pay": 3.0303030303031164,
+    "net_reservoir": 3.0303030303031164,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 7.203660277887171,
+    "phih_pay": 0.3203049739685007,
+    "rt": 2,
+    "samples": 3,
+    "zone": "UPPER"
+   },
+   {
+    "avg_phie_pay": 0.1494533953345963,
+    "avg_sw_pay": 0.20433006266645165,
+    "avg_vsh_pay": 0.2729080396306394,
+    "fzi": 7.079457843841379,
+    "gross_sand": 6.060606060605949,
+    "hcpv_net_pay": 0.720700446667649,
+    "net_pay": 6.060606060605949,
+    "net_reservoir": 6.060606060605949,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 227.56889004209643,
+    "phih_pay": 0.9057781535429913,
+    "rt": 3,
+    "samples": 6,
+    "zone": "UPPER"
+   },
+   {
+    "avg_phie_pay": NaN,
+    "avg_sw_pay": NaN,
+    "avg_vsh_pay": NaN,
+    "fzi": null,
+    "gross_sand": 0.0,
+    "hcpv_net_pay": 0.0,
+    "net_pay": 0.0,
+    "net_reservoir": 0.0,
+    "ng_pay": 0.0,
+    "ng_reservoir": 0.0,
+    "pct_core": 0.0,
+    "perm_geomean": null,
+    "phih_pay": 0.0,
+    "rt": 0,
+    "samples": 32,
+    "zone": "LOWER"
+   },
+   {
+    "avg_phie_pay": 0.1107654823148363,
+    "avg_sw_pay": 0.18758224008072485,
+    "avg_vsh_pay": 0.29687905261320013,
+    "fzi": 2.2387211385683394,
+    "gross_sand": 3.0303030303030027,
+    "hcpv_net_pay": 0.27269043945029264,
+    "net_pay": 3.0303030303030027,
+    "net_reservoir": 3.0303030303030027,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 8.374203339896502,
+    "phih_pay": 0.3356529767116221,
+    "rt": 2,
+    "samples": 3,
+    "zone": "LOWER"
+   },
+   {
+    "avg_phie_pay": 0.18843178417083936,
+    "avg_sw_pay": 0.17388540437302913,
+    "avg_vsh_pay": 0.14174895160586576,
+    "fzi": 7.079457843841379,
+    "gross_sand": 25.252525252525174,
+    "hcpv_net_pay": 3.9309658379687153,
+    "net_pay": 25.252525252525174,
+    "net_reservoir": 25.252525252525174,
+    "ng_pay": 1.0,
+    "ng_reservoir": 1.0,
+    "pct_core": 0.0,
+    "perm_geomean": 496.53686035425534,
+    "phih_pay": 4.758378388152495,
+    "rt": 3,
+    "samples": 25,
+    "zone": "LOWER"
+   }
+  ],
+  "counts": {
+   "core": 0,
+   "log": 37,
+   "near_boundary": 8,
+   "outside_range": 0,
+   "perm_rt_missing": 0,
+   "x_nan": 0,
+   "x_perm": 0,
+   "x_phie": 0,
+   "x_vsh": 63
+  },
+  "fit_scope": "project",
+  "lorenz": {
+   "basis": "PERM_RT",
+   "coefficient": 0.3091645719843444,
+   "units": [
+    {
+     "bottom": 1041.919191919192,
+     "class": "intermediate",
+     "flow_fraction": 0.15550630790829081,
+     "slope": 0.6173073438200795,
+     "storage_fraction": 0.25191067215557816,
+     "thickness": 11.111111111111029,
+     "top": 999.4949494949494
+    },
+    {
+     "bottom": 1050.0,
+     "class": "speed",
+     "flow_fraction": 0.36735125544302505,
+     "slope": 1.5308000990257946,
+     "storage_fraction": 0.23997336796411783,
+     "thickness": 7.070707070707158,
+     "top": 1041.919191919192
+    },
+    {
+     "bottom": 1056.0606060606062,
+     "class": "baffle",
+     "flow_fraction": 0.06483511481905013,
+     "slope": 0.49525372825559966,
+     "storage_fraction": 0.13091292628409823,
+     "thickness": 6.060606060606119,
+     "top": 1050.0
+    },
+    {
+     "bottom": 1062.1212121212122,
+     "class": "intermediate",
+     "flow_fraction": 0.2694062960840752,
+     "slope": 1.3720056124654996,
+     "storage_fraction": 0.19635947086247774,
+     "thickness": 6.0606060606060055,
+     "top": 1056.0606060606062
+    },
+    {
+     "bottom": 1100.5050505050503,
+     "class": "intermediate",
+     "flow_fraction": 0.14290102574555885,
+     "slope": 0.7901913874366912,
+     "storage_fraction": 0.18084356273372804,
+     "thickness": 7.070707070706931,
+     "top": 1062.1212121212122
+    }
+   ]
+  },
+  "method": "fzi",
+  "notes": [
+   "pooled",
+   "Rock types are log-derived with the project definitions (no core label used)."
+  ],
+  "unassigned": {
+   "avg_phie_pay": NaN,
+   "avg_sw_pay": NaN,
+   "avg_vsh_pay": NaN,
+   "fzi": null,
+   "gross_sand": 0.0,
+   "hcpv_net_pay": 0.0,
+   "net_pay": 0.0,
+   "net_reservoir": 0.0,
+   "ng_pay": 0.0,
+   "ng_reservoir": 0.0,
+   "pct_core": 0.0,
+   "perm_geomean": null,
+   "phih_pay": 0.0,
+   "rt": 0,
+   "samples": 63
+  }
+ },
+ "rsh": 50.0,
+ "rsh_shale_samples": 30,
+ "rsh_source": "auto",
+ "rw": 0.05,
+ "rw_source": "manual",
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 11,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 8,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 4,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 4,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 60
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 7,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 4,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 38,
+  "limited_to_max": 24,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 100
+ },
+ "swirr_mean": 0.3320393428612109,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": [
+  "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+  "No core labels for this well: rock types are log-derived with the project definitions.",
+  "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum."
+ ],
+ "zone_diagnostics": {
+  "LOWER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 28.282828282828177,
+   "limiting": "vsh_cutoff",
+   "net_pay": 28.282828282828177,
+   "net_reservoir": 28.282828282828177,
+   "pass_phi": 0.55,
+   "pass_sw": 0.7833333333333333,
+   "pass_vsh": 0.4666666666666667,
+   "status": "ok",
+   "valid": 60
+  },
+  "UPPER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 9.090909090909065,
+   "limiting": "vsh_cutoff",
+   "net_pay": 9.090909090909065,
+   "net_reservoir": 9.090909090909065,
+   "pass_phi": 0.35,
+   "pass_sw": 0.575,
+   "pass_vsh": 0.225,
+   "status": "ok",
+   "valid": 40
+  }
+ },
+ "zones": [
+  {
+   "avg_phie_pay": 0.13486914402626451,
+   "avg_sw_pay": 0.2503633013303194,
+   "avg_vsh_pay": 0.28248131475261273,
+   "bottom": 1039.3939393939395,
+   "gross_sand": 9.090909090909065,
+   "hcpv_net_pay": 0.9191169080023119,
+   "net_pay": 9.090909090909065,
+   "net_reservoir": 9.090909090909065,
+   "ng_pay": 1.0,
+   "ng_reservoir": 1.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 0.62
+    },
+    "m": {
+     "source": "project",
+     "value": 2.15
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "auto",
+     "value": 50.0
+    },
+    "rw": {
+     "source": "project",
+     "value": 0.05
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 1.226083127511492,
+   "samples": 40,
+   "top": 1000.0,
+   "zone": "UPPER"
+  },
+  {
+   "avg_phie_pay": 0.18011039468626766,
+   "avg_sw_pay": 0.1747879083718322,
+   "avg_vsh_pay": 0.15837003385665147,
+   "bottom": 1100.0,
+   "gross_sand": 28.282828282828177,
+   "hcpv_net_pay": 4.203656277419007,
+   "net_pay": 28.282828282828177,
+   "net_reservoir": 28.282828282828177,
+   "ng_pay": 1.0,
+   "ng_reservoir": 1.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 0.62
+    },
+    "m": {
+     "source": "project",
+     "value": 2.15
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "auto",
+     "value": 50.0
+    },
+    "rw": {
+     "source": "project",
+     "value": 0.05
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 5.094031364864117,
+   "samples": 60,
+   "top": 1040.4040404040404,
+   "zone": "LOWER"
+  }
+ ]
+}

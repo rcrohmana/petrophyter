@@ -19,7 +19,7 @@ from models.app_model import AppModel
 from modules.formation_tops import FormationTops
 from modules.pipeline import PARAM_DEFAULTS, PipelineError, run_pipeline
 from services.analysis_service import AnalysisWorker
-from tests.golden.cases import CASES, build_case
+from tests.golden.cases import CASES, apply_to_model, build_case
 
 GOLDEN = pathlib.Path(__file__).resolve().parent / "golden"
 ROOT = GOLDEN.parent.parent
@@ -83,7 +83,9 @@ def test_run_pipeline_matches_golden(name):
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_worker_matches_golden(name):
     data, mapping, params, tops = build_case(name)
-    worker = AnalysisWorker(_model_for(data, mapping, params, tops))
+    model = _model_for(data, mapping, {}, tops)
+    apply_to_model(model, name, params)
+    worker = AnalysisWorker(model)
     out, errors = [], []
     worker.signals.completed.connect(lambda r, s: out.append((r, s)))
     worker.signals.error.connect(errors.append)

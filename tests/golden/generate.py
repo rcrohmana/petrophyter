@@ -13,19 +13,17 @@ import numpy as np
 
 from models.app_model import AppModel
 from services.analysis_service import AnalysisWorker
-from tests.golden.cases import CASES, build_case
+from tests.golden.cases import CASES, apply_to_model, build_case
 
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def run_worker(data, mapping, params, tops):
+def run_worker(name, data, mapping, params, tops):
     model = AppModel()
     model.las_data = data
     model.curve_mapping = mapping
     model.formation_tops = tops
-    for key, value in params.items():
-        assert hasattr(model, key), key
-        setattr(model, key, value)
+    apply_to_model(model, name, params)
     out, errors = [], []
     worker = AnalysisWorker(model)
     worker.signals.completed.connect(lambda r, s: out.append((r, s)))
@@ -43,9 +41,9 @@ def _json_default(value):
     raise TypeError(type(value))
 
 
-def main():
-    for name in CASES:
-        results, summary = run_worker(*build_case(name))
+def main(names=None):
+    for name in names or CASES:
+        results, summary = run_worker(name, *build_case(name))
         results.to_csv(HERE / f"{name}.results.csv", float_format="%.17g")
         (HERE / f"{name}.summary.json").write_text(
             json.dumps(summary, indent=1, sort_keys=True, default=_json_default) + "\n"
@@ -54,4 +52,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(sys.argv[1:])
