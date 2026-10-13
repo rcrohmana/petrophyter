@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QDialog,
 )
-from PyQt6.QtCore import Qt, QSettings, QElapsedTimer, QTimer
+from PyQt6.QtCore import Qt, QSettings, QElapsedTimer, QTimer, pyqtSignal
 from datetime import datetime, timezone
 import functools
 import logging
@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.app_model import AppModel
 from services.analysis_service import AnalysisService, BatchRunner
+from services.uncertainty_service import UncertaintyRunner
 from services.merge_service import MergeService
 from services.load_service import (
     LoadWorker,
@@ -140,6 +141,7 @@ class MainWindow(QMainWindow):
         # Initialize services
         self.analysis_service = AnalysisService()
         self.batch_runner = BatchRunner(self)
+        self.uncertainty_runner = UncertaintyRunner(self)
         self.merge_service = MergeService()
         self.export_service = ExportService()
         self.session_service = SessionService()
@@ -351,6 +353,12 @@ class MainWindow(QMainWindow):
         self.batch_runner.well_completed.connect(self._on_well_completed)
         self.batch_runner.well_failed.connect(self._on_well_failed)
         self.batch_runner.finished.connect(self._on_batch_finished)
+
+        # Monte Carlo lifecycle (the tab and menu action come later)
+        self.uncertainty_runner.progress.connect(self._on_uncertainty_progress)
+        self.uncertainty_runner.completed.connect(self._on_uncertainty_completed)
+        self.uncertainty_runner.failed.connect(self._on_uncertainty_failed)
+        self.uncertainty_runner.finished.connect(self._on_uncertainty_finished)
         self.diag_tab.goto_requested.connect(self._on_goto_target)
 
         # Merge service signals
@@ -433,7 +441,10 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard("close"):
             event.ignore()
             return
-        busy = self._busy or ("analysis" if self.batch_runner.is_running() else None)
+        busy = self._busy or (
+            "analysis" if self.batch_runner.is_running()
+            else "uncertainty" if self.uncertainty_runner.is_running() else None
+        )
         if busy:
             if not self._confirm_quit(busy):
                 event.ignore()
@@ -441,6 +452,7 @@ class MainWindow(QMainWindow):
             # Don't wait for the workers: late results are dropped and queued
             # runnables are discarded.
             self.batch_runner.cancel()
+            self.uncertainty_runner.cancel()
             self.merge_service.thread_pool.clear()
             if hasattr(self, "_load_pool"):
                 self._load_pool.clear()
@@ -858,6 +870,7 @@ class MainWindow(QMainWindow):
     }
     _QUIT_QUESTIONS = {
         "analysis": "Analysis is still running. Quit anyway?",
+        "uncertainty": "Monte Carlo is still running. Quit anyway?",
         "load": "Files are still loading. Quit anyway?",
         "restore": "A session is still loading. Quit anyway?",
     }
@@ -1617,6 +1630,48 @@ class MainWindow(QMainWindow):
         self.batch_runner.cancel()
         self._stop_requested = False
 
+    # ---- Monte Carlo lifecycle ----
+    # Emitted when the project's uncertainty_result is replaced or cleared (the future tab listens).
+    uncertainty_result_changed = pyqtSignal()
+
+    def run_uncertainty(self):
+        """Start a Monte Carlo run; a refusal is shown as a warning banner."""
+        if self.batch_runner.is_running():
+            self.show_banner("warning", "Wait for the analysis to finish before running Monte Carlo.")
+            return
+        self._sync_model_from_ui()
+        error = self.uncertainty_runner.start(self.model)
+        if error:
+            self.show_banner("warning", error)
+            return
+        self.banner.clear()
+        self._set_progress(1, "Monte Carlo starting...")
+
+    def cancel_uncertainty(self):
+        self.uncertainty_runner.cancel()
+
+    def _discard_uncertainty(self):
+        """New Project / session swap: stop a run and drop its result."""
+        self.uncertainty_runner.cancel()
+        self.model.project.uncertainty_result = None
+        self._set_progress(0, "")
+        self.uncertainty_result_changed.emit()
+
+    def _on_uncertainty_progress(self, done: int, total: int):
+        pct = int(100 * done / total) if total else 0
+        self._set_progress(max(1, min(99, pct)), f"Monte Carlo {done}/{total}")
+
+    def _on_uncertainty_completed(self, result):
+        self.model.project.uncertainty_result = result
+        self.uncertainty_result_changed.emit()
+
+    def _on_uncertainty_failed(self, message: str):
+        # The banner has no "error" kind (errors are modal in this app).
+        QMessageBox.critical(self, "Monte Carlo failed", message)
+
+    def _on_uncertainty_finished(self):
+        self._set_progress(0, "")
+
     # Status-bar updates from running wells are limited to this many per second.
     _PROGRESS_MAX_HZ = 10
 
@@ -2275,6 +2330,7 @@ class MainWindow(QMainWindow):
         self._set_progress(0, "")
         # The swap: every well is built, so the old project can go.
         self.batch_runner.cancel()
+        self._discard_uncertainty()
         self._session_swap = True
         try:
             self.model.reset()
@@ -2324,6 +2380,7 @@ class MainWindow(QMainWindow):
         # Removing every well also resets the UI through active_well_changed.
         self._cancel_restore()
         self.batch_runner.cancel()
+        self._discard_uncertainty()
         self.model.reset()
         self.model.session_path = None
         self.model.mark_clean()
