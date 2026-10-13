@@ -167,6 +167,7 @@ class Project(QObject):
         # Project · zone parameter entries (spec §4.2): {ZONE: {param: entry}}.
         self.zone_params: Dict[str, Dict[str, Dict]] = {}
         # Rock-type definitions (rock typing); None until the feature holds any.
+        self.rock_types_rev = 0
         self.rock_types: Optional[dict] = None
 
     # ---- access ----
@@ -253,6 +254,16 @@ class Project(QObject):
             return
         self._active_key = key
         self.active_well_changed.emit(key or "")
+
+    @property
+    def rock_types(self) -> Optional[dict]:
+        return self._rock_types
+
+    @rock_types.setter
+    def rock_types(self, value):
+        """Every assignment bumps ``rock_types_rev`` (keys the per-well core-label cache)."""
+        self._rock_types = value
+        self.rock_types_rev = getattr(self, "rock_types_rev", 0) + 1
 
     def clear(self):
         self._wells.clear()

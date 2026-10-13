@@ -1040,7 +1040,46 @@ class AppModel(QObject):
               "settings": dict(defs.get("settings") or {}), "basis": basis,
               "core_max_dist": float(self.core_max_dist)}
         flat["rock_types"] = rt
-        flat["rock_core"] = core_labels(well_core_input(ds), rt)
+        flat["rock_core"] = self._cached_core_labels(ds, rt, core_labels, well_core_input)
+
+    def _cached_core_labels(self, ds: WellDataset, rt: dict, core_labels, well_core_input):
+        """``core_labels`` for one well, recomputed only when an input changed.
+
+        Key: the definitions revision (``project.rock_types_rev``), the resolved ``rt``
+        (method, feature, scope, basis, settings, core_max_dist, the chosen set and zone sets), the core and
+        tops file hashes, the core column mapping and shape, the tops as hashed, and the
+        identity of the core and tops objects (held by the entry, so ids are not reused).
+        The cached value is shared; ``params_for_well`` deep-copies before returning.
+        """
+        import json
+
+        cache = self.__dict__.setdefault("_rock_core_cache", {})
+        core = ds.core_data
+        data = getattr(core, "data", None)
+        key = (
+            self.project.rock_types_rev, str(ds.key), rt["method"], rt["feature"],
+            rt["fit_scope"], rt["basis"], rt["core_max_dist"],
+            json.dumps(rt["settings"], sort_keys=True, default=str),
+            json.dumps([rt["set"], rt["zone_sets"]], sort_keys=True, default=str),
+            ds.core_sha256, ds.tops_sha256,
+            tuple(getattr(core, a, None) for a in
+                  ("depth_col", "porosity_col", "perm_col", "depth_is_tvd")),
+            None if data is None else (len(data), tuple(map(str, data.columns))),
+            tuple(self.well_tops(ds)),
+        )
+        refs = (core, data, ds.formation_tops)
+        hit = cache.get(ds.key)
+        if (hit is not None and hit[0] == key
+                and all(a is b for a, b in zip(hit[1], refs))):
+            return hit[2]
+        labels = core_labels(well_core_input(ds), rt)
+        if len(cache) >= len(self.project):
+            # Drop entries of removed wells so their core frames are released.
+            live = set(self.project.keys())
+            for stale in [k for k in cache if k not in live]:
+                del cache[stale]
+        cache[ds.key] = (key, refs, labels)
+        return labels
 
     @staticmethod
     def _temperature_header(ds: WellDataset) -> dict:
