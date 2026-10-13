@@ -9,7 +9,7 @@ to maintain and update color schemes.
 import logging
 from typing import Dict, Optional
 
-from .tokens import COLORS, PLOT_CHROME, PLOT_COLOR_OVERRIDES, PLOT_COLORS
+from .tokens import COLORS, PLOT_CHROME, PLOT_COLOR_OVERRIDES, PLOT_COLORS, ROCK_TYPE_RAMP
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,23 @@ def get_plot_color(color_name: str, theme: str = None) -> str:
         logger.warning("Unknown plot color key %r; falling back to gray", color_name)
         return "#808080"
     return PLOT_COLORS[color_name]
+
+
+def get_rock_type_color(rock_type: int, n_types: int = None, theme: str = None) -> str:
+    """Colour of a rock type from the ordinal ramp (0 or less = unassigned).
+
+    ``n_types`` spreads that many types evenly over the ramp, so two types contrast
+    strongly; without it the types step through the ramp one by one.
+    """
+    rt = int(rock_type)
+    if rt < 1:
+        return get_plot_color("ROCK_TYPE_NONE", theme)
+    top = len(ROCK_TYPE_RAMP) - 1
+    if n_types and n_types > 1:
+        index = round((min(rt, n_types) - 1) * top / (n_types - 1))
+    else:
+        index = (rt - 1) % len(ROCK_TYPE_RAMP)
+    return ROCK_TYPE_RAMP[index]
 
 
 # Shared matplotlib text sizes (pt); titles are normal weight, never bold.

@@ -282,12 +282,18 @@ class ParametersWindow(QDialog):
 
     def _connect_model(self):
         self.model.scope_changed.connect(self.refresh_scope_view)
+        self.model.parameters_changed.connect(self._refresh_rock_type_choice)
         self.model.project.active_well_changed.connect(self.refresh_scope_view)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
         for signal in (self.model.parameters_changed, self.model.scoped_params_changed,
                        self.model.project.active_well_changed,
                        self.model.project.well_updated):
             signal.connect(self.refresh_change_summary)
+
+    def _refresh_rock_type_choice(self):
+        """The "Rock type" primary permeability follows the rock typing switch."""
+        self.perm_params_widget.set_rock_typing_available(
+            bool(getattr(self.model, "rock_typing_enabled", False)))
 
     # ---- U12: changes since the last run, Revert ----
     def current_changes(self):
@@ -473,6 +479,10 @@ class ParametersWindow(QDialog):
         spin("ws_qv", sw.ws_qv_spin), spin("ws_b", sw.ws_b_spin)
         spin("dw_swb", sw.dw_swb_spin), spin("dw_rwb", sw.dw_rwb_spin)
         spin("perm_C", perm.c_spin), spin("perm_P", perm.p_spin), spin("perm_Q", perm.q_spin)
+        field["perm_primary"] = (perm.primary_combo, [perm.primary_combo],
+                                 perm.primary_combo.currentData)
+        field["rt_log_perm"] = (perm.rt_log_combo, [perm.rt_log_combo],
+                                perm.rt_log_combo.currentData)
         spin("k_buckles", self.swir_params_widget.k_buckles_spin)
         for name, slider, label, key in (
                 ("vsh_cutoff", cut.vsh_slider, cut.vsh_label, "vsh_cutoff"),
@@ -523,6 +533,8 @@ class ParametersWindow(QDialog):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
         self._on_edit(self.porosity_method_widget.dn_combo.currentIndexChanged,
                       "dn_combination")
+        self._on_edit(self.perm_params_widget.primary_combo.currentIndexChanged, "perm_primary")
+        self._on_edit(self.perm_params_widget.rt_log_combo.currentIndexChanged, "rt_log_perm")
         self._on_edit(swir.k_buckles_spin.valueChanged, "k_buckles", swir)
         for name in ("vsh_cutoff", "phi_cutoff", "sw_cutoff"):
             self._on_edit(self._fields[name]["anchor"].valueChanged, name)
@@ -818,6 +830,9 @@ class ParametersWindow(QDialog):
         perm = self.perm_params_widget
         perm.set_params(num("perm_C", perm.c_spin.value()), num("perm_P", perm.p_spin.value()),
                         num("perm_Q", perm.q_spin.value()))
+        perm.set_perm_choices(flat.get("perm_primary") or "Timur",
+                              flat.get("rt_log_perm") or "Timur")
+        perm.set_rock_typing_available(bool(getattr(self.model, "rock_typing_enabled", False)))
         self.swir_params_widget.k_buckles_spin.setValue(
             num("k_buckles", self.swir_params_widget.k_buckles_spin.value()))
         cut = self.cutoff_params_widget
@@ -1034,6 +1049,8 @@ class ParametersWindow(QDialog):
             self.model.perm_C = perm["C"]
             self.model.perm_P = perm["P"]
             self.model.perm_Q = perm["Q"]
+            self.model.perm_primary = perm["perm_primary"]
+            self.model.rt_log_perm = perm["rt_log_perm"]
 
         # Swirr params
         swir = self.swir_params_widget.get_params()

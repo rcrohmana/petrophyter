@@ -264,3 +264,53 @@ def readout_text(values: Dict[str, float], units: Dict[str, str]) -> str:
         unit = units.get(name, "")
         parts.append(f"{name}: {value:.3f} {unit}".rstrip())
     return " | ".join(parts)
+
+
+def rock_type_bands(depth, rock_type, margin=None, source=None, margin_min: float = 0.05):
+    """Runs of the rock-type log as ``(top, base, rock_type, faded)`` tuples.
+
+    Band edges sit halfway between samples; the first and last sample extend by half a
+    step. ``rock_type`` 0 (or NaN) is unassigned. ``faded`` marks bands that are weak:
+    ``margin`` below ``margin_min``, or ``source`` "log" (assigned from the log, not core).
+    Runs break where the rock type or the faded flag changes.
+    """
+    depth = np.asarray(depth, dtype=float)
+    n = len(depth)
+    if n == 0:
+        return []
+    rt = np.nan_to_num(np.asarray(rock_type, dtype=float), nan=0.0).astype(int)
+    faded = np.zeros(n, dtype=bool)
+    if margin is not None:
+        m = np.asarray(margin, dtype=float)
+        faded |= np.isfinite(m) & (m < margin_min)
+    if source is not None:
+        faded |= np.asarray([str(v) == "log" for v in source])
+    faded &= rt > 0
+    if n == 1:
+        edges = np.array([depth[0], depth[0]])
+    else:
+        mid = (depth[1:] + depth[:-1]) / 2.0
+        edges = np.concatenate(([depth[0] - (mid[0] - depth[0])], mid,
+                                [depth[-1] + (depth[-1] - mid[-1])]))
+    bands = []
+    start = 0
+    for i in range(1, n + 1):
+        if i == n or rt[i] != rt[start] or faded[i] != faded[start]:
+            bands.append((float(edges[start]), float(edges[i]), int(rt[start]),
+                          bool(faded[start])))
+            start = i
+    return bands
+
+
+def rock_type_readout(values: Dict[str, float], source: Optional[str] = None) -> str:
+    """Crosshair text for the Rock Type track: RT, FZI and where the type came from."""
+    parts = []
+    rt = values.get("ROCK_TYPE")
+    if rt is not None and np.isfinite(rt):
+        parts.append(f"RT: {int(rt)}" if rt >= 1 else "RT: none")
+    fzi = values.get("FZI")
+    if fzi is not None and np.isfinite(fzi):
+        parts.append(f"FZI: {fzi:.3f}")
+    if source:
+        parts.append(f"source: {source}")
+    return " | ".join(parts)

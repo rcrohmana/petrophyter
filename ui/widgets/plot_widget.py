@@ -16,7 +16,9 @@ import numpy as np
 import pandas as pd
 from typing import Optional, List, Tuple, Dict
 
-from themes.colors import get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
+from themes.colors import (
+    get_plot_chrome, get_plot_color, get_rock_type_color, TITLE_SIZE, LABEL_SIZE,
+)
 from themes.icon_loader import get_icon
 from themes.tokens import PLOT_COLORS
 
@@ -516,12 +518,38 @@ class CompositeLogPlot(PlotWidget):
     def __init__(self, parent=None):
         super().__init__(parent, show_toolbar=True, figsize=(14, 10))
 
+    def _plot_rock_type_track(self, ax, depth, results, margin_min, n_types=None):
+        """Stepped rock-type bands with fill_betweenx; weak bands are hatched."""
+        margin = results["RT_MARGIN"].values if "RT_MARGIN" in results.columns else None
+        source = (results["ROCK_TYPE_SOURCE"].values
+                  if "ROCK_TYPE_SOURCE" in results.columns else None)
+        rt = results["ROCK_TYPE"].values
+        bands = ts.rock_type_bands(depth, rt, margin, source, margin_min)
+        n_types = n_types or int(np.nanmax(np.append(np.asarray(rt, dtype=float), 0)))
+        seen = set()
+        for top, base, rock_type, faded in bands:
+            color = get_rock_type_color(rock_type, n_types)
+            ax.fill_betweenx(
+                [top, base], 0, 1, facecolor=color,
+                alpha=0.45 if faded else 1.0, hatch="///" if faded else None,
+                edgecolor=color if faded else "none", linewidth=0,
+                label=f"RT {rock_type}" if rock_type >= 1 and rock_type not in seen else None,
+            )
+            seen.add(rock_type)
+        ax.set_xlim(0, 1)
+        ax.set_xticks([])
+        ax.set_title("Rock Type", fontsize=TITLE_SIZE)
+        if seen - {0}:
+            ax.legend(loc="upper right", fontsize=6)
+
     def plot_petrophysics_summary(
         self,
         results: pd.DataFrame,
         depth_range: Tuple[float, float] = None,
         formation_tops=None,
         hcpv_curves: list = None,
+        rt_margin_min: float = 0.05,
+        rt_count: int = None,
     ):
         """
         Create a 5-track petrophysics summary log:
@@ -538,6 +566,9 @@ class CompositeLogPlot(PlotWidget):
             hcpv_curves: Optional HCPV track curves as (column, colour, log,
                 x_range) tuples; ``[]`` leaves the track empty and ``None``
                 keeps the Net Pay default.
+            rt_margin_min: bands with RT_MARGIN below this are drawn hatched
+                (Rock Type track, only when the results have ROCK_TYPE).
+            rt_count: number of rock types in the definitions (colour spacing).
         """
         self.figure.clear()
 
@@ -555,13 +586,15 @@ class CompositeLogPlot(PlotWidget):
             filtered = results
             mask = np.ones(len(depth), dtype=bool)
 
-        # Create 6 tracks
+        # Create 6 tracks, and a seventh for the rock types when the results have them
+        has_rt = "ROCK_TYPE" in filtered.columns
+        n_axes = 7 if has_rt else 6
         axes = []
-        for i in range(6):
+        for i in range(n_axes):
             if i == 0:
-                ax = self.figure.add_subplot(1, 6, i + 1)
+                ax = self.figure.add_subplot(1, n_axes, i + 1)
             else:
-                ax = self.figure.add_subplot(1, 6, i + 1, sharey=axes[0])
+                ax = self.figure.add_subplot(1, n_axes, i + 1, sharey=axes[0])
             ax.invert_yaxis()
             ax.grid(True, alpha=0.3)
             self._style_axes(ax)
@@ -731,6 +764,10 @@ class CompositeLogPlot(PlotWidget):
         axes[5].set_xlabel("Volume (ft)", fontsize=LABEL_SIZE)
         if hcpv_drawn:
             axes[5].legend(loc="upper right", fontsize=6)
+
+        # Track 7: Rock Type (categorical bands; hatched where weak)
+        if has_rt:
+            self._plot_rock_type_track(axes[6], depth, filtered, rt_margin_min, rt_count)
 
         # Add formation tops overlay
         if formation_tops is not None:

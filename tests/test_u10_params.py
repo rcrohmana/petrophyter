@@ -191,3 +191,34 @@ def test_tops_tvd_confirmation_is_honoured_end_to_end(qtbot, tmp_path):
     parts = build_parts(dialog.plan, wells)
     assert set(parts) == {"WELL:BKS-01"}
     assert import_record(dialog.plan, dialog.plan.rows[0])["tvd_confirmed"] is True
+
+
+# ---- rock typing: primary permeability and RT log permeability -------------------
+def test_perm_choice_combos_write_project_and_well_values(win, model):
+    perm = win.perm_params_widget
+    perm.rt_log_combo.setCurrentIndex(perm.rt_log_combo.findData("Wyllie-Rose"))
+    assert model.rt_log_perm == "Wyllie-Rose"
+    model.rock_typing_enabled = True
+    model.parameters_changed.emit()
+    perm.primary_combo.setCurrentIndex(perm.primary_combo.findData("Rock type"))
+    assert model.perm_primary == "Rock type"
+    assert win._controls["perm_primary"] is not None
+
+    model.set_edit_scope("well")
+    perm.primary_combo.setCurrentIndex(perm.primary_combo.findData("Wyllie-Rose"))
+    assert model.get_entry("perm_primary")["value"] == "Wyllie-Rose"
+    assert model.perm_primary == "Rock type"        # the project default is untouched
+    win.refresh_scope_view()
+    assert perm.primary_combo.currentData() == "Wyllie-Rose"
+
+
+def test_rock_type_choice_follows_rock_typing_switch(win, model):
+    perm = win.perm_params_widget
+    item = perm.primary_combo.model().item(perm.primary_combo.findData("Rock type"))
+    assert not item.isEnabled()
+    assert item.toolTip()
+    model.rock_typing_enabled = True
+    model.parameters_changed.emit()
+    assert item.isEnabled()
+    assert [perm.rt_log_combo.itemText(i) for i in range(perm.rt_log_combo.count())] == [
+        "Timur", "Wyllie-Rose"]

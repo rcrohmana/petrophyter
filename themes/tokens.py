@@ -145,7 +145,17 @@ PLOT_COLORS = {
     "DEFAULT_SCATTER": "#1E90FF",
     "GR_FILL": "#90EE90",
     "RES_FILL": "#FFFF00",
+    # Rock type with no assignment (ROCK_TYPE == 0).
+    "ROCK_TYPE_NONE": "#9A9A9A",
 }
+
+# Rock types are ordered (RT 1 = lowest quality), so they share one ordinal ramp
+# (perceptually uniform, dark to light) that reads on both themes. With n types the
+# ramp is sampled at n evenly spaced steps; see themes.colors.get_rock_type_color.
+ROCK_TYPE_RAMP = (
+    "#440154", "#482878", "#3E4A89", "#31688E", "#26828E",
+    "#1F9E89", "#35B779", "#6DCD59", "#B4DE2C", "#FDE725",
+)
 
 PLOT_CHROME = {
     "light": {

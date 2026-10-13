@@ -155,7 +155,7 @@ class LogDisplayTab(QWidget):
         self.plot_stack.setMinimumHeight(650)  # Fixed minimum height for log
 
         # Page 0: Interactive (pyqtgraph)
-        self.interactive_log = InteractiveLogPlot(n_tracks=6)
+        self.interactive_log = InteractiveLogPlot(n_tracks=7)
         if HAS_PYQTGRAPH:
             self.interactive_log.depth_changed.connect(
                 self._on_interactive_depth_changed
@@ -610,10 +610,23 @@ class LogDisplayTab(QWidget):
             self._classic_drawing = False
             self.classic_log.canvas.draw()
 
+    def _rock_type_options(self) -> tuple:
+        """(margin_min, number of rock types) for the Rock Type track."""
+        from modules.rock_typing import DEFAULT_SETTINGS
+
+        defs = getattr(self.model.project, "rock_types", None) or {}
+        margin_min = (defs.get("settings") or {}).get(
+            "margin_min", DEFAULT_SETTINGS["margin_min"])
+        counts = [int(s.get("n_rt", 0)) for s in (defs.get("sets") or {}).values()]
+        return float(margin_min), (max(counts) if counts else None)
+
     def _update_interactive_log(self):
         """Update interactive pyqtgraph viewer."""
         if self.model.results is None:
             return
+
+        self.interactive_log.rt_margin_min, self.interactive_log.rt_count = (
+            self._rock_type_options())
 
         # Get custom curve config with HCPV mode
         columns = self.model.results.columns.tolist()
@@ -655,6 +668,7 @@ class LogDisplayTab(QWidget):
         # Same HCPV show and mode as the interactive engine
         hcpv_curves = self._get_hcpv_curve_config(self.model.results.columns.tolist())
 
+        margin_min, rt_count = self._rock_type_options()
         self._classic_drawing = True
         try:
             if top < bottom:
@@ -663,12 +677,16 @@ class LogDisplayTab(QWidget):
                     depth_range=(top, bottom),
                     formation_tops=formation_tops,
                     hcpv_curves=hcpv_curves,
+                    rt_margin_min=margin_min,
+                    rt_count=rt_count,
                 )
             else:
                 self.classic_log.plot_petrophysics_summary(
                     self.model.results,
                     formation_tops=formation_tops,
                     hcpv_curves=hcpv_curves,
+                    rt_margin_min=margin_min,
+                    rt_count=rt_count,
                 )
             axes = self.classic_log.figure.axes
             if axes:

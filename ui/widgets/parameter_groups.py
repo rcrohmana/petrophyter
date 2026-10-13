@@ -988,6 +988,9 @@ class ResistivityParamsGroup(QWidget):
 class PermParamsGroup(QWidget):
     """Permeability coefficient parameters widget."""
 
+    PRIMARY_CHOICES = ("Timur", "Wyllie-Rose", "Rock type")
+    RT_LOG_CHOICES = ("Timur", "Wyllie-Rose")
+
     params_changed = pyqtSignal()
     calculate_clicked = pyqtSignal()
     apply_clicked = pyqtSignal()
@@ -1030,6 +1033,26 @@ class PermParamsGroup(QWidget):
         form.addRow("Q:", self.q_spin)
         layout.addLayout(form)
 
+        # Which estimate is the primary permeability, and which feeds the rock-type log.
+        rt_form = QFormLayout()
+        self.primary_combo = QComboBox()
+        for name in self.PRIMARY_CHOICES:
+            self.primary_combo.addItem(name, name)
+        self.primary_combo.setToolTip(
+            "The permeability the summaries, pay flags and exports treat as primary. "
+            "Rock type uses the permeability of each sample's rock type."
+        )
+        self.rt_log_combo = QComboBox()
+        for name in self.RT_LOG_CHOICES:
+            self.rt_log_combo.addItem(name, name)
+        self.rt_log_combo.setToolTip(
+            "The log permeability that rock typing uses to place samples without core."
+        )
+        rt_form.addRow("Primary permeability:", self.primary_combo)
+        rt_form.addRow("Log permeability for rock types:", self.rt_log_combo)
+        layout.addLayout(rt_form)
+        self.set_rock_typing_available(False)
+
         # Info label
         info = QLabel("Timur defaults: C=8581, P=4.4, Q=2.0")
         info.setObjectName("PlaceholderLabel")
@@ -1066,12 +1089,33 @@ class PermParamsGroup(QWidget):
         self.c_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.p_spin.valueChanged.connect(lambda: self.params_changed.emit())
         self.q_spin.valueChanged.connect(lambda: self.params_changed.emit())
+        self.primary_combo.currentIndexChanged.connect(lambda: self.params_changed.emit())
+        self.rt_log_combo.currentIndexChanged.connect(lambda: self.params_changed.emit())
+
+    def set_rock_typing_available(self, available: bool):
+        """Enable the "Rock type" choice only while rock typing is on in the analysis."""
+        item = self.primary_combo.model().item(self.primary_combo.findData("Rock type"))
+        if item is None:
+            return
+        item.setEnabled(bool(available))
+        item.setToolTip("" if available else
+                        "Turn on rock typing in the Rock Typing tab to use this.")
+
+    def set_perm_choices(self, primary: str, rt_log: str):
+        """Show the primary and rock-type log permeability (no signals)."""
+        for combo, value in ((self.primary_combo, primary), (self.rt_log_combo, rt_log)):
+            index = combo.findData(value)
+            combo.blockSignals(True)
+            combo.setCurrentIndex(max(index, 0))
+            combo.blockSignals(False)
 
     def get_params(self) -> Dict:
         return {
             "C": self.c_spin.value(),
             "P": self.p_spin.value(),
             "Q": self.q_spin.value(),
+            "perm_primary": self.primary_combo.currentData(),
+            "rt_log_perm": self.rt_log_combo.currentData(),
         }
 
     def set_params(self, C: float, P: float, Q: float):

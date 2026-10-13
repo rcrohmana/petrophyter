@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPen
+from PyQt6.QtGui import QBrush, QColor, QPen
 
-from themes.colors import get_plot_chrome, get_plot_color
+from themes.colors import get_plot_chrome, get_plot_color, get_rock_type_color
 from themes.helpers import set_status
 from themes.icon_loader import get_icon
 from themes.tokens import PLOT_COLORS
@@ -145,6 +145,8 @@ class InteractiveLogPlot(QWidget):
     )  # (top, bottom) from region selection
     cursor_moved = pyqtSignal(float, dict)  # (depth, {curve: value})
 
+    RT_TRACK = 6  # index of the Rock Type track; never in the normalised-track list
+
     def __init__(self, n_tracks: int = 6, parent=None):
         super().__init__(parent)
         self.n_tracks = n_tracks
@@ -163,6 +165,10 @@ class InteractiveLogPlot(QWidget):
         self._last_mouse_update = 0  # Timestamp for throttling mouse updates
         self._mouse_throttle_ms = 33  # ~30 FPS limit (33ms between updates)
         self._chrome = get_plot_chrome()
+        # Rock Type track (the seventh); shown only when the results carry ROCK_TYPE.
+        self.rt_margin_min = 0.05  # bands with RT_MARGIN below this are drawn faded
+        self.rt_count = None  # number of rock types in the definitions (ramp spacing)
+        self._rt_source = None  # (depth, source text array) for the crosshair readout
 
         self._setup_ui()
         self.refresh_theme()
@@ -284,7 +290,8 @@ class InteractiveLogPlot(QWidget):
             return
 
         # Track titles
-        track_titles = ["GR/Vsh", "Porosity", "Sw", "RT/Perm", "Flags", "HCPV"]
+        track_titles = ["GR/Vsh", "Porosity", "Sw", "RT/Perm", "Flags", "HCPV",
+                        "Rock Type"]
 
         self.plot_widgets = []
 
@@ -353,6 +360,8 @@ class InteractiveLogPlot(QWidget):
                 # Connect zoom/pan to emit depth_changed
                 plot.getViewBox().sigRangeChanged.connect(self._on_view_range_changed)
 
+            if i == self.RT_TRACK:
+                plot.setVisible(False)  # until a result with ROCK_TYPE is plotted
             self.plot_widgets.append(plot)
 
         # Connect mouse move signal ONCE (not per track) - critical for performance
@@ -372,7 +381,7 @@ class InteractiveLogPlot(QWidget):
 
         # Find which plot contains the mouse
         for i, plot in enumerate(self.plot_widgets):
-            if plot.sceneBoundingRect().contains(pos):
+            if plot.isVisible() and plot.sceneBoundingRect().contains(pos):
                 mousePoint = plot.getViewBox().mapSceneToView(pos)
                 depth = mousePoint.y()
                 x_val = mousePoint.x()
@@ -389,14 +398,74 @@ class InteractiveLogPlot(QWidget):
                 # Get values at this depth
                 values = self._get_values_at_depth(depth)
                 if values:
-                    self.value_label.setText(self.format_readout(values))
+                    self.value_label.setText(self.format_readout(values, depth))
 
                 self.cursor_moved.emit(depth, values)
                 break
 
-    def format_readout(self, values: dict) -> str:
+    def format_readout(self, values: dict, depth: float = None) -> str:
         """Readout of every curve with its unit; the label wraps, nothing is cut."""
-        return ts.readout_text(values, self.curve_units)
+        rt_keys = ("ROCK_TYPE", "FZI")
+        text = ts.readout_text(
+            {k: v for k, v in values.items() if k not in rt_keys}, self.curve_units
+        )
+        if "ROCK_TYPE" in values:
+            rt_text = ts.rock_type_readout(values, self._rock_source_at(depth))
+            text = f"{text} | {rt_text}" if text else rt_text
+        return text
+
+    def _rock_source_at(self, depth) -> str:
+        """ROCK_TYPE_SOURCE at ``depth`` (empty without the column)."""
+        if self._rt_source is None or depth is None:
+            return ""
+        depths, source = self._rt_source
+        if len(depths) == 0:
+            return ""
+        idx = min(int(np.searchsorted(depths, depth)), len(source) - 1)
+        value = source[idx]
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return ""
+        return str(value)
+
+    def _plot_rock_type(self, data: pd.DataFrame, depth):
+        """Draw the Rock Type track: stepped bands, faded and hatched where weak."""
+        plot = self.plot_widgets[self.RT_TRACK]
+        margin = data["RT_MARGIN"].values if "RT_MARGIN" in data.columns else None
+        source = data["ROCK_TYPE_SOURCE"].values if "ROCK_TYPE_SOURCE" in data.columns else None
+        rt = data["ROCK_TYPE"].values
+        bands = ts.rock_type_bands(depth, rt, margin, source, self.rt_margin_min)
+        n_types = self.rt_count or int(np.nanmax(np.append(rt.astype(float), 0)))
+        brushes = []
+        for _top, _base, rock_type, faded in bands:
+            color = QColor(get_rock_type_color(rock_type, n_types))
+            if faded:
+                color.setAlpha(110)
+                brushes.append(QBrush(color, Qt.BrushStyle.BDiagPattern))
+            else:
+                brushes.append(QBrush(color))
+        if bands:
+            plot.addItem(
+                pg.BarGraphItem(
+                    x0=[0.0] * len(bands),
+                    x1=[1.0] * len(bands),
+                    y0=[b[0] for b in bands],
+                    y1=[b[1] for b in bands],
+                    brushes=brushes,
+                    pen=pg.mkPen(None),
+                )
+            )
+        for rock_type in sorted({b[2] for b in bands if b[2] >= 1}):
+            color = get_rock_type_color(rock_type, n_types)
+            plot.plot([], [], pen=None, symbol="s", symbolBrush=color,
+                      symbolPen=pg.mkPen(None), name=f"RT {rock_type}")
+        plot.setXRange(0, 1, padding=0)
+        plot.getAxis("bottom").setTicks([[]])
+        self.curves_data["ROCK_TYPE"] = (depth, rt)
+        self.curve_units["ROCK_TYPE"] = ""
+        if "FZI" in data.columns:
+            self.curves_data["FZI"] = (depth, data["FZI"].values)
+            self.curve_units["FZI"] = ""
+        self._rt_source = (depth, source) if source is not None else None
 
     def plot_curves(self, data: pd.DataFrame, curve_config: dict = None):
         """
@@ -420,6 +489,10 @@ class InteractiveLogPlot(QWidget):
         self.clear()
 
         depth = data["DEPTH"].values
+        self._rt_source = None
+        has_rt = "ROCK_TYPE" in data.columns and len(self.plot_widgets) > self.RT_TRACK
+        if len(self.plot_widgets) > self.RT_TRACK:
+            self.plot_widgets[self.RT_TRACK].setVisible(has_rt)
 
         # Default configuration if not provided
         if curve_config is None:
@@ -496,6 +569,9 @@ class InteractiveLogPlot(QWidget):
             # Set X range for normalized tracks (0-1)
             if spec_normalised or track_idx in [0, 1, 2, 4]:
                 plot.setXRange(0, 1, padding=0.02)
+
+        if has_rt:
+            self._plot_rock_type(data, depth)
 
         # Auto-range Y only on first track (others are linked)
         if self.plot_widgets:
@@ -663,6 +739,7 @@ class InteractiveLogPlot(QWidget):
         self.curve_units.clear()
         self.curve_labels.clear()
         self._dashed.clear()
+        self._rt_source = None
         self._depth_array = None
         self.clear_formation_tops()
 
