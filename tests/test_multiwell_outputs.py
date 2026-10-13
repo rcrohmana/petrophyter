@@ -657,3 +657,190 @@ def test_field_sw_without_phih_pay_falls_back_to_net_pay_weights(model):
         ds.summary.pop("phih_pay", None)
     total = wells_summary_frame(model.project.wells).iloc[-1]
     assert total["Avg Sw"] == pytest.approx((0.2 * 10.0 + 0.6 * 1.0) / 11.0, rel=1e-12)
+
+
+# ---- rock types (P1): Summary table, Rock Types sheet, LAS curves, definitions CSV ----
+from services.export_service import (
+    ROCKTYPES_SHEET, WELL_COLUMNS, ZONE_COLUMNS, rock_type_definitions_frame,
+    rock_type_field_total, rock_types_frame,
+)
+
+_RT_SET = {"n_rt": 3, "boundaries": [-0.2, 0.2], "centers": [-0.5, 0.0, 0.5],
+           "fzi": [0.3, 1.0, 3.2], "feature_range": [-3.0, 3.0], "n_samples": [10, 20, 10],
+           "k_rmse_log10": [0.2, 0.1, 0.3], "edited": False, "basis": "pooled, test"}
+_RT_DEFS = {"method": "fzi", "feature": "log10_fzi", "fit_scope": "project", "set": _RT_SET,
+            "zone_sets": {}, "basis": "pooled",
+            "settings": {"reservoir_only": False, "min_phie": 0.02}}
+
+
+def _rock_well(key, name, fit_scope="project", tops=True):
+    data = fixture_frame("sample_log_data")
+    ds = WellDataset(key, name)
+    ds.identity = {"well_name": name, "uwi": f"UWI-{name}"}
+    ds.las_data = data
+    ds.curve_mapping = dict(FULL_MAPPING)
+    if tops:
+        ds.formation_tops = make_tops()
+    params = {"rock_typing_enabled": True, "rock_types": {**_RT_DEFS, "fit_scope": fit_scope}}
+    ds.results, ds.summary = run_pipeline(
+        data, FULL_MAPPING, params, formation_tops=ds.formation_tops)
+    ds.calculated = True
+    return ds
+
+
+@pytest.fixture
+def rock_model():
+    m = AppModel()
+    m.project.add_well(_rock_well("W:A", "Alpha"))
+    m.project.add_well(_rock_well("W:B", "Beta", tops=False), activate=False)
+    m.project.set_active("W:A")
+    return m
+
+
+def test_rock_pipeline_fixture_has_assigned_samples(rock_model):
+    rock = rock_model.project.get("W:A").summary["rock_types"]
+    assert sum(r["samples"] for r in rock["by_rt"]) > 0
+
+
+def test_existing_column_sets_are_unchanged():
+    assert WELL_COLUMNS == [
+        "Well", "Status", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw", "HCPV",
+        "Rw", "Rw source", "Rsh", "Rsh source", "QC score"]
+    assert ZONE_COLUMNS == [
+        "Well", "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw", "HCPV",
+        "a", "m", "n", "Rw", "Rsh", "Vsh cutoff", "Phi cutoff", "Sw cutoff", "Param sources"]
+
+
+def test_rock_types_sheet_only_when_rock_typing_is_on(tmp_path, model, rock_model):
+    off = tmp_path / "off.xlsx"
+    assert ExportService().export_excel_wells(model.project.wells, str(off))
+    assert ROCKTYPES_SHEET not in pd.ExcelFile(off).sheet_names
+
+    on = tmp_path / "on.xlsx"
+    assert ExportService().export_excel_wells(rock_model.project.wells, str(on))
+    book = pd.ExcelFile(on)
+    assert ROCKTYPES_SHEET in book.sheet_names
+    sheet = book.parse(ROCKTYPES_SHEET)
+    assert list(sheet.columns)[:3] == ["Well", "Rock type", "Samples"]
+    assert {"Alpha", "Beta", "Field total"} <= set(sheet["Well"])
+    # the well sheets carry the new result columns
+    alpha = book.parse("Alpha")
+    assert {"RQI", "FZI", "ROCK_TYPE", "ROCK_TYPE_SOURCE", "RT_MARGIN"} <= set(alpha.columns)
+    assert "Zones" in book.sheet_names and "Provenance" in book.sheet_names
+
+
+def test_a_well_named_rock_types_gets_a_unique_sheet(tmp_path, rock_model):
+    rock_model.project.get("W:B").display_name = ROCKTYPES_SHEET
+    path = tmp_path / "clash.xlsx"
+    assert ExportService().export_excel_wells(rock_model.project.wells, str(path))
+    names = pd.ExcelFile(path).sheet_names
+    assert len(names) == len({n.lower() for n in names})
+
+
+def test_single_well_excel_gets_the_sheet_only_when_on(tmp_path, model, rock_model):
+    svc = ExportService()
+    for m, expected in ((model, False), (rock_model, True)):
+        ds = m.project.active
+        path = tmp_path / f"single_{expected}.xlsx"
+        assert svc.export_excel(ds.results, ds.summary, str(path), {"Well": "Alpha"})
+        assert (ROCKTYPES_SHEET in pd.ExcelFile(path).sheet_names) is expected
+
+
+def test_csv_all_wells_carries_rock_type_columns(tmp_path, rock_model):
+    path = tmp_path / "all.csv"
+    assert ExportService().export_csv_wells(rock_model.project.wells, str(path))
+    header = pd.read_csv(path, nrows=1).columns
+    assert {"WELL", "RQI", "FZI", "ROCK_TYPE", "ROCK_TYPE_SOURCE", "RT_MARGIN"} <= set(header)
+
+
+def test_las_has_numeric_rock_curves_and_no_text_source(tmp_path, rock_model):
+    ds = rock_model.project.get("W:A")
+    ds.results = ds.results.assign(PERM_RT=10.0)
+    out = tmp_path / "las"
+    assert ExportService().export_las_wells(rock_model.project.wells, str(out))
+    text = (out / "Alpha.las").read_text(encoding="utf-8")
+    header = text.split("~A")[1].splitlines()[0].split()
+    for curve in ("ROCK_TYPE", "FZI", "RQI", "RT_MARGIN", "PERM_RT"):
+        assert curve in header
+    assert "ROCK_TYPE_SOURCE" not in text.split("~A")[0]
+    assert "ROCK_TYPE_SOURCE" not in header
+
+
+def test_field_total_sums_measures_and_weights_averages(rock_model):
+    a, b = rock_model.project.wells
+    for ds, net, sw, phie, phih, vsh in ((a, 10.0, 0.2, 0.10, 1.0, 0.1),
+                                         (b, 5.0, 0.6, 0.30, 3.0, 0.3)):
+        row = ds.summary["rock_types"]["by_rt"][0]
+        row.update({"samples": 10, "gross_sand": 20.0, "net_reservoir": 15.0, "net_pay": net,
+                    "avg_sw_pay": sw, "avg_phie_pay": phie, "avg_vsh_pay": vsh,
+                    "phih_pay": phih, "hcpv_net_pay": 2.0, "perm_geomean": 10.0,
+                    "pct_core": 50.0})
+    state = rock_type_field_total(rock_model.project.wells)
+    assert state["state"] == "ok"
+    row = next(r for r in state["rows"] if r["Rock type"] == 1)
+    assert row["Net pay"] == pytest.approx(15.0) and row["HCPV"] == pytest.approx(4.0)
+    assert row["Gross"] == pytest.approx(40.0)
+    assert row["Avg PHIE"] == pytest.approx((0.10 * 10 + 0.30 * 5) / 15)       # net pay weights
+    assert row["Avg Sw"] == pytest.approx((0.2 * 1.0 + 0.6 * 3.0) / 4.0)       # pore thickness
+    assert row["Perm geomean"] == pytest.approx(10.0)
+    assert row["% core"] == pytest.approx(50.0)
+
+
+def test_mixed_definitions_have_no_field_total(rock_model):
+    rock_model.project.get("W:B").summary["rock_types"]["fit_scope"] = "well"
+    state = rock_type_field_total(rock_model.project.wells)
+    assert state["state"] == "mixed" and state["rows"] == []
+    assert "Field total" not in set(rock_types_frame(rock_model.project.wells)["Well"])
+
+
+def test_no_rock_types_means_none(model):
+    assert rock_type_field_total(model.project.wells) == {"state": "none", "rows": []}
+    assert rock_types_frame(model.project.wells).empty
+
+
+def test_summary_rock_table_hidden_without_the_key(qtbot, model):
+    tab = SummaryTab(model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.rock_group.isHidden()
+
+
+def test_summary_rock_table_shown_with_field_total_for_project_scope(qtbot, rock_model):
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert not tab.rock_group.isHidden()
+    assert str(tab.rock_model._df.iloc[0, 0]) == "RT 1"
+    assert "core-labelled" in tab.rock_note.text()
+    assert "Field total" in set(tab.rock_wells_model._df["Well"])
+    assert "mixed definitions" not in tab.rock_wells_note.text()
+    swatch = tab.rock_model.data(tab.rock_model.index(0, 0), Qt.ItemDataRole.DecorationRole)
+    assert swatch is not None
+
+
+def test_summary_rock_table_has_no_field_total_for_mixed_definitions(qtbot, rock_model):
+    rock_model.project.get("W:B").summary["rock_types"]["fit_scope"] = "zone"
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert "Field total" not in set(tab.rock_wells_model._df["Well"])
+    assert "mixed definitions" in tab.rock_wells_note.text()
+
+
+def test_rock_definitions_frame_and_csv(tmp_path, export_tab, model):
+    defs = {**_RT_DEFS, "sets": {"*": _RT_SET}}
+    frame = rock_type_definitions_frame(defs)
+    assert list(frame["Rock type"]) == [1, 2, 3]
+    assert np.isnan(frame.loc[0, "Lower boundary"]) and np.isnan(frame.loc[2, "Upper boundary"])
+    assert frame.loc[1, "Lower boundary"] == pytest.approx(-0.2)
+    assert frame.loc[1, "Upper boundary"] == pytest.approx(0.2)
+    assert frame.loc[2, "FZI"] == pytest.approx(3.2) and set(frame["Set"]) == {"Project"}
+    path = tmp_path / "defs.csv"
+    assert ExportService().export_rock_type_definitions(defs, str(path))
+    assert len(pd.read_csv(path)) == 3
+    assert not ExportService().export_rock_type_definitions({}, str(tmp_path / "none.csv"))
+    # the Export tab offers the action only once definitions exist
+    assert export_tab.definitions_btn.isHidden()
+    model.project.rock_types = defs
+    export_tab.update_display()
+    assert not export_tab.definitions_btn.isHidden()

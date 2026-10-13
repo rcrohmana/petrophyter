@@ -183,6 +183,7 @@ def _write_excel_sheet(writer, df: pd.DataFrame, sheet_name: str) -> None:
 SUMMARY_SHEET = "Summary"
 ZONES_SHEET = "Zones"
 PROVENANCE_SHEET = "Provenance"
+ROCKTYPES_SHEET = "Rock Types"
 FIELD_TOTAL_LABEL = "Field total"
 
 WELL_COLUMNS = [
@@ -550,6 +551,180 @@ def zones_frame(wells) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=ZONE_COLUMNS)
 
 
+# ---------------------------------------------------------------------------
+# Rock types (P1): per-well rows from summary["rock_types"], a field total
+# only when every contributing well shares the project-wide definitions.
+# ---------------------------------------------------------------------------
+ROCKTYPE_COLUMNS = [
+    "Well", "Rock type", "Samples", "Gross", "Net reservoir", "Net pay", "N/G reservoir",
+    "N/G pay", "Avg PHIE", "Avg Sw", "Avg Vsh", "PHIH", "HCPV", "Perm geomean", "FZI",
+    "% core",
+]
+UNASSIGNED_LABEL = "Unassigned"
+MIXED_DEFINITIONS = "mixed definitions"
+# summary row key -> ROCKTYPE_COLUMNS name
+_ROCKTYPE_FIELDS = {
+    "samples": "Samples", "gross_sand": "Gross", "net_reservoir": "Net reservoir",
+    "net_pay": "Net pay", "ng_reservoir": "N/G reservoir", "ng_pay": "N/G pay",
+    "avg_phie_pay": "Avg PHIE", "avg_sw_pay": "Avg Sw", "avg_vsh_pay": "Avg Vsh",
+    "phih_pay": "PHIH", "hcpv_net_pay": "HCPV", "perm_geomean": "Perm geomean",
+    "fzi": "FZI", "pct_core": "% core",
+}
+
+
+def _rock_type_label(rt):
+    return UNASSIGNED_LABEL if int(rt) == 0 else int(rt)
+
+
+def _rock_type_row(well: str, row: dict) -> dict:
+    out = {c: _NAN for c in ROCKTYPE_COLUMNS}
+    out["Well"] = well
+    out["Rock type"] = _rock_type_label(row.get("rt", 0))
+    for key, column in _ROCKTYPE_FIELDS.items():
+        out[column] = _num(row.get(key))
+    return out
+
+
+def well_rock_type_rows(rock_types: dict, well: str) -> list:
+    """Rows of one well's ``summary["rock_types"]``: each rock type, then Unassigned when used."""
+    rows = [_rock_type_row(well, r) for r in (rock_types or {}).get("by_rt") or []]
+    unassigned = (rock_types or {}).get("unassigned")
+    if unassigned and unassigned.get("samples"):
+        rows.append(_rock_type_row(well, unassigned))
+    return rows
+
+
+def wells_with_rock_types(wells) -> list:
+    """Wells whose current results carry ``summary["rock_types"]``."""
+    return [ds for ds in wells
+            if ds.summary and ds.calculated and ds.status != "error"
+            and ds.summary.get("rock_types")]
+
+
+def rock_type_field_total(wells) -> dict:
+    """Field total per rock type over the wells that have ``summary["rock_types"]``.
+
+    Returns ``{"state": "none" | "mixed" | "ok", "rows": [...]}``. The total exists
+    only when every contributing well has ``fit_scope == "project"`` (one shared
+    definition set); otherwise ``state`` is ``"mixed"`` and ``rows`` is empty.
+    Thickness and HCPV are summed. Avg PHIE and Avg Vsh are weighted by net pay,
+    Avg Sw by pore thickness in pay (``phih_pay``, else Avg PHIE x net pay), the
+    permeability geomean by net pay. Rows are ``ROCKTYPE_COLUMNS`` rows with
+    Well = ``Field total``; N/G is total net over total gross.
+    """
+    contributing = wells_with_rock_types(wells)
+    if not contributing:
+        return {"state": "none", "rows": []}
+    if any(ds.summary["rock_types"].get("fit_scope") != "project" for ds in contributing):
+        return {"state": "mixed", "rows": []}
+    groups = {}
+    for ds in contributing:
+        rt = ds.summary["rock_types"]
+        for row in list(rt.get("by_rt") or []) + [rt.get("unassigned") or {}]:
+            if row and row.get("samples") is not None:
+                groups.setdefault(int(row.get("rt", 0)), []).append(row)
+    rows = []
+    for code in sorted(c for c in groups if c > 0) + ([0] if 0 in groups else []):
+        members = groups[code]
+        if code == 0 and not sum(m.get("samples") or 0 for m in members):
+            continue
+
+        def total(key, members=members):
+            return float(sum(v for v in (_num(m.get(key)) for m in members) if v == v))
+
+        def weighted(key, weight, members=members):
+            pairs = [(_num(m.get(key)), weight(m)) for m in members]
+            pairs = [(v, w) for v, w in pairs if v == v and w == w and w > 0]
+            denominator = sum(w for _, w in pairs)
+            return sum(v * w for v, w in pairs) / denominator if denominator > 0 else _NAN
+
+        def net(m):
+            return _num(m.get("net_pay"))
+
+        def pore(m):
+            phih = _num(m.get("phih_pay"))
+            return phih if phih == phih else _num(m.get("avg_phie_pay")) * net(m)
+
+        gross, net_res, net_pay = total("gross_sand"), total("net_reservoir"), total("net_pay")
+        samples = total("samples")
+        geo = [(_num(m.get("perm_geomean")), net(m)) for m in members]
+        geo = [(k, w) for k, w in geo if k == k and k > 0 and w == w and w > 0]
+        fzi = next((v for v in (_num(m.get("fzi")) for m in members) if v == v), _NAN)
+        core = sum(v * (m.get("samples") or 0) for m in members
+                   for v in [_num(m.get("pct_core"))] if v == v)
+        out = {c: _NAN for c in ROCKTYPE_COLUMNS}
+        out.update({
+            "Well": FIELD_TOTAL_LABEL, "Rock type": _rock_type_label(code),
+            "Samples": samples, "Gross": gross, "Net reservoir": net_res, "Net pay": net_pay,
+            "N/G reservoir": net_res / gross if gross > 0 else _NAN,
+            "N/G pay": net_pay / gross if gross > 0 else _NAN,
+            "Avg PHIE": weighted("avg_phie_pay", net), "Avg Sw": weighted("avg_sw_pay", pore),
+            "Avg Vsh": weighted("avg_vsh_pay", net), "PHIH": total("phih_pay"),
+            "HCPV": total("hcpv_net_pay"),
+            "Perm geomean": (math.exp(sum(math.log(k) * w for k, w in geo)
+                                      / sum(w for _, w in geo)) if geo else _NAN),
+            "FZI": fzi, "% core": core / samples if samples > 0 else _NAN,
+        })
+        rows.append(out)
+    return {"state": "ok", "rows": rows}
+
+
+def rock_types_frame(wells) -> pd.DataFrame:
+    """Well x rock type rows (plus Field total rows when definitions are project-wide)."""
+    rows = []
+    for ds in wells_with_rock_types(wells):
+        rows.extend(well_rock_type_rows(ds.summary["rock_types"], well_label(ds)))
+    rows.extend(rock_type_field_total(wells)["rows"])
+    return pd.DataFrame(rows, columns=ROCKTYPE_COLUMNS)
+
+
+DEFINITION_COLUMNS = [
+    "Set", "Rock type", "Samples", "log10 FZI centre", "FZI", "Lower boundary",
+    "Upper boundary", "k RMSE log10", "Method", "Fit scope", "Edited", "Basis",
+]
+
+
+def rock_type_definitions_frame(defs) -> pd.DataFrame:
+    """The rock-type definitions (``Project.rock_types``) as one row per set and rock type.
+
+    ``Set`` is ``Project`` for the pooled set (key ``*``), else the well or zone key.
+    Boundaries are the cut points on log10(FZI): the lowest type has no lower and the
+    highest no upper boundary (blank).
+    """
+    rows = []
+    for key, rset in ((defs or {}).get("sets") or {}).items():
+        n = int(rset.get("n_rt") or len(rset.get("fzi") or []))
+        bounds = list(rset.get("boundaries") or [])
+        for i in range(n):
+            def pick(name, i=i, rset=rset):
+                values = rset.get(name) or []
+                return _num(values[i]) if i < len(values) else _NAN
+
+            rows.append({
+                "Set": "Project" if key == "*" else str(key), "Rock type": i + 1,
+                "Samples": pick("n_samples"), "log10 FZI centre": pick("centers"),
+                "FZI": pick("fzi"),
+                "Lower boundary": _num(bounds[i - 1]) if 0 < i <= len(bounds) else _NAN,
+                "Upper boundary": _num(bounds[i]) if i < len(bounds) else _NAN,
+                "k RMSE log10": pick("k_rmse_log10"),
+                "Method": str(defs.get("method") or ""),
+                "Fit scope": str(defs.get("fit_scope") or ""),
+                "Edited": "yes" if rset.get("edited") else "no",
+                "Basis": str(rset.get("basis") or ""),
+            })
+    return pd.DataFrame(rows, columns=DEFINITION_COLUMNS)
+
+
+def write_rock_type_definitions_csv(defs, file_path) -> int:
+    """Write the definitions table to ``file_path`` (atomic); returns the number of rows."""
+    frame = rock_type_definitions_frame(defs)
+    if frame.empty:
+        raise ValueError("no rock-type definitions to export")
+    with _atomic_target(file_path, ".csv") as temporary_path:
+        spreadsheet_safe(frame, csv=True).to_csv(temporary_path, index=False)
+    return len(frame)
+
+
 def combined_results(wells, depth_range=None) -> pd.DataFrame:
     """All wells' results stacked, with the well's display name as first column ``WELL``.
 
@@ -589,8 +764,10 @@ def _export_wells_excel(wells, file_path, depth_range=None):
     if not ready:
         raise ValueError("no well has results to export")
     names = unique_names([well_label(ds) for ds in ready], 31,
-                         reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET))
+                         reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET,
+                                   ROCKTYPES_SHEET))
     zones = zones_frame(ready)
+    rock_types = rock_types_frame(ready)
     provenance = pd.DataFrame(
         [provenance_block(ds, depth_range) for ds in wells_with_results(wells)])
     with _atomic_target(file_path, ".xlsx") as temporary_path:
@@ -598,6 +775,8 @@ def _export_wells_excel(wells, file_path, depth_range=None):
             _write_excel_sheet(writer, wells_summary_frame(wells), SUMMARY_SHEET)
             if len(zones):
                 _write_excel_sheet(writer, zones, ZONES_SHEET)
+            if len(rock_types):
+                _write_excel_sheet(writer, rock_types, ROCKTYPES_SHEET)
             _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
             for ds, sheet in zip(ready, names):
                 _write_excel_sheet(writer, apply_depth_range(ds.results, depth_range), sheet)
@@ -650,6 +829,11 @@ class ExportService(QObject):
                 with pd.ExcelWriter(temporary_path, engine="openpyxl") as writer:
                     _write_excel_sheet(writer, results, "Results")
                     _write_excel_sheet(writer, summary_df, "Summary")
+                    if summary.get("rock_types"):
+                        rows = well_rock_type_rows(summary["rock_types"],
+                                                   (provenance or {}).get("Well", ""))
+                        _write_excel_sheet(writer, pd.DataFrame(rows, columns=ROCKTYPE_COLUMNS),
+                                           ROCKTYPES_SHEET)
                     if provenance:
                         _write_excel_sheet(writer, _provenance_frame(provenance),
                                            PROVENANCE_SHEET)
@@ -753,6 +937,21 @@ class ExportService(QObject):
             return False
         except Exception as e:
             self.export_error.emit(f"LAS export failed: {str(e)}")
+            return False
+
+    def export_rock_type_definitions(self, defs, file_path: str) -> bool:
+        """Write the rock-type definitions table (``Project.rock_types``) to CSV."""
+        try:
+            write_rock_type_definitions_csv(defs, file_path)
+            self.export_complete.emit(f"Exported to {file_path}")
+            return True
+        except PermissionError:
+            self.export_error.emit(
+                "CSV export failed: close the destination file and check folder permissions"
+            )
+            return False
+        except Exception as e:
+            self.export_error.emit(f"CSV export failed: {str(e)}")
             return False
 
     def get_csv_string(self, results: pd.DataFrame) -> str:

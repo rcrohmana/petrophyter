@@ -89,6 +89,14 @@ class ExportTab(QWidget):
 
         self.buttons = [self.csv_btn, self.excel_btn, self.las_btn]
 
+        # Rock-type definitions (project data, not a well result): shown once defined
+        self.definitions_btn = QPushButton("Export definitions")
+        self.definitions_btn.setIcon(get_icon("download"))
+        self.definitions_btn.setToolTip("Rock-type definitions of the project as CSV")
+        self.definitions_btn.clicked.connect(self._on_export_definitions)
+        self.definitions_btn.setVisible(False)
+        download_layout.addWidget(self.definitions_btn)
+
         download_layout.addStretch()
 
         content_layout.addWidget(download_group)
@@ -256,6 +264,7 @@ class ExportTab(QWidget):
             enabled = bool(self.model.calculated and self.model.results is not None)
         for button in self.buttons:
             button.setEnabled(enabled)
+        self.definitions_btn.setVisible(bool((self.model.project.rock_types or {}).get("sets")))
         self._update_status_line(enabled)
 
     def _scope_wells(self) -> list:
@@ -389,6 +398,17 @@ class ExportTab(QWidget):
             self._service.export_las(apply_depth_range(las_frame(ds), depth_range),
                                      ds.well_info, file_path,
                                      provenance_block(ds, depth_range))
+
+    def _on_export_definitions(self):
+        """Save the rock-type definitions table (project level, no freshness check)."""
+        defs = self.model.project.rock_types
+        if not (defs or {}).get("sets"):
+            return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Rock-Type Definitions", "petrophyter_rock_type_definitions.csv",
+            "CSV Files (*.csv);;All Files (*)")
+        if file_path:
+            self._service.export_rock_type_definitions(defs, file_path)
 
     def update_display(self):
         """Update display with analysis results."""

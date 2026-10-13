@@ -24,18 +24,32 @@ from ..widgets.info_strip import InfoStrip
 from ..widgets.plot_widget import PlotWidget
 from ..widgets.table_model import PandasTableModel
 from services.export_service import (
-    FIELD_TOTAL_LABEL, WELL_COLUMNS, wells_summary_frame, well_label,
+    FIELD_TOTAL_LABEL, MIXED_DEFINITIONS, ROCKTYPE_COLUMNS, UNASSIGNED_LABEL, WELL_COLUMNS,
+    rock_type_field_total, well_rock_type_rows, wells_summary_frame, wells_with_rock_types,
+    well_label,
 )
 from modules.pipeline import zone_diagnostic_note
 from services.issues import collect_issues, issue_counts
 from themes.helpers import set_status
-from themes.colors import get_color, get_plot_chrome, get_plot_color, TITLE_SIZE, LABEL_SIZE
+from themes.colors import (
+    get_color, get_plot_chrome, get_plot_color, get_rock_type_color, TITLE_SIZE, LABEL_SIZE,
+)
 
 ZONE_TABLE_COLUMNS = [
     "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw",
     "HCPV", "a", "m", "n", "Rw", "Cutoffs (Vsh/Phi/Sw)",
 ]
 WELL_TABLE_COLUMNS = WELL_COLUMNS + ["Issues"]
+ROCK_TABLE_COLUMNS = [
+    "Rock type", "Samples", "Gross", "Net", "Net pay", "N/G", "Avg PHIE", "Avg Sw", "HCPV",
+    "Perm geomean", "FZI", "% core",
+]
+ROCK_WELLS_COLUMNS = ["Well"] + ROCK_TABLE_COLUMNS
+_ROCK_SOURCE = (   # ROCK_TABLE_COLUMNS after "Rock type" -> ROCKTYPE_COLUMNS
+    ("Samples", 0), ("Gross", 1), ("Net reservoir", 1), ("Net pay", 1), ("N/G pay", 1, True),
+    ("Avg PHIE", 1, True), ("Avg Sw", 1, True), ("HCPV", 4), ("Perm geomean", 1), ("FZI", 2),
+    ("% core", 0),
+)
 CUTOFF_PARAMS = (
     ("vsh_cutoff", "Vsh cutoff"), ("phi_cutoff", "PHIE cutoff"), ("sw_cutoff", "Sw cutoff"),
 )
@@ -79,9 +93,12 @@ class _AnnotatedTableModel(PandasTableModel):
         self.bold_rows = set()
         self.bold_cells = set()
         self.row_states = {}
+        self.swatches = {}
 
-    def set_table(self, df, tooltips=None, bold_rows=(), bold_cells=(), row_states=None):
+    def set_table(self, df, tooltips=None, bold_rows=(), bold_cells=(), row_states=None,
+                  swatches=None):
         self.tooltips = dict(tooltips or {})
+        self.swatches = dict(swatches or {})
         self.row_states = dict(row_states or {})
         self.bold_rows = set(bold_rows)
         self.bold_cells = set(bold_cells)
@@ -92,6 +109,8 @@ class _AnnotatedTableModel(PandasTableModel):
             cell = (index.row(), index.column())
             if role == Qt.ItemDataRole.ToolTipRole:
                 return self.tooltips.get(cell)
+            if role == Qt.ItemDataRole.DecorationRole and cell in self.swatches:
+                return QColor(self.swatches[cell])
             state = self.row_states.get(index.row())
             if role == STATE_ROLE:
                 return state
@@ -259,6 +278,26 @@ class SummaryTab(QWidget):
         content_layout.addWidget(self.zones_group)
 
         # =====================================================================
+        # ROCK TYPES (only when a run carries summary["rock_types"])
+        # =====================================================================
+        self.rock_group = QGroupBox("Rock types")
+        rock_layout = QVBoxLayout(self.rock_group)
+        self.rock_note = QLabel("")
+        self.rock_note.setWordWrap(True)
+        rock_layout.addWidget(self.rock_note)
+        self.rock_table, self.rock_model = _make_table()
+        rock_layout.addWidget(self.rock_table)
+        self.rock_wells_label = QLabel("Wells by rock type")
+        rock_layout.addWidget(self.rock_wells_label)
+        self.rock_wells_note = QLabel("")
+        self.rock_wells_note.setWordWrap(True)
+        rock_layout.addWidget(self.rock_wells_note)
+        self.rock_wells_table, self.rock_wells_model = _make_table()
+        rock_layout.addWidget(self.rock_wells_table)
+        self.rock_group.setVisible(False)
+        content_layout.addWidget(self.rock_group)
+
+        # =====================================================================
         # WELLS (project, 2+ wells)
         # =====================================================================
         self.wells_group = QGroupBox("Wells")
@@ -290,6 +329,7 @@ class SummaryTab(QWidget):
     def _refresh_multi(self):
         self._update_cutoffs()
         self._update_zones()
+        self._update_rock_types()
         self._update_wells()
 
     def _update_cutoffs(self):
@@ -361,6 +401,129 @@ class SummaryTab(QWidget):
             pd.DataFrame(rows, columns=ZONE_TABLE_COLUMNS), tooltips, bold_cells=bold_cells,
             row_states=row_states)
         _fit_table(self.zones_table, len(rows))
+
+    @staticmethod
+    def _rock_cells(line) -> list:
+        """Display cells (after the rock-type column) of one ROCKTYPE_COLUMNS row."""
+        cells = []
+        for name, *rest in _ROCK_SOURCE:
+            digits = rest[0]
+            cells.append(_fmt(line[name], digits, bool(len(rest) > 1)))
+        return cells
+
+    @staticmethod
+    def _rock_note_text(rock: dict) -> str:
+        """One compact line: sources, exclusions, flags and core-vs-log agreement."""
+        counts = rock.get("counts") or {}
+        parts = [f"core-labelled {counts.get('core', 0)}", f"log-derived {counts.get('log', 0)}"]
+        excluded = {"Vsh": "x_vsh", "PHIE": "x_phie", "permeability": "x_perm", "no data": "x_nan"}
+        skipped = [f"{label} {counts[key]}" for label, key in excluded.items() if counts.get(key)]
+        if skipped:
+            parts.append("unassigned: " + ", ".join(skipped))
+        for label, key in (("near a boundary", "near_boundary"),
+                           ("outside the fitted range", "outside_range"),
+                           ("without a rock-type permeability", "perm_rt_missing")):
+            if counts.get(key):
+                parts.append(f"{counts[key]} {label}")
+        agreement = rock.get("agreement") or {}
+        if agreement.get("n") and agreement.get("fraction") is not None:
+            parts.append(f"core vs log agreement {agreement['fraction'] * 100:.0f}% "
+                         f"(n={agreement['n']})")
+        method = rock.get("method")
+        head = f"{'Winland R35' if method == 'r35' else 'FZI'} rock types"
+        if rock.get("fit_scope"):
+            head += f", fit scope {rock['fit_scope']}"
+        return head + ". Samples: " + "; ".join(parts) + "."
+
+    def _update_rock_types(self):
+        """Rock types of the active well, and wells by rock type with a field total.
+
+        Hidden entirely when no well has ``summary["rock_types"]`` (the feature is off).
+        The field total exists only when every contributing well has fit scope
+        ``project``; otherwise the table says "mixed definitions".
+        """
+        summary = self.model.summary if self.model.calculated else None
+        rock = (summary or {}).get("rock_types")
+        wells = wells_with_rock_types(self.model.project.wells)
+        self.rock_group.setVisible(bool(rock) or bool(wells))
+        empty = pd.DataFrame(columns=ROCK_TABLE_COLUMNS)
+        self.rock_model.set_table(empty)
+        self.rock_wells_model.set_table(pd.DataFrame(columns=ROCK_WELLS_COLUMNS))
+        self.rock_note.setText("")
+        self.rock_wells_note.setText("")
+        if not (rock or wells):
+            return
+        n_types = len(rock.get("by_rt") or []) if rock else 0
+
+        # ---- active well ----
+        self.rock_table.setVisible(bool(rock))
+        self.rock_note.setVisible(bool(rock))
+        if rock:
+            frame = pd.DataFrame(well_rock_type_rows(rock, ""), columns=ROCKTYPE_COLUMNS)
+            rows, tooltips, swatches, states = [], {}, {}, {}
+            for r, (_i, line) in enumerate(frame.iterrows()):
+                label = line["Rock type"]
+                unassigned = label == UNASSIGNED_LABEL
+                rows.append([("Unassigned" if unassigned else f"RT {int(label)}")]
+                            + self._rock_cells(line))
+                swatches[(r, 0)] = get_rock_type_color(0 if unassigned else int(label), n_types)
+                if unassigned:
+                    states[r] = "info"
+                    tooltips[(r, 0)] = (
+                        "Samples with no rock type: not reservoir, PHIE below the minimum, "
+                        "no usable permeability or missing data (counts in the note above).")
+                else:
+                    tooltips[(r, 0)] = str(rock.get("basis") or "")
+                    tooltips[(r, 5)] = "N/G = net pay / gross sand of the well."
+            self.rock_model.set_table(
+                pd.DataFrame(rows, columns=ROCK_TABLE_COLUMNS), tooltips, row_states=states,
+                swatches=swatches)
+            _fit_table(self.rock_table, len(rows))
+            self.rock_note.setText(self._rock_note_text(rock))
+            set_status(self.rock_note, "muted")
+
+        # ---- wells by rock type ----
+        show_wells = len(wells) >= 2
+        self.rock_wells_label.setVisible(show_wells)
+        self.rock_wells_note.setVisible(show_wells)
+        self.rock_wells_table.setVisible(show_wells)
+        if not show_wells:
+            return
+        field = rock_type_field_total(self.model.project.wells)
+        rows, tooltips, bold_rows, swatches = [], {}, set(), {}
+        n_all = max([len((ds.summary["rock_types"].get("by_rt") or [])) for ds in wells] + [0])
+
+        def add(line, well):
+            label = line["Rock type"]
+            unassigned = label == UNASSIGNED_LABEL
+            code = 0 if unassigned else int(label)
+            rows.append([well, "Unassigned" if unassigned else f"RT {code}"]
+                        + self._rock_cells(line))
+            swatches[(len(rows) - 1, 1)] = get_rock_type_color(code, n_all)
+
+        for ds in wells:
+            for row in well_rock_type_rows(ds.summary["rock_types"], well_label(ds)):
+                add(pd.Series(row), well_label(ds))
+        for row in field["rows"]:
+            add(pd.Series(row), FIELD_TOTAL_LABEL)
+            bold_rows.add(len(rows) - 1)
+            tooltips[(len(rows) - 1, 0)] = (
+                "Thickness and HCPV are summed over wells. Avg PHIE is weighted by net pay "
+                "thickness; Avg Sw by pore thickness in pay (sum of PHIE x dz).")
+        if field["state"] == "mixed":
+            self.rock_wells_note.setText(
+                f"Field total: {MIXED_DEFINITIONS} (wells were fitted with different "
+                "definitions, so rock type numbers are not comparable between them).")
+            set_status(self.rock_wells_note, "warning")
+        else:
+            self.rock_wells_note.setText(
+                "Rock type numbers share one project-wide definition, so the field total "
+                "adds the same rock type across wells.")
+            set_status(self.rock_wells_note, "muted")
+        self.rock_wells_model.set_table(
+            pd.DataFrame(rows, columns=ROCK_WELLS_COLUMNS), tooltips, bold_rows,
+            swatches=swatches)
+        _fit_table(self.rock_wells_table, len(rows))
 
     @staticmethod
     def _annotate(params, name, row, col, tooltips, bold_cells):
