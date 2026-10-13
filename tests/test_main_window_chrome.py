@@ -35,6 +35,12 @@ def test_tab_labels_have_no_emoji(window):
         assert not emoji.search(window.tab_widget.tabText(i))
 
 
+def test_rock_typing_tab_follows_diagnostics(window):
+    texts = [window.tab_widget.tabText(i) for i in range(window.tab_widget.count())]
+    assert texts.index("Rock Typing") == texts.index("Diagnostics") + 1
+    assert window.rock_tab in window._lazy_tabs
+
+
 def test_run_disabled_until_data(window):
     assert not window.run_button.isEnabled()
     assert not window.actions_["run_analysis"].isEnabled()

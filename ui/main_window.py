@@ -61,6 +61,7 @@ from .tabs.qc_tab import QCTab
 from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
 from .tabs.diagnostics_tab import DiagnosticsTab
+from .tabs.rock_typing_tab import RockTypingTab
 from .tabs.summary_tab import SummaryTab
 from .tabs.export_tab import ExportTab
 
@@ -242,6 +243,7 @@ class MainWindow(QMainWindow):
         self.petro_tab = PetrophysicsTab(self.model)
         self.log_tab = LogDisplayTab(self.model)
         self.diag_tab = DiagnosticsTab(self.model)
+        self.rock_tab = RockTypingTab(self.model)
         self.summary_tab = SummaryTab(self.model)
         self.export_tab = ExportTab(self.model)
 
@@ -249,11 +251,13 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.petro_tab, "Petrophysics")
         self.tab_widget.addTab(self.log_tab, "Log Display")
         self.tab_widget.addTab(self.diag_tab, "Diagnostics")
+        self.tab_widget.addTab(self.rock_tab, "Rock Typing")
         self.tab_widget.addTab(self.summary_tab, "Summary")
         self.tab_widget.addTab(self.export_tab, "Export")
         # Plot tabs redraw only while visible; the others are marked dirty
         # and catch up when they become current.
-        self._lazy_tabs = (self.qc_tab, self.petro_tab, self.log_tab, self.diag_tab)
+        self._lazy_tabs = (self.qc_tab, self.petro_tab, self.log_tab, self.diag_tab,
+                           self.rock_tab)
         self._dirty_tabs = set()
         self.tab_widget.currentChanged.connect(self._refresh_current_tab)
 
@@ -372,6 +376,10 @@ class MainWindow(QMainWindow):
         # Model signals
         self.model.data_loaded.connect(self._on_data_loaded)
         self.model.analysis_complete.connect(self._on_results_updated)
+        # The Rock Typing tab also follows the core, the wells and the active well.
+        for signal in (self.model.core_data_loaded, self.model.project.wells_changed,
+                       self.model.project.active_well_changed):
+            signal.connect(self._mark_rock_tab_dirty)
 
     def _on_about_triggered(self):
         """Show the About dialog."""
@@ -905,6 +913,7 @@ class MainWindow(QMainWindow):
             getattr(self, "petro_tab", None),
             getattr(self, "log_tab", None),
             getattr(self, "diag_tab", None),
+            getattr(self, "rock_tab", None),
             getattr(self, "summary_tab", None),
             getattr(self, "export_tab", None),
         ]:
@@ -1274,6 +1283,7 @@ class MainWindow(QMainWindow):
         self.petro_tab.reset_ui()
         self.log_tab.reset_ui()
         self.diag_tab.reset_ui()
+        self.rock_tab.reset_ui()
         self.summary_tab.reset_ui()
         self.export_tab.reset_ui()
 
@@ -1836,6 +1846,11 @@ class MainWindow(QMainWindow):
         self._refresh_current_tab()
         self.summary_tab.update_display()
         self.export_tab.update_display()
+
+    def _mark_rock_tab_dirty(self, *_):
+        """Core, wells or the active well changed: the Rock Typing tab catches up when visible."""
+        self._dirty_tabs.add(self.rock_tab)
+        self._refresh_current_tab()
 
     def _refresh_current_tab(self, *_):
         """Redraw the current tab if results changed while it was hidden."""
