@@ -22,7 +22,9 @@ until you turn it on, and sessions that do not use it are still saved as format 
 - **Rock Type log track** when the results hold rock types.
 - **Session format 2.2** when rock typing is used; a session from a newer Petrophyter is refused with a
   message instead of being misread.
-- 1468 tests.
+- The Rock Typing tab says what to do after enabling rock types and where they appear; it stays
+  responsive while open, redrawing only what changed.
+- 1507 tests.
 
 ## v1.7.3 (Build 20261011)
 
