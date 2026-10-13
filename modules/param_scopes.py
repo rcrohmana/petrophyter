@@ -115,6 +115,9 @@ SPECS: Dict[str, ParamSpec] = {s.name: s for s in (
     # Zone-capable like Rsh itself: a zone's calibrated Rsh keeps its temperature.
     _spec("rsh_ref_temp", "Rsh reference temperature"),
     _spec("ws_b_auto", "WS B from temperature", zone=False),
+    # Rock typing: which permeability estimate is the primary one, and which feeds the RT log.
+    _spec("perm_primary", "Primary permeability", zone=False),
+    _spec("rt_log_perm", "Rock-typing log permeability", zone=False),
 )}
 
 # Well-only parameters that are left out of the sources tables while they hold
@@ -123,6 +126,8 @@ OPTIONAL_SOURCE_PARAMS: Dict[str, tuple] = {
     "temp_datum_depth": (None, 0, 0.0),
     "rsh_ref_temp": (None,),
     "ws_b_auto": (None, False),
+    "perm_primary": ("Timur",),
+    "rt_log_perm": ("Timur",),
 }
 
 ZONE_PARAMS: Tuple[str, ...] = tuple(n for n, s in SPECS.items() if s.zone)

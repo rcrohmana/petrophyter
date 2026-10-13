@@ -101,6 +101,12 @@ PARAM_DEFAULTS: Dict[str, object] = {
     "rsh_ref_temp": None,
     # Waxman-Smits B from temperature (Juhasz 1981) instead of the entered B.
     "ws_b_auto": False,
+    # Rock typing (inert until the feature is switched on).
+    "rock_typing_enabled": False,
+    "rock_types": None,
+    "rock_core": None,
+    "perm_primary": "Timur",
+    "rt_log_perm": "Timur",
 }
 
 # ``summary["param_sources"]`` key for the well-level parameters.

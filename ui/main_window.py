@@ -2127,7 +2127,8 @@ class MainWindow(QMainWindow):
             return
         session_data = self.session_service.load_session(file_path)
         if not session_data:
-            QMessageBox.critical(self, "Error", "Failed to load session")
+            QMessageBox.critical(self, "Error",
+                                 self.session_service.last_error or "Failed to load session")
             return
         problems = validate_session(session_data)
         if problems:

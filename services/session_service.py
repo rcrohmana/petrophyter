@@ -97,6 +97,9 @@ _SESSION_DEFAULTS = {
     "temp_datum_depth": 0.0,
     "rsh_ref_temp": None,
     "ws_b_auto": False,
+    "rock_typing_enabled": False,
+    "perm_primary": "Timur",
+    "rt_log_perm": "Timur",
 }
 
 # Per-well settings that live in each ``wells`` entry in v2.0 sessions, not in
@@ -125,6 +128,26 @@ def is_v2_session(session_data: Dict) -> bool:
 
 
 _is_v2 = is_v2_session
+
+
+def _major(version) -> Optional[int]:
+    """The major number of a session version string, or None when it has none."""
+    try:
+        return int(str(version).split(".")[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def session_version_for(project_or_model) -> str:
+    """"2.2" when rock typing is on or the project holds rock types, else "2.1".
+
+    Accepts an ``AppModel`` or a ``Project``, so a session that does not use the
+    feature stays readable by the previous release.
+    """
+    project = getattr(project_or_model, "project", project_or_model)
+    in_use = (bool(getattr(project_or_model, "rock_typing_enabled", False))
+              or bool(getattr(project, "rock_types", None)))
+    return "2.2" if in_use else "2.1"
 
 
 def session_app_version(data) -> Optional[str]:
@@ -501,11 +524,12 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.1"
+    SESSION_VERSION = "2.2"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.last_error = ""    # why the last load_session returned None
     
     def save_session(self, model, file_path: str) -> bool:
         """
@@ -555,15 +579,27 @@ class SessionService(QObject):
             file_path: Path to the session file
             
         Returns:
-            Dictionary with session parameters, or None if failed
+            Dictionary with session parameters, or None if failed (the reason
+            is then in ``last_error``)
         """
+        self.last_error = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
             
+            # A newer major format may mean something we cannot read: refuse, model untouched.
+            version = session_data.get("_session_version", "1.0")
+            major, own = _major(version), _major(self.SESSION_VERSION)
+            if major is not None and major > own:
+                message = (f"This session was saved by a newer Petrophyter (format {version}). "
+                           "Update Petrophyter to open it.")
+                logger.warning("Refused session of format %s", version)
+                self.last_error = message
+                self.error.emit(message)
+                return None
+
             # Check version compatibility while keeping older parameter-only
             # sessions loadable; unknown fields are simply ignored below.
-            version = session_data.get("_session_version", "1.0")
             if not (_is_v2(session_data) or str(version).startswith("1.")):
                 logger.warning(
                     "Session version %s differs from current version %s; "
@@ -579,7 +615,8 @@ class SessionService(QObject):
             
         except Exception as e:
             logger.exception("Failed to load session")
-            self.error.emit(f"Failed to load session: {str(e)}")
+            self.last_error = f"Failed to load session: {str(e)}"
+            self.error.emit(self.last_error)
             return None
     
     def apply_session_to_model(self, model, session_data: Dict) -> bool:
@@ -604,6 +641,9 @@ class SessionService(QObject):
                 if hasattr(model, "project"):
                     model.project.zone_params = copy.deepcopy(
                         session_data.get("zone_params") or {}
+                    )
+                    model.project.rock_types = copy.deepcopy(
+                        session_data.get("rock_types") or None
                     )
                 return True
 
@@ -770,6 +810,9 @@ class SessionService(QObject):
             "temp_datum_depth",
             "rsh_ref_temp",
             "ws_b_auto",
+            "rock_typing_enabled",
+            "perm_primary",
+            "rt_log_perm",
         ):
             if field in session_data:
                 setattr(model, field, session_data[field])
@@ -1057,7 +1100,7 @@ class SessionService(QObject):
                 **hashes,
             })
         data = {
-            "_session_version": self.SESSION_VERSION,
+            "_session_version": session_version_for(model),
             "_app_version": APP_VERSION,
             "global_params": global_params,
             "zone_params": getattr(project, "zone_params", {}) if project is not None else {},
@@ -1066,4 +1109,8 @@ class SessionService(QObject):
             "merge_step": getattr(model, "merge_step", 0.5),
             "merge_gap_limit": getattr(model, "merge_gap_limit", 5.0),
         }
+        rock_types = getattr(project, "rock_types", None) if project is not None else None
+        if rock_types:
+            # Written only when the project holds rock types, so a 2.1 file stays as before.
+            data["rock_types"] = rock_types
         return _json_safe(data)

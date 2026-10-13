@@ -328,3 +328,39 @@ def test_promote_to_project_ignores_the_edited_zone():
     model.set_edit_scope("well", "UPPER")
     model.promote_to_project("m", 1.95)
     assert model.m == 1.95 and model.project.zone_params == {}
+
+
+# ---- rock-typing permeability names ------------------------------------------
+@pytest.mark.parametrize("name", ["perm_primary", "rt_log_perm"])
+def test_rock_typing_perm_names_are_well_only_and_hidden_while_inactive(name):
+    spec = ps.SPECS[name]
+    assert spec.well and not spec.zone and not spec.auto
+    assert name in ps.WELL_PARAMS and name not in ps.ZONE_PARAMS
+    assert ps.OPTIONAL_SOURCE_PARAMS[name] == ("Timur",)
+    assert PARAM_DEFAULTS[name] == "Timur"
+
+
+def test_rock_typing_flat_defaults_are_inert():
+    assert PARAM_DEFAULTS["rock_typing_enabled"] is False
+    assert PARAM_DEFAULTS["rock_types"] is None and PARAM_DEFAULTS["rock_core"] is None
+    assert "rock_typing_enabled" not in ps.SPECS
+
+
+def test_rock_typing_perm_zone_entries_are_ignored_and_well_entry_wins():
+    g = {**PARAM_DEFAULTS, "perm_primary": "Timur"}
+    well = {"perm_primary": ps.make_entry(ps.MANUAL, "Coates")}
+    zone = {"UPPER": {"perm_primary": ps.make_entry(ps.MANUAL, "Wyllie")}}
+    flat, info = ps.resolve(g, well, zone, zone, "UPPER")
+    assert flat["perm_primary"] == "Coates" and info["perm_primary"]["scope"] == ps.WELL
+    flat, info = ps.resolve(g, None, zone, zone, "UPPER")
+    assert flat["perm_primary"] == "Timur" and info["perm_primary"]["scope"] == ps.PROJECT
+    assert ps.zone_plan(g, None, zone, zone, ["UPPER"]) == {}
+
+
+def test_inactive_rock_typing_names_stay_out_of_the_sources_tables():
+    results, summary = run_pipeline(_data(), FULL_MAPPING, dict(PARAM_DEFAULTS))
+    table = summary["param_sources"]["(well)"]
+    assert "perm_primary" not in table and "rt_log_perm" not in table
+    params = {**PARAM_DEFAULTS, "perm_primary": "Coates"}
+    table = run_pipeline(_data(), FULL_MAPPING, params)[1]["param_sources"]["(well)"]
+    assert table["perm_primary"]["value"] == "Coates"

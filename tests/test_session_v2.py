@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from models.app_model import AppModel
 from modules.las_handler import LASHandler
 from services.load_service import build_well, parse_file
-from services.session_service import SessionService, attach_tops, _json_safe
+from services.session_service import SessionService, attach_tops, _json_safe, session_version_for
 
 TOPS_TEXT = "Formation\tTop (ft)\tBottom (ft)\nUpper\t1000\t1030\nLower\t1030\t1080\n"
 
@@ -206,12 +206,87 @@ def test_v1_session_without_well_says_to_open_las(tmp_path):
     assert len(model.project) == 0
 
 
-def test_newer_unknown_version_warns_but_loads(tmp_path, caplog):
+@pytest.mark.parametrize("version", ["3.0", "9.0"])
+def test_newer_major_version_is_refused_and_model_untouched(tmp_path, version):
     path = tmp_path / "new.json"
-    path.write_text(json.dumps({"_session_version": "3.0", "rw": 0.1}))
-    with caplog.at_level("WARNING"):
-        assert SessionService().load_session(str(path)) is not None
-    assert "3.0" in caplog.text
+    path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
+    svc = SessionService()
+    errors = []
+    svc.error.connect(errors.append)
+    model = AppModel()
+    rw_before = model.rw
+    assert svc.load_session(str(path)) is None
+    message = (f"This session was saved by a newer Petrophyter (format {version}). "
+               "Update Petrophyter to open it.")
+    assert errors == [message] and svc.last_error == message
+    assert model.rw == rw_before and len(model.project) == 0
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.4", "2.0", "2.1", "2.2", "2.9"])
+def test_same_or_older_major_versions_still_load(tmp_path, version):
+    path = tmp_path / "ok.json"
+    path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
+    assert SessionService().load_session(str(path)) is not None
+
+
+def test_session_version_is_2_1_while_rock_typing_is_unused(three_wells, tmp_path):
+    model, _ = three_wells
+    assert session_version_for(model) == "2.1" == session_version_for(model.project)
+    path = str(tmp_path / "s.json")
+    assert SessionService().save_session(model, path)
+    saved = json.loads(open(path, encoding="utf-8").read())
+    assert saved["_session_version"] == "2.1" and "rock_types" not in saved
+    fresh, notes, _ = _restore(path)
+    assert notes == [] and fresh.rock_typing_enabled is False
+    assert fresh.project.rock_types is None
+
+
+def test_rock_typing_session_is_2_2_and_round_trips(three_wells, tmp_path):
+    model, keys = three_wells
+    model.rock_typing_enabled = True
+    model.perm_primary = "Coates"
+    model.set_entry("perm_primary", "manual", "Wyllie", scope="well", well=keys[0])
+    model.set_entry("rt_log_perm", "manual", "Coates", scope="well", well=keys[2])
+    definitions = {"scheme": "rqi", "classes": [{"name": "RT1", "lo": 0.0, "hi": 0.5},
+                                                {"name": "RT2", "lo": 0.5, "hi": 2.0}]}
+    model.project.rock_types = definitions
+    before = {k: _signature(model, model.project.get(k)) for k in keys}
+    hashes = {k: model.well_params_hash(model.project.get(k)) for k in keys}
+    assert session_version_for(model) == "2.2"
+    path, saved = _save(model, tmp_path)
+    assert saved["_session_version"] == "2.2" and saved["rock_types"] == definitions
+    assert saved["global_params"]["rock_typing_enabled"] is True
+    assert saved["wells"][0]["overrides"]["perm_primary"]["value"] == "Wyllie"
+    fresh, notes, _ = _restore(path)
+    assert notes == []
+    assert fresh.project.rock_types == definitions
+    assert fresh.rock_typing_enabled is True and fresh.perm_primary == "Coates"
+    for key in keys:
+        assert _signature(fresh, fresh.project.get(key)) == before[key]
+        assert fresh.well_params_hash(fresh.project.get(key)) == hashes[key]
+
+
+def test_rock_types_alone_make_the_session_2_2():
+    model = AppModel()
+    model.project.rock_types = {}
+    assert session_version_for(model) == "2.1"      # no definitions held
+    model.project.rock_types = {"classes": [{"name": "RT1"}]}
+    assert session_version_for(model) == "2.2"
+    model.project.clear()
+    assert model.project.rock_types is None
+
+
+def test_a_21_session_loads_with_rock_typing_off(tmp_path):
+    path = tmp_path / "old21.json"
+    path.write_text(json.dumps({"_session_version": "2.1", "global_params": {"rw": 0.08},
+                                "zone_params": {}, "wells": []}))
+    svc = SessionService()
+    model = AppModel()
+    data = svc.load_session(str(path))
+    assert svc.apply_session_to_model(model, data)
+    assert model.rw == 0.08 and model.rock_typing_enabled is False
+    assert model.perm_primary == "Timur" and model.rt_log_perm == "Timur"
+    assert model.project.rock_types is None
 
 
 def test_temperature_settings_round_trip(tmp_path):

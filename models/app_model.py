@@ -192,6 +192,11 @@ class AppModel(QObject):
         self.temp_datum_depth: float = 0.0          # ft, depth where surface_temp applies
         self.rsh_ref_temp: Optional[float] = None   # degF a manual Rsh was read at; None = uncorrected
         self.ws_b_auto: bool = False                # Waxman-Smits B from temperature
+        # Rock typing (inert until switched on): project-only switch, and the primary / RT-log
+        # permeability estimates (project or well scope).
+        self.rock_typing_enabled: bool = False
+        self.perm_primary: str = "Timur"
+        self.rt_log_perm: str = "Timur"
 
         # Scope edited in the Parameters window (spec §4.8).
         self._edit_scope: str = SCOPE_PROJECT

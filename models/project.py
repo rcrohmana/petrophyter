@@ -166,6 +166,8 @@ class Project(QObject):
         self._active_key: Optional[str] = None
         # Project · zone parameter entries (spec §4.2): {ZONE: {param: entry}}.
         self.zone_params: Dict[str, Dict[str, Dict]] = {}
+        # Rock-type definitions (rock typing); None until the feature holds any.
+        self.rock_types: Optional[dict] = None
 
     # ---- access ----
     def __len__(self) -> int:
@@ -256,5 +258,6 @@ class Project(QObject):
         self._wells.clear()
         self._active_key = None
         self.zone_params = {}
+        self.rock_types = None
         self.wells_changed.emit()
         self.active_well_changed.emit("")
