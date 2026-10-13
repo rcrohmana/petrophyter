@@ -7,7 +7,7 @@
 The PyQtGraph display provides:
 
 - OpenGL GPU-accelerated rendering
-- Six-track composite log display
+- Six-track composite log display, and a seventh **Rock Type** track when the results hold rock types *(v1.8.0)*
 - Zoom, pan, and crosshair cursor
 - Draggable depth-region selection
 - Formation-top overlays
@@ -16,7 +16,17 @@ The PyQtGraph display provides:
 
 ## Classic Log Display *(v1.0)*
 
-The Matplotlib display produces static, export-quality plots and includes a navigation toolbar for pan, zoom, and save operations.
+The Matplotlib display produces static, export-quality plots and includes a navigation toolbar for pan, zoom, and save operations. With rock types in the results it draws the same seventh track as the interactive display.
+
+## Rock Type Track *(v1.8.0)*
+
+Present in both displays only when the results hold `ROCK_TYPE` (rock typing on, definitions applied, and a run made):
+
+- Categorical stepped bands across the track, one colour per rock type, from one ordered ramp (dark for rock type 1, the lowest flow zone indicator, to light for the highest). Unassigned depths (`ROCK_TYPE` 0) are grey.
+- A band is faded and hatched where the rock type comes from the log rather than from core, or where the sample is within 0.05 log10 units of a rock-type boundary, so a solid band is a rock type taken from core.
+- The legend lists the rock types present as RT 1, RT 2, and so on. In the interactive display the readout gives the rock type, the FZI and the source at the cursor depth.
+
+The **Rock Typing** tab has its own plots: the FZI histogram and probability plot, porosity-permeability with constant-FZI curves, RQI against φz, Winland R35 lines, and the Lorenz and stratigraphic modified Lorenz plots. See the [User Guide](user-guide.md#rock-typing).
 
 ## Crossplots
 
@@ -31,3 +41,12 @@ The Matplotlib display produces static, export-quality plots and includes a navi
 | CSV (`.csv`) | Full results DataFrame | v1.0 |
 
 Merged data can also be downloaded as LAS (`.las`).
+
+### Rock typing in the exports *(v1.8.0)*
+
+Added only when rock typing is on and applied; without it, the files are as before.
+
+- **Columns.** The results table of CSV and Excel (each well sheet, and the combined table of an all-wells export) gains `RQI`, `FZI` (µm), `ROCK_TYPE` (integer, 0 = unassigned), `ROCK_TYPE_SOURCE` (`core`, `log`, `x_vsh`, `x_phie`, `x_perm` or `x_nan`) and `RT_MARGIN` (log10 units to the nearest boundary); `PERM_RT` when the primary permeability is Rock type; `R35` when the R35 column is on.
+- **Rock Types sheet.** The Excel workbook gains a **Rock Types** sheet with one row per well and rock type: samples, gross sand, net reservoir, net pay, N/G pay, average PHIE and Sw in pay, HCPV, geometric-mean permeability, FZI and the share of core-labelled samples, then an **Unassigned** row per well and, for a project-wide fit, **Field total** rows (thickness and HCPV summed, Sw weighted by pore thickness).
+- **LAS.** `ROCK_TYPE`, `FZI`, `RQI`, `RT_MARGIN` and `PERM_RT` are written as numeric curves. The text column `ROCK_TYPE_SOURCE` is not written, as for other text columns.
+

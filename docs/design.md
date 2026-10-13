@@ -97,6 +97,13 @@ No shadows, no gradients, one 1px border weight.
   `spine` = `border_strong`; `text` = `text_secondary`; `crosshair` = `text_muted`;
   `selection` = `accent`.
 - `PLOT_COLOR_OVERRIDES["dark"]["RT"]` = `text_primary` (black RT is unreadable on dark).
+- Rock types are ordered (rock type 1 is the lowest flow zone indicator), so they share one ordinal ramp,
+  `ROCK_TYPE_RAMP`: ten perceptually uniform steps from dark to light that read on both themes and do not
+  change with the theme. With n types, the ramp is sampled at n evenly spaced steps through
+  `themes.colors.get_rock_type_color(rock_type, n_types)`; the Rock Type log track and the Rock Typing tab
+  both use it, so a rock type has one colour everywhere. `ROCK_TYPE_NONE` (in `PLOT_COLORS`) is the neutral
+  grey of unassigned samples (`ROCK_TYPE` 0). Weak assignments (log-derived, or close to a boundary) are
+  faded and hatched, never given a different hue.
 - Matplotlib annotations, edges and bboxes take colors from `get_plot_chrome()` or
   `get_plot_color()`, never from literals.
 

@@ -276,12 +276,14 @@ other than Hierarchical only filled its comparison curve, and permeability used 
 |---|---|---|
 | **Timur** | `K = 8581 × (PHIE^4.4) / (Swirr^2)` | v1.0 |
 | **Wyllie-Rose** | `K = C × (PHIE^P) / (Swirr^Q)` | v1.0 |
+| **Rock type** (`PERM_RT`) | `K = FZI² × φz² × φe / 0.0314²` with the FZI of the sample's rock type; no Swirr (see [Rock Typing](#rock-typing-v180)) | v1.8.0 |
 
 - Core-calibrated fitting is available for coefficients C and P *(Q held, v1.7.2)*. Each core permeability sample is paired with the nearest core porosity sample within 0.5 ft, and `log10(K)` is fitted by least squares for `log C` and `P` with **Q held at the entered value** (2.0 by default). With Buckles Swirr the model is `K = C × kb^−Q × φ^(P+Q)`, so C, P and Q cannot all be fitted at once; holding Q makes the fit identifiable. At least five pairs are needed.
 - Calibration and the run use the **same** Buckles Swirr *(v1.7.2)*: `Swirr = k_buckles / max(φ, 0.01)`, limited to 0.05–0.5. Before v1.7.2 the calibration limited it to 0.05–0.8 with no porosity floor, so at φ 0.025 the applied permeability was 2.56 × the fitted model. Plugs whose Swirr sits at a limit say nothing about the porosity exponent and are counted in the result.
 - The fitted coefficients assume Buckles Swirr with the Buckles k used in the fit. **Apply** warns when the Swirr method is not Buckles Number or All Methods, or when `k_buckles` differs, because the fitted permeability would then not reproduce the core.
 - The fit follows the edited scope. At well·zone scope only that zone's core pairs are used, with the zone's Buckles k. A zone with fewer than five pairs gives no result and is never widened to the whole well. Without core data, C, P, and Q are estimated from the mean PHIE of the scope (at least 10 samples): 10000, 4.0, 2.0 above 0.20; 8581, 4.4, 2.0 from 0.12 to 0.20; 5000, 5.0, 2.2 below 0.12.
-- Flow units are classified as Tight, Poor, Fair, Good, or Excellent.
+- **Primary permeability** *(v1.8.0)*. `FLOW_UNIT` and the permeability quality flags are computed from the primary permeability: **Timur** (the default, which reproduces earlier versions), **Wyllie-Rose**, or **Rock type**. It is a project and well setting, not a zone setting, so one well never mixes formulas. *Rock type* needs rock typing turned on with applied definitions and an FZI for every rock type; otherwise the run uses Timur for that well and warns ("Primary permeability 'Rock type' not used (…); Timur is used."). Samples without a rock type have no `PERM_RT`, and are not filled from Timur.
+- Flow units are classified as Tight, Poor, Fair, Good, or Excellent from the primary permeability. They are permeability classes, not rock types; `ROCK_TYPE` is a separate column.
 
 ## Net Pay Analysis *(v1.0)*
 
@@ -307,6 +309,8 @@ other than Hierarchical only filled its comparison curve, and permeability used 
 On a uniform step this equals the previous rule. Before v1.7.2 the gap test used the median step of the whole
 well, so in a log that changes from 0.1524 ft to 0.5 ft the coarse section counted as gaps (HCPV reported
 30.5 ft for a 100 ft section), and net pay and HCPV used different rules.
+
+**Per rock type** *(v1.8.0)*. With rock typing on, the same flags, thickness and weights are summed per rock type (and per zone and rock type), so gross sand, net reservoir, net pay and HCPV per rock type plus the unassigned samples add up to the well totals. See [Rock Typing](#rock-typing-v180).
 
 Configurable slider cutoffs are:
 
@@ -337,6 +341,192 @@ For an `ok` zone, the limiting cutoff is the one with the lowest pass fraction a
 - **Cumulative HCPV:** Running total
 - Display modes: Net Pay, Net Reservoir, Gross, and Fraction Only
 - Visibility can be toggled with a checkbox.
+
+## Rock Typing *(v1.8.0)*
+
+Rock typing is optional and off by default. With it off, no column, summary entry or parameter is added and the
+results are those of v1.7.2. With it on, core permeability and porosity are turned into rock types, which are
+propagated to every well through the logs and used for permeability, net pay and HCPV per rock type. The fit is
+made once, on the core pooled over the project, in the **Rock Typing** tab (see
+[Rock Typing](user-guide.md#rock-typing)). The analysis only reads the stored definitions; it never fits.
+
+### RQI, FZI and permeability
+
+Amaefule et al. (1993), with `k` in mD and `φe` the effective (core helium) porosity as a fraction:
+
+```
+RQI = 0.0314 × √(k / φe)          [µm]
+φz  = φe / (1 − φe)               (pore-to-grain volume ratio)
+FZI = RQI / φz                    [µm]
+```
+
+On a log-log plot of RQI against φz, samples with the same FZI fall on one unit-slope line, a hydraulic flow
+unit. Solving the definitions for permeability gives
+
+`k = FZI² × φz² × φe / 0.0314² = 1014.2 × FZI² × φe³ / (1 − φe)²`
+
+A form with `φz³ × φe` in place of `φz² × φe` is sometimes quoted; it has the wrong power of φz and is off by a
+factor φz (a permeability 4 times too small at φe = 0.2). Petrophyter uses the form above, with the exact
+`0.0314²` rather than the rounded 1014, so a sample's own FZI returns its own permeability. Unlike Timur and
+Wyllie-Rose, this relation takes no Swirr.
+
+### Core quality control
+
+Every core row is given exactly one status, and the Rock Typing tab counts them by reason in **Core exclusions**:
+
+| Status | Rule |
+|---|---|
+| `no_depth` | depth missing |
+| `no_porosity`, `no_perm` | value missing. This includes null values such as −999.25 and non-physical values, which the core loader blanks and counts first; the tab shows them in **Of which excluded at load**, not as extra rows |
+| `perm_not_positive` | permeability ≤ 0 (a logarithm cannot be taken) |
+| `phi_out_of_range` | porosity ≤ 0.01 or above 0.50 |
+| `ok` | everything else |
+
+The porosity limits are core-plug quality limits, separate from the log limits (PHIT 0.45, PHIE 0.40). Carbonate
+samples with vugs can legitimately exceed 0.40, so the ceiling is 0.50; the limits are parameters (`core_phi_min`
+and `core_phi_max`, stored with the rock typing settings), not fixed in the equations. **Min PHIE** (0.02), set in
+the tab, is the lower porosity limit for log samples.
+Samples more than 3 standard deviations from the mean of log10(FZI) are counted and listed but kept. Wells whose
+core depth is TVD still enter the fit, which does not use depth, but their samples are not used as core labels in
+the log, because the logs are on measured depth.
+
+**Overburden is not applied.** Core is used as measured, and the tab says so ("core measured as loaded;
+overburden/Klinkenberg correction not applied"). If your core is not at stress, enter **Overburden phi factor**
+and **Overburden k factor** (both 1.0 by default): porosity and permeability are multiplied by them before RQI.
+The factors are your input, not a built-in correction; a stress correction for permeability is often 0.7 to 0.95.
+
+A fit needs at least 20 usable rows and at least 5 samples in every rock type; otherwise Fit refuses and the
+message names the counts.
+
+### Hydraulic flow units by clustering
+
+The feature is `x = log10(FZI)`, since FZI is close to log-normal within a flow unit. It is clustered with
+k-means (`scipy.cluster.vq.kmeans2`, k-means++ start, seeds 0 to 9; the restart with the smallest within-cluster
+sum of squares wins). In one dimension, nearest-centre assignment is the same as cutting at the midpoints between
+the sorted centres, so a rock-type set is just the centres, the boundaries `b_i = (c_i + c_{i+1}) / 2` and a
+representative `FZI_i = 10^c_i` (µm, the geometric mean). **Rock type 1 is the lowest FZI** and the numbers rise
+with FZI; they are the same for the same data and settings, whatever the row order. Rock type 0 means unassigned.
+
+**Suggested count.** Next to the **Rock types** count the tab shows **Suggested: n**, the count (2 to 8) with the
+best mean silhouette (Rousseeuw 1987), considering only counts with at least 5 samples in every class. The count
+that Fit uses is the one you set.
+
+For each rock type the set also stores the root-mean-square of `log10(k_core) − log10(k_RT(φ_core))`, shown as
+**k RMSE (log10)**: a direct statement of how well one FZI per type reproduces the core permeability.
+
+**Fit scope.** *Project pooled* (default) fits one set on all wells' core, so a rock type number means the same
+rock in every well. *Per well* and *Per zone* also fit a set for each well or zone with at least 20 usable
+samples; wells and zones below that, and unzoned samples, use the pooled set, which is always fitted too. With
+*Per well*, rock-type numbers are not comparable between wells.
+
+### Winland R35
+
+As an alternative to clustering, the method **Winland R35** classes each sample by its pore-throat radius at 35 %
+mercury saturation, estimated from the Winland relation (Kolodzie 1980):
+
+`log10(R35) = 0.732 + 0.588 × log10(k) − 0.864 × log10(φ%)`
+
+with R35 in µm, `k` in mD and **φ in percent** (Petrophyter multiplies the fractional porosity by 100 inside).
+The classes are fixed port-size classes (Martin et al. 1997): nano below 0.1 µm, micro 0.1 to 0.5, meso 0.5 to 2,
+macro 2 to 10 and mega above 10, as rock types 1 to 5. Each class takes the geometric-mean FZI of its core
+samples, so permeability per rock type works the same way; a class with no core sample has no FZI, and its
+permeability is empty. The relation was derived on sandstones; on other lithologies treat the classes as a
+descriptive grouping, not a measurement. **Add R35 column** writes `R35` to the results.
+
+### Rock types on the logs
+
+For every log sample, rock typing works from `PHIE` and a log permeability (Timur or Wyllie-Rose, set by **Log
+permeability for rock types**). It computes `RQI` and `FZI` and classifies `log10(FZI)` with the well's
+definitions (for Winland R35, `log10(R35)`).
+
+**Eligibility.** A sample is left unassigned (`ROCK_TYPE = 0`) and `ROCK_TYPE_SOURCE` says why:
+
+| `ROCK_TYPE_SOURCE` | Meaning |
+|---|---|
+| `core` | rock type taken from a core sample (below) |
+| `log` | rock type classified from the log FZI |
+| `x_vsh` | not gross sand (`VSH` at or above the Vsh cutoff); only when **Reservoir only** is on (default) |
+| `x_phie` | `PHIE` missing or below **Min PHIE** (0.02) |
+| `x_perm` | log permeability missing or at its limits (0.001 and 50 000 mD) |
+| `x_nan` | any other missing input |
+
+Every sample is counted in one of these, so assigned plus unassigned samples equal the samples of the well.
+
+**Core labels.** With **Use core labels in the log** on (default), a log sample within the **Core Matching**
+distance of a labelled core sample (2 ft by default) takes that sample's rock type and `ROCK_TYPE_SOURCE = core`.
+The core label is the class of the core sample's own FZI, so it is independent of the log estimate. Where a
+measured label exists it is shown instead of a modelled one; the jumps this can make at plug depths are reported
+by the agreement count below.
+
+**Flags.** Counted in the summary and shown in the Rock Typing tab:
+
+- `RT_MARGIN`: the distance, in log10 units, from the sample's log10(FZI) to the nearest boundary. Samples with a
+  margin below 0.05 (about 12 % in FZI) are counted as **near boundary** and drawn faded in the Rock Type track.
+- **Outside range**: log10(FZI) more than 0.5 beyond the range of the fitted core.
+- **Core vs log agreement**: at core-labelled samples, the share where the log classification gives the same
+  rock type. This is the honest measure of how far the propagation can be trusted in that well.
+- **Uncored well**: a well without a usable core row gets a warning, "No core labels for this well: rock types are
+  log-derived with the project definitions."
+
+**Caveat: the propagation is circular.** An uncored sample gets a rock type from an FZI computed from the logs, and
+that FZI comes from a log permeability (Timur or Wyllie-Rose) that itself depends on `PHIE` and Swirr. It carries
+grain-size information only through Swirr, so in uncored intervals the rock type, and `PERM_RT` below, inherit the
+shape of the Timur or Wyllie-Rose permeability: they are a surrogate, not independent core evidence. Calibrating
+Wyllie-Rose to core first (the **Calculate** button on the Permeability page) reduces the bias. The agreement
+share, and the share of samples labelled from core (`pct_core`), tell you how much to rely on it.
+
+### Permeability per rock type (`PERM_RT`)
+
+`PERM_RT = clip(k(FZI_rt, PHIE), 0.001, 50000)` with `k` from the relation above, `FZI_rt` the representative FZI
+of the sample's rock type and `PHIE` the log's. It is empty where `ROCK_TYPE` is 0: there is no silent
+fallback to Timur. See [Permeability](#permeability) for how to make it the primary permeability.
+
+### Lorenz coefficient and SMLP
+
+The heterogeneity measures use the net reservoir samples with `PHIE` and the primary permeability:
+
+- **Lorenz coefficient** (Schmalz and Rahme 1950; Lake and Jensen 1991): sort samples by `k/φ`, highest first; with
+  `C` the cumulative `Σφh / Σφh_total` and `F` the cumulative `Σkh / Σkh_total`, `LC = 2 × ∫(F − C) dC` by the
+  trapezoid rule. 0 is homogeneous; values towards 1 are heterogeneous.
+- **Stratigraphic modified Lorenz plot** (SMLP; Gunter et al. 1997): the same `C` and `F` with the samples in
+  depth order. The local slope `dF/dC = (k/φ) / (Σkh/Σφh)` is above 1 where the interval flows more than it
+  stores (a speed zone) and below 1 for baffles and barriers.
+- **Flow-unit segments.** The SMLP is simplified (Ramer-Douglas-Peucker, tolerance 0.02 in the unit square), and
+  segments thinner than 5 ft are merged into the neighbour with the closer slope. Each segment is classed by
+  slope: *speed* above 1.5, *intermediate* from 0.5 to 1.5, *baffle* from above 0.1 to below 0.5, *barrier* at 0.1
+  or below. The segments are a table and an overlay, not a results column, so `FLOW_UNIT` and `ROCK_TYPE` keep
+  their meanings.
+
+On the core, the thickness `h` of a sample is half the distance to each neighbour, with each side limited to the
+median spacing, so a gap in the core is a gap, not thickness. Log samples use the per-sample thickness of the
+[net pay analysis](#net-pay-analysis-v10).
+
+### Results added
+
+When rock typing is on and definitions are applied: `RQI`, `FZI` (µm), `ROCK_TYPE` (integer, 0 = unassigned),
+`ROCK_TYPE_SOURCE` and `RT_MARGIN`; `PERM_RT` when the primary permeability is *Rock type*; `R35` when **Add R35
+column** is on. The summary gains a **Rock types** block: gross sand, net reservoir, net pay, N/G pay, average
+PHIE and Sw in pay, HCPV, geometric-mean permeability and the share of core-labelled samples per rock type, per
+zone and rock type, the counts above, the agreement, and the Lorenz coefficient with its segments. Net pay and
+HCPV per rock type, plus the unassigned samples, add up to the well's totals.
+
+References:
+
+- Amaefule, J.O., Altunbay, M., Tiab, D., Kersey, D.G., Keelan, D.K. (1993), *Enhanced reservoir description:
+  using core and log data to identify hydraulic (flow) units and predict permeability in uncored intervals/wells*,
+  SPE 26436.
+- Kolodzie, S. (1980), *Analysis of pore throat size and use of the Waxman-Smits equation to determine OOIP in
+  Spindle Field, Colorado*, SPE 9382 (Winland relation).
+- Gunter, G.W., Finneran, J.M., Hartmann, D.J., Miller, J.D. (1997), *Early determination of reservoir flow units
+  using an integrated petrophysical method*, SPE 38679.
+- Lake, L.W., Jensen, J.L. (1991), *A review of heterogeneity measures used in reservoir characterization*,
+  *In Situ* 15(4).
+- Schmalz, J.P., Rahme, H.D. (1950), *The variations in waterflood performance with variation in permeability
+  profile*, *Producers Monthly* 15(9).
+- Martin, A.J., Solomon, S.T., Hartmann, D.J. (1997), *Characterization of petrophysical flow units in carbonate
+  reservoirs*, *AAPG Bulletin* 81(5).
+- Rousseeuw, P.J. (1987), *Silhouettes: a graphical aid to the interpretation and validation of cluster analysis*,
+  *Journal of Computational and Applied Mathematics* 20.
 
 ## Core Data Validation
 

@@ -43,6 +43,7 @@ Formation tops and core data are read by the same table reader, so the rules in 
 - **Null and non-physical values** *(v1.7.1)*. Null values such as −999.25 in porosity, permeability or grain density, negative porosity, and permeability of zero or below are excluded and counted with the reason in the load notes; they never reach the statistics or the permeability calibration.
 - **Matching to the logs** *(v1.7.1)*. A core sample is compared with the log only when valid log samples lie within the matching distance on both sides of it, so a core is never matched across a gap in the log. Cores beside a gap are left out and counted ("N core samples in log gaps").
 - Without a well column, the samples belong to the active well. With one, they are assigned to loaded wells in the multi-well import dialog.
+- **Core for rock typing** *(v1.8.0)*. The Rock Typing tab uses a core row only when it has a depth, a porosity and a permeability in the same row, so give both properties on one line of the file rather than in two separate tables. A row missing either value, a permeability of zero or below, or a porosity of 0.01 or below or above 0.50 is left out and counted by reason in the tab. Core is used as measured: overburden and Klinkenberg corrections are not applied. If your values are not at reservoir stress, enter the overburden factors in the Rock Typing tab; see [Calculation Methods](calculation-methods.md#rock-typing-v180). Core with a TVD depth column enters the fit but is not used to label the logs.
 
 ## Formation Tops
 

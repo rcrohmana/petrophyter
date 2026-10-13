@@ -31,7 +31,7 @@ The main window has five areas:
 - **Menu bar.** From left to right: **File**, **Session**, **Analysis**, **Parameters**, **Corrections**, **View**, and **Help**.
 - **Main toolbar.** Four controls on the left: **Open LAS File(s)…**, **Save Session…**, **Parameters Window**, and **Run Analysis**, plus **Run All Wells** once two or more wells are loaded. On the right, a well selector appears once two or more wells are loaded, next to a well indicator that shows a status dot and a summary of the active well such as `Well name · 12,345 rows · 18 curves`, or `No data loaded`.
 - **Data Browser.** A read-only tree on the left that summarizes the loaded well. See [What the Data Browser shows](#what-the-data-browser-shows).
-- **Result tabs.** Six tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Summary**, and **Export**. A notification banner appears above the tabs when there is something to report.
+- **Result tabs.** Seven tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Rock Typing**, **Summary**, and **Export**. A notification banner appears above the tabs when there is something to report.
 - **Status bar.** The left side shows the latest message. The right side holds the stale-results label, a progress bar, and the QC chip. See [Running the analysis](#running-the-analysis).
 
 Parameters are not part of the main window. They live in the separate [Parameters window](#the-parameters-window).
@@ -42,8 +42,9 @@ Parameters are not part of the main window. They live in the separate [Parameter
 2. Optionally load formation tops and core data from the **File** menu.
 3. Review or adjust parameters in the Parameters window (**View → Parameters Window**).
 4. Run the analysis with **Analysis → Run Analysis**, or every well at once with **Analysis → Run All Wells**.
-5. Review the result tabs.
-6. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
+5. Optionally, with core porosity and permeability loaded, fit rock types in the **Rock Typing** tab and run again (see [Rock Typing](#rock-typing)).
+6. Review the result tabs.
+7. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
 
 ## Loading data
 
@@ -96,7 +97,7 @@ Each formation is also a **zone** that can carry its own parameters (see [Parame
 
 ### Opening core data
 
-Use **File → Open Core Data…** and select a `.txt`, `.csv`, `.tsv`, or `.xlsx` file containing depth and at least porosity or permeability. Load a LAS file first. Core data go to the active well; a file with a well column opens the multi-well import dialog. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab. Excluded rows and warnings (for example, a TVD depth column) appear in the load banner.
+Use **File → Open Core Data…** and select a `.txt`, `.csv`, `.tsv`, or `.xlsx` file containing depth and at least porosity or permeability. Load a LAS file first. Core data go to the active well; a file with a well column opens the multi-well import dialog. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab. Excluded rows and warnings (for example, a TVD depth column) appear in the load banner. The **Rock Typing** tab needs porosity and permeability in the same row of the core file; core that has only one of them still feeds the core comparison but not rock typing.
 
 See [Supported Data Formats](data-formats.md) for the complete column names, aliases, and unit rules for LAS, tops, and core files.
 
@@ -157,7 +158,7 @@ A page list on the left groups the pages under four headings:
 | **Parameters** | **Cutoffs** | Net-pay cutoffs for Vsh, PHIE, and Sw |
 | **Parameters** | **Rock Properties** | Matrix and fluid densities and sonic transit times, and shale parameters, including statistical estimation |
 | **Parameters** | **Saturation Models** | Archie constants and lithology presets, the Sw methods to calculate and the primary Sw, and the Rw and Rsh values with a data-driven estimate |
-| **Parameters** | **Permeability** | Wyllie-Rose coefficients C, P, and Q, with a calculate option, and the Swirr estimation method |
+| **Parameters** | **Permeability** | Wyllie-Rose coefficients C, P, and Q, with a calculate option, the Swirr estimation method, the **Primary permeability**, and the **Log permeability for rock types** |
 | **Corrections** | **Gas Correction** | Enables the gas correction and sets the NPHI and RHOB factors, and the gas flag thresholds **Crossover min** and **Gas Vsh max** |
 | **Scopes** | **Zones** | One row per zone and one column per zone parameter (a, m, n, Rw, Rsh, ρ matrix, and the three cutoffs) for the edited scope |
 
@@ -170,6 +171,8 @@ The **Saturation Models** page also has a **Temperature** section; see [Formatio
 The **Rock Properties**, **Saturation Models**, and **Permeability** pages are divided into labeled sections. The shale, Rw/Rsh, and permeability sections have **Calculate** and **Apply** buttons that estimate values from the loaded data and let you accept them. The permeability estimate needs a completed analysis, and it uses core data when available. See [Calculation Methods](calculation-methods.md) for the equations, presets, and valid ranges.
 
 **Calculate** for Rw and Rsh also says how many samples the estimate rests on, for example `42 water-leg samples for Rw; 15 shale samples for Rsh (Rw quality: water_leg)`, and shows the estimate's warnings (no water leg, no water/hydrocarbon contrast, a value at its limit) on the page. On the **Permeability** page the result line names its source, for example `Calculated: C=5000, P=4.00, Q=2.00 (core calibration in UPPER, 6 pairs)` or `(estimated from porosity, mean 0.165)`. Notes appear under it without removing the result or **Apply**: why a core calibration failed, how many plugs have a Buckles Swirr at its limit, and a warning when the current Swirr method or Buckles k differs from the one the fit used (the fitted permeability would then not reproduce the core). Q is held at the entered value during the fit.
+
+**Primary permeability** chooses the permeability that feeds `FLOW_UNIT` and the permeability quality flags: **Timur** (the default), **Wyllie-Rose**, or **Rock type**. **Log permeability for rock types** (Timur or Wyllie-Rose) is the permeability that rock typing uses to place log samples. Both are project or well settings, not zone settings. **Rock type** is disabled, with the tooltip **Turn on rock typing in the Rock Typing tab to use this.**, until rock typing is on; if it is chosen and no definitions are applied, the run uses Timur for that well and warns. See [Permeability](calculation-methods.md#permeability).
 
 ### Parameter scopes and zones
 
@@ -298,7 +301,7 @@ Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated
 
 ### Log Display
 
-A six-track composite log with a shared depth axis. Controls above the log:
+A six-track composite log with a shared depth axis, and a seventh **Rock Type** track once the results hold rock types. Controls above the log:
 
 - **Plot Engine** (under **Advanced** at the right of the controls; its tooltip names the engine in use): **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
 - **Top Depth** and **Bottom Depth:** the visible depth range.
@@ -315,6 +318,8 @@ The two engines differ as follows:
 
 Both engines draw the same tracks on the same ranges: GR (0–150 API) with Vsh (0–1) on a second axis, porosity from 0.5 to 0 v/v, Sw from 0 to 1 with the primary Sw solid (**Sw — <model> (primary)**) and the other Sw methods dashed, resistivity on a log axis (0.2–2000 ohm·m), and permeability on a log axis (0.01–10 000 mD). A Wyllie-Rose-only run shows the Wyllie-Rose permeability.
 
+**Rock Type track.** When rock typing is on and applied, both engines add a seventh track of stepped bands, one colour per rock type. The colours come from one ordered ramp, dark for rock type 1 (lowest flow zone indicator) to light for the highest, and unassigned depths are grey. A band is faded and hatched where the rock type comes from the log rather than from core, or where the sample lies close to a boundary between two rock types (a margin below 0.05 in log10 FZI), so a solid band is a rock type measured on core. In the Interactive engine the readout under the log gives the rock type, the FZI and the source at the cursor depth. The track is absent when the run has no rock types.
+
 In the Interactive engine every track has axes with real values and units (for example **GR (API)** and **RT (ohm·m, log)**) and a legend. The readout under the log lists every curve at the cursor depth with its unit and wraps instead of cutting off. **Reset View** returns every track to its automatic range after you have zoomed or panned.
 
 Below the log, the **Crossplots** section is collapsed by default; click it to expand a neutron-density crossplot and a porosity-permeability crossplot. Use its depth filter and **Update Crossplots**, or leave **Sync with Log Depth** checked to follow the log's depth range: zooming or panning either engine, or dragging the depth region in the Interactive engine, moves the crossplots to the same interval.
@@ -328,6 +333,30 @@ See [Visualization and Export](visualization-and-export.md) for more about plots
 Below it, cross-validation of the results: **Shale Parameters Cross-Validation** (current versus statistical values and deviation), **Porosity (PHIE) Cross-Validation** with a selectable method, **Water Saturation (Sw) Cross-Validation**, **Permeability (k) Validation**, and **Net Pay Validation**. When core data is loaded, **Core Data Validation** compares core porosity and permeability with the log-derived curves, with core points plotted on a depth track. The shale parameters are the ones **used in the last run**; when the current settings differ, a hint says **Current settings differ — Run to update**. Core samples beside a gap in the log are left out of the comparison and counted (`3 core samples beside a log gap excluded`). Warnings appear under each section when values look suspicious.
 
 **Sw Solver and Porosity Checks** lists, for each Sw model and zone (or **Whole well**), the samples with no porosity (Sw set to 1), **Sw > 1.05** (Sw above 1.05 before the limit; a water leg's scatter just above 1 is not counted), at the lower bound, **BVH capped** (the total-porosity hydrocarbon volume of Waxman-Smits or Dual-Water limited to PHIE), **PHIE > PHIT**, and the Waxman-Smits and Dual-Water solver's no-root and failed counts. Columns fit their contents; scroll the table sideways when they do not fit. A cell above its limit (10 % of the zone's samples above 1.05, 5 % BVH capped or PHIE > PHIT, any solver failure) is in the warning colour, with a tooltip. Below the table, **Swirr method used** names the series that fed permeability and how many samples were raised to the 0.05 floor, limited to Sw, limited to 0.60, or taken from Buckles; a zone whose automatic GR baseline found no shale is listed with **zone has no shale; GRmax from the well**. Use the core-calibrated permeability coefficients from the **Permeability** page when the core comparison supports them.
+
+### Rock Typing
+
+The **Rock Typing** tab turns core porosity and permeability into rock types, which the analysis then carries to every well through the logs. It is optional: until you turn it on, no rock-type column or summary is added and the results are unchanged. The equations and their limits are in [Calculation Methods](calculation-methods.md#rock-typing-v180).
+
+**Workflow**
+
+1. Load core data with porosity and permeability in the same row (**File → Open Core Data…**). Without it the tab shows **No core data loaded. Rock typing needs core with porosity and permeability in the same row. Load core data to begin.**
+2. Choose the **Method** (**FZI clustering**, or **Winland R35** with fixed port-size classes), the **Fit scope**, and the number of **Rock types**. **Suggested: n** next to the count is the count with the best silhouette; the count you set is the one that is used. **Winland R35** always gives five types.
+3. Press **Fit**. The fit runs in the background with a progress bar and **Cancel**; nothing is changed until you apply. A fit that cannot be made says why in the status text (too few usable core rows, or a rock type with fewer than 5 samples), without a dialog.
+4. Review the proposal: the **FZI** plot (histogram of log10 FZI with the boundaries, and a normal-probability plot), **Phi-K** (core porosity against permeability, coloured by rock type, with a dashed curve of constant FZI for each type), **RQI-phiz**, **R35** (with the 0.1, 0.5, 2 and 10 µm lines), and **Lorenz** (the Lorenz curve, the stratigraphic modified Lorenz plot, and a table of its flow-unit segments). Below them, **Rock type definitions** lists each type's samples, centre, FZI, boundaries and **k RMSE (log10)**, and **Core exclusions** counts every core row left out, by reason and well.
+5. Press **Apply to project**. This is the only step that writes the definitions to the project; the status text reads **Applied to the project. Run Analysis (or Run All Wells) to use the rock types.**
+6. Check **Enable rock typing in the analysis**. Without applied definitions it warns **No definitions applied yet: fit and apply rock types first.**
+7. Run the analysis (**Analysis → Run Analysis**, or **Run All Wells**). Applying or enabling changes the parameters of every well, so wells already run are marked out of date (see [Stale results](#stale-results)).
+
+**Settings** in the left column: **Reservoir only (gross sand)** (default on), **Use core labels in the log** (default on), **Lorenz coefficient and SMLP**, **Add R35 column**, **Min PHIE** (0.02), and the **Overburden phi factor** and **Overburden k factor** (both 1.0). Core is used as loaded: overburden and Klinkenberg corrections are not applied unless you enter the factors, which multiply core porosity and permeability before the fit and apply from the next Fit.
+
+**Fit scope.** **Project pooled** fits one set on the core of all wells, so a rock type number means the same rock in every well. **Per well** and **Per zone** also fit a set for each well or zone with at least 20 usable samples; the others use the pooled set, and the status text lists them. A **Set** selector then switches the plots and tables between the sets, and a note says that rock type numbers are not comparable between wells. The scope is a project setting; one scope is active at a time.
+
+**Editing the definitions.** In the definitions table, the **FZI** and the lower and upper boundaries can be edited. Boundaries must increase from rock type 1 upward and FZI must be positive. Counts and **k RMSE** are recomputed from the core at once, and the table shows **edited manually**. Edits never refit. On definitions that are already applied, an edit takes effect in the project immediately and marks the wells out of date; on a proposal that is not applied yet, it changes the proposal.
+
+**Banners.** **Core data changed since this fit; refit.** appears when the core of any well differs from the core the definitions were fitted on, and **Fit settings changed since this fit; refit.** when the overburden factors differ. Petrophyter never refits by itself. The other settings (reservoir only, core labels, Lorenz, R35 column, Min PHIE) change the applied definitions at once and need no refit.
+
+**Results for the active well.** After a run, **Pay per rock type (active well)** lists samples, gross sand, net reservoir, net pay, N/G pay, average PHIE and Sw, HCPV, geometric-mean permeability, FZI and the share of core-labelled samples per rock type, with an **unassigned** row; below it, the counts of samples by source (`core`, `log`, `x_vsh`, `x_phie`, `x_perm`, `x_nan`), near-boundary and outside-range samples, and the core-versus-log agreement. A well without core shows a warning that its rock types are log-derived with the project definitions: treat those as a surrogate, because they inherit the shape of the Timur or Wyllie-Rose permeability (see the caveat in [Calculation Methods](calculation-methods.md#rock-typing-v180)).
 
 ### Summary
 
@@ -349,9 +378,13 @@ These marks are diagnostic, not errors, and no dialog opens. On the Parameters w
 
 With two or more wells, a **Wells** table lists every well with its status, pay summary, and **Issues** (the number of warnings, or the error of a failed well), plus a **Field total** row (thickness and HCPV summed, PHIE and Vsh weighted by net pay, Sw weighted by pore volume). The Field total counts wells whose results are current or out of date and leaves out wells whose latest run failed; its status reads, for example, **4 wells (1 out of date)**. Check **Show zones per well** to add each well's zones. Click a well's row to make it the active well.
 
+When the run has rock types, a **Rock types** group sits below the Zones table. For the active well it lists, per rock type and for the unassigned samples, the gross sand, net reservoir and net pay thickness, N/G pay, the average PHIE and Sw in pay, the HCPV, the geometric-mean permeability, the FZI and the share of core-labelled samples; with two or more wells it also lists each well's rock types. A **Field total** per rock type is shown only for a **Project pooled** fit, where a rock type means the same rock in every well; for a per-well or per-zone fit the table reads **mixed definitions** and shows no field total. The table is hidden when the run has no rock types.
+
 ### Export
 
 Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** title says what it shows, for example **Preview — showing 500 of 4,812 rows (well Alpha)**; the preview always shows the active well, and with **All wells** a note reads, for example, **Export contains 3 wells, 12,340 rows**. **Depth interval** is an explicit choice: **All depths**, or **Selected interval (1000–1019 ft)** using **Top MD** and **Bottom MD**. The choice applies to the preview and to every export (CSV, Excel and LAS, for one well or all wells), and is written in the provenance as **Depth interval**. The Excel **Summary** sheet still describes the whole run. A success banner reports the saved path.
+
+With rock typing on, the results (CSV, and the well sheets and the combined sheet of the workbook) carry the extra columns `RQI`, `FZI`, `ROCK_TYPE`, `ROCK_TYPE_SOURCE` and `RT_MARGIN`, plus `PERM_RT` and `R35` when those are turned on. The workbook adds a **Rock Types** sheet with one row per well and rock type, an **Unassigned** row per well, and **Field total** rows when the definitions are project-wide. **Export definitions** (shown once definitions are applied) saves the rock-type definitions table to CSV. LAS writes `ROCK_TYPE`, `FZI`, `RQI`, `RT_MARGIN` and `PERM_RT` as numeric curves; the text column `ROCK_TYPE_SOURCE` is left out, like the other text columns. Without rock typing, nothing is added.
 
 A status line above the preview reads **Ready — results current**, or for example **2 wells out of date · 1 latest run failed**. Before exporting wells that are out of date or whose latest run failed, a dialog offers **Run out-of-date wells** (runs them and returns to the Export tab; it does not export), **Export last successful results** (the status is written in the file), or **Cancel**. Failed wells without earlier results are left out and named. Every export records the Petrophyter version, the run time, the status, and the parameter hash: a **Provenance** sheet in Excel, an `~OTHER` section in LAS, and a `<name>.provenance.txt` file next to a CSV. See [Data Formats](data-formats.md#exported-files). Merged data is saved as LAS with **File → Save Merged LAS…**.
 
@@ -364,7 +397,7 @@ A session is a JSON file that stores the project, so you can reopen it later.
 
 An asterisk at the start of the window title (`*BKS-01 — Petrophyter`) means there are unsaved changes: loaded or removed wells, tops, core data, merges, parameters, or curve mapping. Running an analysis does not count. Closing the window, loading a session, or starting a new project with unsaved changes asks **Save**, **Discard**, or **Cancel**; **Cancel**, or cancelling the Save's file dialog, keeps everything as it is.
 
-Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. See [Session Management](session-management.md) for the complete list of saved parameters.
+Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. The rock-type definitions and settings are saved with the session, so a loaded session keeps them. See [Session Management](session-management.md) for the complete list of saved parameters.
 
 ## Appearance
 
