@@ -46,3 +46,11 @@ def test_installer_registry_follows_selected_install_mode():
 
     assert "Root: HKA;" in source
     assert "Root: HKLM;" not in source
+
+
+def test_spec_bundles_scipy_cluster_for_rock_typing():
+    # fit_rock_types uses scipy.cluster.vq.kmeans2; the frozen build lists scipy submodules.
+    source = (ROOT / "petrophyter_pyqt_2.spec").read_text(encoding="utf-8")
+
+    assert "'scipy.cluster'," in source
+    assert "'scipy.cluster.vq'," in source
