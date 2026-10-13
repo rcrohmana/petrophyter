@@ -24,7 +24,7 @@ until you turn it on, and sessions that do not use it are still saved as format 
   message instead of being misread.
 - The Rock Typing tab says what to do after enabling rock types and where they appear; it stays
   responsive while open, redrawing only what changed.
-- 1514 tests.
+- 1519 tests.
 
 ## v1.7.3 (Build 20261011)
 
