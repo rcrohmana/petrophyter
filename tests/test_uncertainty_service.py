@@ -432,3 +432,75 @@ def test_runner_with_the_real_kernel(qtbot, runner):
     assert result.config_hash == params_hash(unc.config_to_dict(cfg))
     s = result.stats[("field", "hcpv_net_pay")]
     assert s["n"] == unc.N_MIN and s["p90"] <= s["p50"] <= s["p10"]
+
+
+# ---- lifecycle interactions (spec section 8) ----
+
+def _real_well(window, tmp_path, name="BKS-01"):
+    from tests.test_multiwell_loading import _write
+    window._load_single_las(_write(tmp_path, f"{name}.las", well=name))
+    d = window.model.project.uncertainty.distributions["m"]
+    d.enabled, d.low, d.high = True, -0.1, 0.1
+
+
+def test_batch_started_while_monte_carlo_runs(qtbot, window, kernel, tmp_path):
+    """A batch may start during a Monte Carlo run: nothing crashes, the run still completes and
+    the result is still stored after the wells are recalculated."""
+    _real_well(window, tmp_path)
+    kernel.gate = threading.Event()
+    window.run_uncertainty()
+    assert kernel.entered.wait(10)
+    assert window.uncertainty_runner.is_running()
+    window._on_run_all()
+    qtbot.waitUntil(lambda: not window.batch_runner.is_running(), timeout=20000)
+    assert window.uncertainty_runner.is_running()          # the batch did not touch the run
+    with qtbot.waitSignal(window.uncertainty_result_changed, timeout=20000):
+        kernel.gate.set()
+    assert isinstance(window.model.project.uncertainty_result, FakeResult)
+    qtbot.waitUntil(lambda: not window.uncertainty_runner.is_running(), timeout=5000)
+    assert all(ds.calculated for ds in window.model.project.wells)
+
+
+def test_load_session_cancels_and_clears(qtbot, window, kernel, tmp_path, monkeypatch):
+    from PyQt6.QtWidgets import QFileDialog
+    _real_well(window, tmp_path)
+    path = str(tmp_path / "s.json")
+    assert window.session_service.save_session(window.model, path)
+    kernel.gate = threading.Event()
+    window.run_uncertainty()
+    assert kernel.entered.wait(10)
+    window.model.project.uncertainty_result = FakeResult()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (path, "")))
+    window._on_load_session()
+    qtbot.waitUntil(lambda: window._restore_worker is None, timeout=15000)
+    assert not window.uncertainty_runner.is_running()
+    assert window.model.project.uncertainty_result is None
+    kernel.gate.set()
+    window.uncertainty_runner._pool.waitForDone(10000)
+    qtbot.wait(100)
+    assert window.model.project.uncertainty_result is None
+
+
+def test_quit_prompt_wording_when_monte_carlo_runs(window, monkeypatch):
+    monkeypatch.setattr(MainWindow, "_confirm_quit", REAL_CONFIRM_QUIT)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: asked.append((a[1], a[2])) or QMessageBox.StandardButton.No)
+    monkeypatch.setattr(window.uncertainty_runner, "is_running", lambda: True)
+    assert not window.close()
+    assert len(asked) == 1 and asked[0][1] == "Monte Carlo is still running. Quit anyway?"
+    monkeypatch.setattr(window.uncertainty_runner, "is_running", lambda: False)
+
+
+def test_late_result_from_old_generation_is_not_stored_by_window(qtbot, window, kernel):
+    """A run cancelled by New Project and finishing late must not land in the new project."""
+    _load(window)
+    kernel.gate = threading.Event()
+    kernel.respect_cancel = False            # the worker ignores the cancel and still completes
+    window.run_uncertainty()
+    assert kernel.entered.wait(10)
+    window._discard_uncertainty()
+    kernel.gate.set()
+    window.uncertainty_runner._pool.waitForDone(10000)
+    qtbot.wait(200)
+    assert window.model.project.uncertainty_result is None

@@ -363,3 +363,45 @@ class TestHcpvPerRockType:
             calc.results["HCPV_CUM_NET_PAY"].iloc[-1])
         assert sum(r["net_pay"] for r in rows) == pytest.approx(totals["net_pay"])
         assert sum(r["gross_sand"] for r in rows) == pytest.approx(totals["gross_sand"])
+
+
+class TestUncertaintyKernelDz:
+    """P2: the Monte Carlo kernel integrates with the same dz as the deterministic pipeline."""
+
+    @staticmethod
+    def _freeze(data):
+        from modules import uncertainty as unc
+        from tests.golden.cases import FULL_MAPPING
+        return unc.freeze_well("W:1", "W", data, dict(FULL_MAPPING), {})
+
+    @staticmethod
+    def _well(n):
+        from tests.test_perf_multiwell import _well as _log
+        return _log(0).iloc[:n].reset_index(drop=True)
+
+    def test_dz_equals_depth_increments_with_a_gap(self):
+        data = self._well(60)
+        data.loc[30:, "DEPTH"] += 200.0            # a non-physical gap in the depth column
+        frozen = self._freeze(data)
+        expected = depth_increments(data["DEPTH"]).to_numpy(dtype=float)
+        np.testing.assert_allclose(frozen.dz, expected)
+        step = float(np.median(np.diff(data["DEPTH"].to_numpy())))
+        assert frozen.dz[29] < 3 * step and frozen.dz[30] < 3 * step    # the gap is not integrated
+
+    def test_first_row_takes_its_one_interval(self):
+        data = self._well(40)
+        frozen = self._freeze(data)
+        step = float(data["DEPTH"].iloc[1] - data["DEPTH"].iloc[0])
+        assert frozen.dz[0] == pytest.approx(step / 2) or frozen.dz[0] == pytest.approx(step)
+        np.testing.assert_allclose(frozen.dz, depth_increments(data["DEPTH"]).to_numpy(dtype=float))
+
+    def test_single_sample_matches_depth_increments(self):
+        from modules.uncertainty import UncertaintyExcluded
+        data = self._well(1)
+        expected = depth_increments(data["DEPTH"]).to_numpy(dtype=float)
+        assert expected.shape == (1,)               # the helper the kernel uses: one zero-safe value
+        try:
+            frozen = self._freeze(data)
+        except UncertaintyExcluded:
+            return                                  # one sample is excluded, never integrated
+        np.testing.assert_allclose(frozen.dz, expected)
