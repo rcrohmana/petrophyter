@@ -820,7 +820,47 @@ def _swirr_method_label(method, n_fallback, warnings):
     return method
 
 
-def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=None):
+@dataclass
+class SegmentBasis:
+    """What the saturation stage used for one segment (``run_pipeline(capture=[])``).
+
+    ``positions`` are integer positions of the segment's samples in the (formation
+    filtered) data of the run. ``zone`` is None for an unzoned run and for the
+    ``rest`` segment (the unplanned samples run together). ``params`` is the resolved
+    flat dict after the zone's Rw / Rsh are set and the manual modes forced.
+    ``rw_quality`` is the segment's own auto-Rw quality, or None when its Rw was not
+    estimated. ``sw_fallback`` is None when the primary method supplied SW, else the
+    column used or ``SW_DEFAULTED``.
+    """
+
+    zone: Optional[str]
+    positions: np.ndarray
+    params: Dict
+    rw: float
+    rsh: float
+    rsh_auto: bool
+    tctx: Optional["TemperatureContext"]
+    has_rt: bool
+    rw_quality: Optional[object]
+    vsh: np.ndarray
+    phie: np.ndarray
+    phit: np.ndarray
+    sw_fallback: Optional[str] = None
+
+
+def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay):
+    """Append one :class:`SegmentBasis` to ``capture`` (a list) from a saturation result."""
+    capture.append(SegmentBasis(
+        zone=zone, positions=np.asarray(positions, dtype=np.intp), params=sp,
+        rw=rw, rsh=rsh, rsh_auto=bool(rsh_auto), tctx=tctx, has_rt=pay["has_rt"],
+        rw_quality=rw_quality,
+        vsh=np.array(pay["vsh"], dtype=float), phie=np.array(pay["phie"], dtype=float),
+        phit=np.array(pay["phit"], dtype=float), sw_fallback=pay["sw_fallback"],
+    ))
+
+
+def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=None,
+                 capture=None, positions=None):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
     ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
@@ -879,17 +919,20 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=N
                                  estimator_info["rsh"]),
     }
     rsh_auto = well.get("rsh_auto", False)     # is the Rsh used an estimate at T_ref?
+    rw_quality = None
     for name, estimator in estimators.items():
         if name in zone_auto:
             estimate = estimator() if _enough_data(seg, rt_curve) else None
             _add_estimator_warnings(warnings, name.upper(),
                                     estimator_info[name].get("warnings", []))
-            auto = estimate is not None
+            auto = estimate_found = estimate is not None
             if estimate is None:
                 estimate, sources[name] = _fallback_value(name, plan_entry, well[name])
                 auto = (plan_entry.get("fallback", {}).get(name, {}).get("scope") != PROJECT_ZONE
                         and well.get(f"{name}_auto", False))
             values[name] = estimate
+            if name == "rw" and estimate_found:
+                rw_quality = estimator_info["rw"].get("quality")
         elif name in zone_keys:
             values[name], auto = sp[name], False
         else:
@@ -900,6 +943,9 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=N
     sp["rw_mode"] = sp["rsh_mode"] = "manual"
     pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
                              tctx, warnings, rsh_auto, zone)
+    if capture is not None:
+        _capture_basis(capture, zone, positions, sp, values["rw"], values["rsh"],
+                       rsh_auto, tctx, rw_quality, pay)
     resolved = {"gr_baseline": [sp["gr_min_manual"], sp["gr_max_manual"]],
                 "rw": values["rw"], "rsh": values["rsh"]}
     return calc, pay, _sources_table(sp, sources, resolved)
@@ -953,17 +999,22 @@ def _primary_perm(p):
     return "PERM_TIMUR", None
 
 
-def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                       rsh_auto=False, zone=None):
-    """Sw, Swirr, permeability and pay flags on ``calc``.
+# Marker in ``SegmentBasis.sw_fallback``: no selected method produced a result, SW = 1.
+SW_DEFAULTED = "default"
 
-    ``rw`` is a number (at the reference temperature when the Arps correction is
-    on, ``tctx.factor``); ``rsh`` is an auto estimate at that temperature when
-    ``rsh_auto`` or a manual value (see :func:`_rsh_effective`). Returns the
-    ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
-    this calculator's samples. ``zone`` (a name, or a Series of zone labels) picks the
-    rock-type set; it is only read when rock typing is on.
+
+def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
+                rsh_auto=False, only_primary=False):
+    """Effective Rw / Rsh / WS B, PHIE / PHIT, the Sw methods and the ``SW`` column.
+
+    Returns ``(sw, phie, phit, sw_fallback)``. ``sw`` is the ``SW`` Series (also stored
+    in ``calc.results["SW"]``), or None when the data has no RT (no Sw column).
+    ``sw_fallback`` is None when the primary method supplied ``SW``, else the column
+    used instead, or :data:`SW_DEFAULTED`. With ``only_primary`` only the method that
+    ends up as ``SW`` is computed; ``SW`` is the same as the full path's.
     """
+    sw = None
+    sw_fallback = None
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
     a, m, n = p["a"], p["m"], p["n"]
@@ -987,6 +1038,15 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
 
     if has_rt:
         selected = p["sw_methods"]
+        primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
+        if only_primary:
+            # Only the method that ends up as SW: the primary if selected, else the
+            # first selected one in SW_COLUMN_MAP order (the fallback below).
+            wanted = [name for name, col in SW_COLUMN_MAP.items()
+                      if name in selected and col == primary_col]
+            if not wanted:
+                wanted = [name for name in SW_COLUMN_MAP if name in selected][:1]
+            selected = wanted
         if "Archie" in selected:
             calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n)
         if "Indonesian" in selected:
@@ -1001,19 +1061,37 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
             calc.calculate_sw_dual_water(rt_curve, phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
                                          phie=phie)
 
-        primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
         if primary_col in calc.results.columns:
             calc.results["SW"] = calc.results[primary_col]
         else:
             available = [c for c in SW_COLUMN_MAP.values() if c in calc.results.columns]
             if available:
                 calc.results["SW"] = calc.results[available[0]]
+                sw_fallback = available[0]
             else:
                 calc.results["SW"] = pd.Series([1.0] * len(data), index=data.index)
+                sw_fallback = SW_DEFAULTED
                 warnings.add(
                     "SW_DEFAULTED_NO_METHOD",
                     "Water saturation defaulted to 1.0 because no selected method produced a result."
                 )
+        sw = calc.results["SW"]
+    return sw, phie, phit, sw_fallback
+
+
+def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
+                       rsh_auto=False, zone=None):
+    """Sw, Swirr, permeability and pay flags on ``calc``.
+
+    ``rw`` is a number (at the reference temperature when the Arps correction is
+    on, ``tctx.factor``); ``rsh`` is an auto estimate at that temperature when
+    ``rsh_auto`` or a manual value (see :func:`_rsh_effective`). Returns the
+    ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
+    this calculator's samples. ``zone`` (a name, or a Series of zone labels) picks the
+    rock-type set; it is only read when rock typing is on.
+    """
+    sw_new, phie, phit, sw_fallback = _primary_sw(
+        calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto)
 
     swirr_method = p["swirr_method"]
     k_buckles = p["k_buckles"]
@@ -1047,7 +1125,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     pay = calc.calculate_net_pay(
         vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
     )
-    return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay}
+    return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
+            "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None}
 
 
 def _sample_dz(data: pd.DataFrame):
@@ -1226,6 +1305,7 @@ def run_pipeline(
     params: Dict,
     progress: Optional[ProgressFn] = None,
     formation_tops=None,
+    capture: Optional[list] = None,
 ) -> Tuple[pd.DataFrame, Dict]:
     """Run the full deterministic evaluation.
 
@@ -1238,6 +1318,9 @@ def run_pipeline(
         progress: Optional ``callback(message, percent)``.
         formation_tops: ``FormationTops`` instance; needed for Per-Formation
             mode and for zones.
+        capture: Optional list; each saturation stage appends one
+            :class:`SegmentBasis` (used by the uncertainty module). None: nothing
+            is recorded.
 
     Returns:
         ``(results, summary)`` where ``results`` is the original curves plus the
@@ -1343,6 +1426,9 @@ def run_pipeline(
         emit("Calculating Swirr...", 65)
         pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
                                  rsh_auto, labels)
+        if capture is not None:
+            _capture_basis(capture, None, np.arange(len(data)), dict(p), rw, rsh, rsh_auto, tctx,
+                           rw_rsh_info.get("rw_quality"), pay)
         emit("Calculating permeability...", 75)
         emit("Calculating net pay...", 85)
         summary = dict(pay["summary"])
@@ -1358,7 +1444,8 @@ def run_pipeline(
         for i, zone in enumerate(zones):
             emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
             seg_calc, seg_pay, table = _zone_curves(
-                data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings, zone
+                data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings, zone,
+                capture, np.flatnonzero((labels == zone).to_numpy()),
             )
             parts.append(seg_calc.results)
             pays.append(seg_pay)
@@ -1375,8 +1462,12 @@ def run_pipeline(
                 rest_calc, StatisticsUtils(rest_data), rest_data, curve_mapping, sp, warnings
             )
             _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
-            pays.append(_saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
-                                           rw, rsh, tctx, warnings, rsh_auto, labels[rest]))
+            rest_pay = _saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
+                                          rw, rsh, tctx, warnings, rsh_auto, labels[rest])
+            pays.append(rest_pay)
+            if capture is not None:
+                _capture_basis(capture, None, np.flatnonzero(rest.to_numpy()), sp, rw, rsh,
+                               rsh_auto, tctx, rw_rsh_info.get("rw_quality"), rest_pay)
             parts.append(rest_calc.results)
             _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
             flag_calcs.append(rest_calc)
