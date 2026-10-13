@@ -152,27 +152,31 @@ def _is_text_column(series: pd.Series) -> bool:
     return series.dtype == object or pd.api.types.is_string_dtype(series)
 
 
-def _write_excel_sheet(writer, df: pd.DataFrame, sheet_name: str) -> None:
+def _write_excel_sheet(writer, df: pd.DataFrame, sheet_name: str,
+                       startrow: int = 0, header: bool = True) -> None:
     """``to_excel`` with every ``=...`` header or text cell written as a literal string.
 
     openpyxl turns a string that starts with ``=`` into a formula; such cells
     are marked as strings after writing, so the visible text is unchanged.
     Only the header row and text columns are scanned (numeric columns cannot
-    hold a formula), which keeps large result sheets fast.
+    hold a formula), which keeps large result sheets fast. ``startrow`` writes
+    below rows already on the sheet; ``header=False`` omits the column names.
     """
     safe = spreadsheet_safe(df)
-    safe.to_excel(writer, sheet_name=sheet_name, index=False)
+    safe.to_excel(writer, sheet_name=sheet_name, index=False, startrow=startrow, header=header)
     sheet = writer.sheets[sheet_name]
 
     def literal(cell):
         if isinstance(cell.value, str) and cell.value.startswith("="):
             cell.data_type = "s"
 
-    for cell in sheet[1]:
-        literal(cell)
+    if header:
+        for cell in sheet[startrow + 1]:
+            literal(cell)
+    first = startrow + (2 if header else 1)
     for index, column in enumerate(safe.columns, start=1):
         if _is_text_column(safe[column]):
-            for (cell,) in sheet.iter_rows(min_row=2, min_col=index, max_col=index):
+            for (cell,) in sheet.iter_rows(min_row=first, min_col=index, max_col=index):
                 literal(cell)
 
 
@@ -184,6 +188,8 @@ SUMMARY_SHEET = "Summary"
 ZONES_SHEET = "Zones"
 PROVENANCE_SHEET = "Provenance"
 ROCKTYPES_SHEET = "Rock Types"
+UNCERTAINTY_SHEET = "Uncertainty"
+TORNADO_SHEET = "Tornado"
 FIELD_TOTAL_LABEL = "Field total"
 
 WELL_COLUMNS = [
@@ -759,13 +765,100 @@ def default_file_stem(ds, prefix: str = "petrophyter_results") -> str:
     return f"{prefix}_{sanitize_name(well_label(ds), 60, 'well')}"
 
 
-def _export_wells_excel(wells, file_path, depth_range=None):
+UNCERTAINTY_COLUMNS = ["Scope", "Well", "Zone", "Metric", "P90", "P50", "P10", "Mean", "Std",
+                       "Min", "Max", "N valid", "P(zero)", "Deterministic"]
+TORNADO_COLUMNS = ["Scope", "Well", "Zone", "Metric", "Parameter", "Mode", "Low input",
+                   "High input", "Output at low", "Output at high", "Swing",
+                   "Rank correlation (field)"]
+P90_CONVENTION = "P90 = low case, exceeded with 90% probability"
+
+
+def _uncertainty_scopes(result):
+    """(scope key, kind, well name, zone) for the field, each well and each well zone."""
+    out = [("field", "Field", "", "")]
+    for w in result.wells:
+        out.append((w["key"], "Well", w["name"], ""))
+        for zone in (result.zones or {}).get(w["key"], []):
+            out.append(((w["key"], zone), "Zone", w["name"], str(zone)))
+    return out
+
+
+def uncertainty_header_frame(result, stale: bool) -> pd.DataFrame:
+    """Key/value block above the Uncertainty table."""
+    from modules.uncertainty import NOT_VARIED
+
+    rows = [
+        ("Seed", int(result.seed)),
+        ("N", int(result.n)),
+        ("Sampling", str(result.sampling)),
+        ("Convention", P90_CONVENTION),
+        ("Not varied", NOT_VARIED),
+        ("Stale", "Yes" if stale else "No"),
+    ]
+    return pd.DataFrame(rows, columns=["Item", "Value"])
+
+
+def uncertainty_frame(result) -> pd.DataFrame:
+    """One row per scope (field, well, well zone) and metric."""
+    from modules.uncertainty import METRIC_LABELS, METRICS
+
+    nan = float("nan")
+    rows = []
+    for scope, kind, well, zone in _uncertainty_scopes(result):
+        for metric in METRICS:
+            st = result.stats.get((scope, metric)) or {}
+            det = result.deterministic.get((scope, metric))
+            rows.append([
+                kind, well, zone, METRIC_LABELS.get(metric, metric),
+                st.get("p90", nan), st.get("p50", nan), st.get("p10", nan),
+                st.get("mean", nan), st.get("std", nan), st.get("min", nan),
+                st.get("max", nan), st.get("n_valid", nan), st.get("prob_zero", nan),
+                det if det is not None else nan])
+    return pd.DataFrame(rows, columns=UNCERTAINTY_COLUMNS)
+
+
+def tornado_frame(result) -> pd.DataFrame:
+    """One row per scope, tornado metric and parameter, largest swing first within each block.
+
+    The rank correlation is the field-level one, so it is filled on field rows only.
+    """
+    from modules.uncertainty import METRIC_LABELS
+
+    nan = float("nan")
+    dists = (result.config or {}).get("distributions", {})
+    rows = []
+    for scope, kind, well, zone in _uncertainty_scopes(result):
+        for (sc, metric), entries in (result.tornado or {}).items():
+            if sc != scope:
+                continue
+            rank = (result.rank_corr or {}).get(metric, {}) if scope == "field" else {}
+            for e in sorted(entries, key=lambda e: -float(e["swing"])):
+                rho = rank.get(e["name"])
+                rows.append([
+                    kind, well, zone, METRIC_LABELS.get(metric, metric), e["name"],
+                    (dists.get(e["name"]) or {}).get("mode", ""),
+                    e["low_input"], e["high_input"], e["at_low_input"], e["at_high_input"],
+                    e["swing"], float(rho) if rho is not None else nan])
+    return pd.DataFrame(rows, columns=TORNADO_COLUMNS)
+
+
+def _write_uncertainty_sheets(writer, uncertainty) -> None:
+    result, stale = uncertainty["result"], bool(uncertainty.get("stale"))
+    header = uncertainty_header_frame(result, stale)
+    _write_excel_sheet(writer, header, UNCERTAINTY_SHEET, header=False)
+    _write_excel_sheet(writer, uncertainty_frame(result), UNCERTAINTY_SHEET,
+                       startrow=len(header) + 1)
+    _write_excel_sheet(writer, tornado_frame(result), TORNADO_SHEET)
+
+
+def _export_wells_excel(wells, file_path, depth_range=None, uncertainty=None):
+    """``uncertainty`` is ``{"result": MCResult, "stale": bool}``; None writes no MC sheets."""
     ready = wells_with_results(wells)
     if not ready:
         raise ValueError("no well has results to export")
     names = unique_names([well_label(ds) for ds in ready], 31,
                          reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET,
-                                   ROCKTYPES_SHEET))
+                                   ROCKTYPES_SHEET, UNCERTAINTY_SHEET, TORNADO_SHEET))
     zones = zones_frame(ready)
     rock_types = rock_types_frame(ready)
     provenance = pd.DataFrame(
@@ -777,6 +870,8 @@ def _export_wells_excel(wells, file_path, depth_range=None):
                 _write_excel_sheet(writer, zones, ZONES_SHEET)
             if len(rock_types):
                 _write_excel_sheet(writer, rock_types, ROCKTYPES_SHEET)
+            if uncertainty is not None and uncertainty.get("result") is not None:
+                _write_uncertainty_sheets(writer, uncertainty)
             _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
             for ds, sheet in zip(ready, names):
                 _write_excel_sheet(writer, apply_depth_range(ds.results, depth_range), sheet)
@@ -893,10 +988,14 @@ class ExportService(QObject):
             self.export_error.emit(f"CSV export failed: {str(e)}")
             return False
 
-    def export_excel_wells(self, wells, file_path: str, depth_range=None) -> bool:
-        """Workbook: Summary sheet, Zones sheet (when present), one sheet per well."""
+    def export_excel_wells(self, wells, file_path: str, depth_range=None,
+                           uncertainty=None) -> bool:
+        """Workbook: Summary sheet, Zones sheet (when present), one sheet per well.
+
+        ``uncertainty`` ({"result": MCResult, "stale": bool}) adds Uncertainty and Tornado sheets.
+        """
         try:
-            _export_wells_excel(wells, file_path, depth_range)
+            _export_wells_excel(wells, file_path, depth_range, uncertainty)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:

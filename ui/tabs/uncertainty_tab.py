@@ -22,9 +22,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.param_scopes import params_hash
-from modules.uncertainty import NOT_VARIED, config_to_dict
-from services.uncertainty_service import UncertaintyRunner
+from modules.uncertainty import NOT_VARIED
+from services.uncertainty_service import result_is_stale
 from themes.colors import get_plot_color
 from themes.helpers import set_status
 from ..widgets.plot_widget import PlotWidget
@@ -271,20 +270,7 @@ class UncertaintyTab(QWidget):
         self.det_note.setVisible(any(ds is not None and ds.stale for ds in included))
 
     def _is_stale(self, result) -> bool:
-        project = self.model.project
-        basis = getattr(result, "basis", None) or {}
-        excluded = {e.get("key") for e in (getattr(result, "excluded", None) or [])}
-        for key, h in basis.items():
-            ds = project.get(key)
-            if ds is None or self.model.well_params_hash(ds) != h:
-                return True
-        for ds in project.wells:
-            if ds.key in basis or ds.key in excluded:
-                continue
-            if UncertaintyRunner._has_rt_data(self.model, ds):
-                return True
-        cfg_hash = params_hash(config_to_dict(project.uncertainty))
-        return cfg_hash != getattr(result, "config_hash", None)
+        return result_is_stale(self.model, result)
 
     # ------------------------------------------------------------- table
     def _on_metric_changed(self, *_):

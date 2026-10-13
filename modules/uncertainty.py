@@ -444,6 +444,12 @@ def config_from_dict(d: Optional[Dict[str, Any]]) -> UncertaintyConfig:
 METRICS: Tuple[str, ...] = ("hcpv_net_pay", "hcpv_net_res", "net_pay", "net_res",
                             "avg_phie_pay", "avg_sw_pay", "phih_pay")
 TORNADO_METRICS: Tuple[str, ...] = ("hcpv_net_pay", "net_pay")
+METRIC_LABELS: Dict[str, str] = {
+    "hcpv_net_pay": "HCPV net pay (ft)", "hcpv_net_res": "HCPV net reservoir (ft)",
+    "net_pay": "Net pay (ft)", "net_res": "Net reservoir (ft)",
+    "avg_phie_pay": "Avg PHIE in pay", "avg_sw_pay": "Avg Sw in pay",
+    "phih_pay": "PHIH in pay (ft)",
+}
 TORNADO_QUANTILES = (0.10, 0.90)
 
 

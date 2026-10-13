@@ -20,6 +20,26 @@ from services.analysis_service import WellSnapshot, snapshot_well
 logger = logging.getLogger(__name__)
 
 
+def result_is_stale(model, result) -> bool:
+    """True when ``result`` no longer matches the project (shared by the tab and the export)."""
+    from modules.uncertainty import config_to_dict
+
+    project = model.project
+    basis = getattr(result, "basis", None) or {}
+    excluded = {e.get("key") for e in (getattr(result, "excluded", None) or [])}
+    for key, h in basis.items():
+        ds = project.get(key)
+        if ds is None or model.well_params_hash(ds) != h:
+            return True
+    for ds in project.wells:
+        if ds.key in basis or ds.key in excluded:
+            continue
+        if UncertaintyRunner._has_rt_data(model, ds):
+            return True
+    cfg_hash = params_hash(config_to_dict(project.uncertainty))
+    return cfg_hash != getattr(result, "config_hash", None)
+
+
 class UncertaintySignals(QObject):
     """Signals of one worker."""
 

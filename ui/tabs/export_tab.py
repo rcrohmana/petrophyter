@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 import pandas as pd
+from services.uncertainty_service import result_is_stale
 from ..widgets.table_model import PandasTableModel
 from themes.icon_loader import get_icon
 from themes.helpers import set_status
@@ -367,7 +368,13 @@ class ExportTab(QWidget):
             return
         depth_range = self.depth_range()
         if self.export_scope() == "all":
-            self._service.export_excel_wells(self.model.project.wells, file_path, depth_range)
+            result = self.model.project.uncertainty_result
+            uncertainty = None
+            if result is not None:
+                uncertainty = {"result": result,
+                               "stale": result_is_stale(self.model, result)}
+            self._service.export_excel_wells(self.model.project.wells, file_path, depth_range,
+                                             uncertainty)
         elif (self.model.calculated and self.model.results is not None
               and self.model.summary is not None):
             self._service.export_excel(

@@ -904,3 +904,114 @@ def test_summary_rock_group_follows_the_switch_cheaply(qtbot, rock_model, monkey
     tab.refresh_rock_types()
     assert tab.rock_group.isHidden()
 
+
+
+# ---------------------------------------------------------------------------
+# Excel: Uncertainty and Tornado sheets
+# ---------------------------------------------------------------------------
+def _mc_result():
+    from modules import uncertainty as U
+
+    cfg = U.UncertaintyConfig(n=20, seed=7)
+    cfg.distributions["rw"].enabled = True
+    cfg.distributions["rw"].low, cfg.distributions["rw"].mid, cfg.distributions["rw"].high = \
+        -0.1, 0.0, 0.1
+    metrics = U.METRICS
+    vals = np.linspace(1.0, 2.0, 20)
+    values, stats, det, torn = {}, {}, {}, {}
+    scopes = ["field", "W:A", ("W:A", "Z1")]
+    for sc in scopes:
+        for m in metrics:
+            values[(sc, m)] = vals
+            stats[(sc, m)] = U.exceedance_stats(vals)
+            det[(sc, m)] = 1.5
+    for sc in scopes:
+        for m in U.TORNADO_METRICS:
+            torn[(sc, m)] = U.tornado_rows(1.5, {"rw": (1.4, 1.7, 0.9, 1.1),
+                                                  "sw_cutoff": (1.45, 1.5, 0.4, 0.6)})
+    return U.MCResult(
+        config=U.config_to_dict(cfg), n=20, seed=7, sampling="lhs", names=("rw",),
+        offsets=np.zeros((20, 1)), wells=[{"key": "W:A", "name": "Alpha"}], excluded=[],
+        zones={"W:A": ["Z1"]}, values=values, deterministic=det, stats=stats, tornado=torn,
+        rank_corr={m: {"rw": 0.5, "sw_cutoff": -0.2} for m in metrics}, clipped={}, warnings=[],
+        elapsed_s=0.1)
+
+
+def test_excel_without_uncertainty_has_no_mc_sheets(tmp_path, model):
+    path = tmp_path / "plain.xlsx"
+    assert ExportService().export_excel_wells(model.project.wells, str(path))
+    sheets = pd.ExcelFile(path).sheet_names
+    assert "Uncertainty" not in sheets and "Tornado" not in sheets
+
+
+def test_excel_with_uncertainty_sheets(tmp_path, model):
+    result = _mc_result()
+    path = tmp_path / "mc.xlsx"
+    assert ExportService().export_excel_wells(
+        model.project.wells, str(path), uncertainty={"result": result, "stale": True})
+    book = pd.ExcelFile(path)
+    assert "Uncertainty" in book.sheet_names and "Tornado" in book.sheet_names
+    raw = pd.read_excel(path, sheet_name="Uncertainty", header=None)
+    head = dict(zip(raw[0][:6], raw[1][:6]))
+    assert head["Seed"] == 7 and head["N"] == 20 and head["Sampling"] == "lhs"
+    assert head["Stale"] == "Yes"
+    assert head["Convention"].startswith("P90 = low case")
+    assert "porosity" in head["Not varied"]
+    table = pd.read_excel(path, sheet_name="Uncertainty", header=7)
+    assert list(table.columns[:4]) == ["Scope", "Well", "Zone", "Metric"]
+    assert len(table) == 3 * 7                         # field, well, zone x 7 metrics
+    row = table[(table["Scope"] == "Zone") & (table["Metric"] == "Net pay (ft)")].iloc[0]
+    assert row["Well"] == "Alpha" and row["Zone"] == "Z1"
+    st = result.stats[(("W:A", "Z1"), "net_pay")]
+    assert row["P90"] == pytest.approx(st["p90"]) and row["P10"] == pytest.approx(st["p10"])
+    assert row["Deterministic"] == pytest.approx(1.5) and row["N valid"] == 20
+
+
+def test_excel_uncertainty_fresh_flag_and_tornado_rows(tmp_path, model):
+    result = _mc_result()
+    path = tmp_path / "mc.xlsx"
+    ExportService().export_excel_wells(
+        model.project.wells, str(path), uncertainty={"result": result, "stale": False})
+    raw = pd.read_excel(path, sheet_name="Uncertainty", header=None)
+    assert dict(zip(raw[0][:6], raw[1][:6]))["Stale"] == "No"
+    tor = pd.read_excel(path, sheet_name="Tornado")
+    assert len(tor) == sum(len(v) for v in result.tornado.values())
+    field = tor[(tor["Scope"] == "Field") & (tor["Metric"] == "Net pay (ft)")]
+    expected = result.tornado[("field", "net_pay")]
+    assert list(field["Parameter"]) == [e["name"] for e in expected]
+    assert list(field["Swing"]) == pytest.approx([e["swing"] for e in expected])
+    assert list(field["Output at low"]) == pytest.approx([e["at_low_input"] for e in expected])
+    rw = field[field["Parameter"] == "rw"].iloc[0]
+    assert rw["Rank correlation (field)"] == pytest.approx(0.5) and rw["Mode"] == "relative"
+    assert tor[tor["Scope"] != "Field"]["Rank correlation (field)"].isna().all()
+
+
+def test_well_named_uncertainty_does_not_collide(tmp_path, model):
+    model.project.add_well(_well("W:U", "Uncertainty"), activate=False)
+    model.project.add_well(_well("W:T", "Tornado"), activate=False)
+    path = tmp_path / "clash.xlsx"
+    ExportService().export_excel_wells(
+        model.project.wells, str(path), uncertainty={"result": _mc_result(), "stale": False})
+    sheets = pd.ExcelFile(path).sheet_names
+    assert len(sheets) == len({s.lower() for s in sheets})
+    assert sheets.count("Uncertainty") == 1 and sheets.count("Tornado") == 1
+    assert any(s.startswith("Uncertainty") and s != "Uncertainty" for s in sheets)
+    assert any(s.startswith("Tornado") and s != "Tornado" for s in sheets)
+
+
+def test_export_tab_passes_result_and_stale_flag(export_tab, model, tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(export_tab._service, "export_excel_wells",
+                        lambda wells, path, depth=None, uncertainty=None:
+                        seen.update(u=uncertainty) or True)
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "x.xlsx"), "")))
+    monkeypatch.setattr(export_tab, "_proceed", lambda: True)
+    monkeypatch.setattr(export_tab, "export_scope", lambda: "all")
+    export_tab._on_export_excel()
+    assert seen["u"] is None
+    result = _mc_result()
+    result.basis, result.config_hash = {}, "x"       # config hash differs from the project's
+    model.project.uncertainty_result = result
+    export_tab._on_export_excel()
+    assert seen["u"]["result"] is result and seen["u"]["stale"] is True
