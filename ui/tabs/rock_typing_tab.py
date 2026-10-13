@@ -10,9 +10,10 @@ import logging
 
 import numpy as np
 import pandas as pd
-from PyQt6.QtCore import Qt, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QEvent, Qt, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -25,7 +26,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
-    QSplitter,
     QStackedWidget,
     QTableView,
     QTableWidget,
@@ -59,6 +59,26 @@ PAY_COLUMNS = (("rt", "RT"), ("samples", "Samples"), ("gross_sand", "Gross sand"
                ("avg_phie_pay", "Avg PHIE"), ("avg_sw_pay", "Avg Sw"),
                ("hcpv_net_pay", "HCPV net pay"), ("perm_geomean", "k geomean"),
                ("fzi", "FZI"), ("pct_core", "% core"))
+
+
+CONTROLS_MIN_WIDTH = 300
+CONTROLS_MAX_WIDTH = 340
+PLOT_MIN_HEIGHT = 460
+
+
+def fit_table_height(table):
+    """Size a table to show every row (no vertical scrollbar); horizontal scroll only if needed."""
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    rows = table.model().rowCount()
+    header = table.horizontalHeader()
+    h = max(header.height(), header.sizeHint().height())
+    h += sum(table.rowHeight(r) for r in range(rows))
+    h += 2 * table.frameWidth() + 2
+    cols = table.model().columnCount()
+    if sum(table.columnWidth(c) for c in range(cols)) > table.viewport().width() > 0:
+        h += table.horizontalScrollBar().sizeHint().height()
+    table.setFixedHeight(h)
 
 
 def rt_colors(n: int) -> list:
@@ -99,8 +119,17 @@ class RockTypingTab(QWidget):
 
     # ------------------------------------------------------------------ UI
     def _setup_ui(self):
-        root = QHBoxLayout(self)
-        root.addWidget(self._build_controls(), 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        # One scroll area for the whole page: everything at natural size, one vertical scrollbar.
+        self.page_scroll = QScrollArea()
+        self.page_scroll.setWidgetResizable(True)
+        self.page_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.page = QWidget()
+        root = QHBoxLayout(self.page)
+        root.addWidget(self._build_controls(), 0, Qt.AlignmentFlag.AlignTop)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -123,19 +152,16 @@ class RockTypingTab(QWidget):
         self.stack.addWidget(self.placeholder)
         self.stack.addWidget(self._build_content())
         rl.addWidget(self.stack, 1)
-        root.addWidget(right, 1)
+        root.addWidget(right, 1, Qt.AlignmentFlag.AlignTop)
+        self.page_scroll.setWidget(self.page)
+        outer.addWidget(self.page_scroll)
 
     def _build_controls(self) -> QWidget:
         panel = QWidget()
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(320)
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        inner = QWidget()
-        v = QVBoxLayout(inner)
+        panel.setMinimumWidth(CONTROLS_MIN_WIDTH)
+        panel.setMaximumWidth(CONTROLS_MAX_WIDTH)
+        v = QVBoxLayout(panel)
+        v.setContentsMargins(0, 0, 0, 0)
 
         def section(text):
             label = QLabel(text.upper())
@@ -227,8 +253,6 @@ class RockTypingTab(QWidget):
         self.ob_k_spin.setToolTip("Applied to core permeability before RQI. Used by the next Fit.")
         v.addLayout(sg)
         v.addStretch(1)
-        scroll.setWidget(inner)
-        lay.addWidget(scroll)
 
         self._fill_controls(rt.DEFAULT_SETTINGS)
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
@@ -245,7 +269,9 @@ class RockTypingTab(QWidget):
         return panel
 
     def _build_content(self) -> QWidget:
-        split = QSplitter(Qt.Orientation.Vertical)
+        content = QWidget()
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(0, 0, 0, 0)
         self.plot_tabs = QTabWidget()
         self.plot_fzi = PlotWidget(figsize=(8, 4))
         self.plot_phik = PlotWidget(figsize=(8, 4))
@@ -255,25 +281,27 @@ class RockTypingTab(QWidget):
         ll = QVBoxLayout(lorenz)
         ll.setContentsMargins(0, 0, 0, 0)
         self.plot_lorenz = PlotWidget(figsize=(8, 4))
-        ll.addWidget(self.plot_lorenz, 3)
+        self.plot_lorenz.setMinimumHeight(PLOT_MIN_HEIGHT)
+        self.plot_lorenz.canvas.installEventFilter(self)
+        ll.addWidget(self.plot_lorenz)
         self.lorenz_label = QLabel("")
         set_status(self.lorenz_label, "muted")
         ll.addWidget(self.lorenz_label)
         self.units_view = QTableView()
         self.units_view.setModel(PandasTableModel(pd.DataFrame(), float_decimals=3))
         self.units_view.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
-        ll.addWidget(self.units_view, 1)
+        self.units_view.model().modelReset.connect(lambda: fit_table_height(self.units_view))
+        fit_table_height(self.units_view)
+        ll.addWidget(self.units_view)
         for widget, title in ((self.plot_fzi, "FZI"), (self.plot_phik, "Phi-K"),
                               (self.plot_rqi, "RQI-phiz"), (self.plot_r35, "R35"),
                               (lorenz, "Lorenz")):
+            if isinstance(widget, PlotWidget):
+                widget.setMinimumHeight(PLOT_MIN_HEIGHT)
+                widget.canvas.installEventFilter(self)   # wheel over a plot scrolls the page
             self.plot_tabs.addTab(widget, title)
-        split.addWidget(self.plot_tabs)
-
-        lower = QScrollArea()
-        lower.setWidgetResizable(True)
-        lower.setFrameShape(QScrollArea.Shape.NoFrame)
-        body = QWidget()
-        bl = QVBoxLayout(body)
+        cl.addWidget(self.plot_tabs)
+        bl = cl
 
         self.defs_group = QGroupBox("Rock type definitions")
         dl = QVBoxLayout(self.defs_group)
@@ -291,7 +319,6 @@ class RockTypingTab(QWidget):
         self.defs_table = QTableWidget(0, len(DEF_COLUMNS))
         self.defs_table.setHorizontalHeaderLabels(list(DEF_COLUMNS))
         self.defs_table.verticalHeader().setVisible(False)
-        self.defs_table.setMinimumHeight(140)
         dl.addWidget(self.defs_table)
         bl.addWidget(self.defs_group)
 
@@ -302,7 +329,6 @@ class RockTypingTab(QWidget):
             ["Reason", "Rows", "Wells", "Of which excluded at load"])
         self.excl_table.verticalHeader().setVisible(False)
         self.excl_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.excl_table.setMinimumHeight(120)
         el.addWidget(self.excl_table)
         self.excl_notes = QLabel("")
         self.excl_notes.setWordWrap(True)
@@ -316,7 +342,6 @@ class RockTypingTab(QWidget):
         self.pay_table.setHorizontalHeaderLabels([c[1] for c in PAY_COLUMNS])
         self.pay_table.verticalHeader().setVisible(False)
         self.pay_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.pay_table.setMinimumHeight(120)
         pl.addWidget(self.pay_table)
         self.pay_notes = QLabel("")
         self.pay_notes.setWordWrap(True)
@@ -325,14 +350,23 @@ class RockTypingTab(QWidget):
         self.pay_group.setVisible(False)
         bl.addWidget(self.pay_group)
         bl.addStretch(1)
-        lower.setWidget(body)
-        split.addWidget(lower)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
 
         self.set_combo.currentIndexChanged.connect(self._on_set_changed)
         self.defs_table.itemChanged.connect(self._on_def_edited)
-        return split
+        for t in (self.defs_table, self.excl_table, self.pay_table):
+            fit_table_height(t)
+        return content
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._fit_tables()           # fonts and header heights are final once shown
+
+    def eventFilter(self, obj, event):
+        """The matplotlib canvas swallows wheel events; hand them to the page scroll area."""
+        if event.type() == QEvent.Type.Wheel:
+            QApplication.sendEvent(self.page_scroll.verticalScrollBar(), event)
+            return True
+        return super().eventFilter(obj, event)
 
     # ----------------------------------------------------------- settings
     def _fill_controls(self, settings: dict):
@@ -567,6 +601,11 @@ class RockTypingTab(QWidget):
         self._plot_rqi(sub, labels, rset, n_rt)
         self._plot_r35(sub)
         self._plot_lorenz()
+        self._fit_tables()
+
+    def _fit_tables(self):
+        for t in (self.defs_table, self.excl_table, self.pay_table, self.units_view):
+            fit_table_height(t)
 
     # ---- definitions table
     def _render_defs_table(self, defs, rset, sub, labels, method):

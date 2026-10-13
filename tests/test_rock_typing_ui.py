@@ -169,3 +169,72 @@ def test_too_few_rows_is_a_status_message(qtbot):
 def test_exclusion_table_counts_valid_rows(tab):
     texts = [tab.excl_table.item(r, 0).text() for r in range(tab.excl_table.rowCount())]
     assert "valid (used)" in texts
+
+
+# ---------------------------------------------------------------- page layout
+def _fit_and_apply(qtbot, tab):
+    _fit(qtbot, tab)
+    tab.apply_button.click()
+
+
+def test_whole_page_is_one_scroll_area(qtbot, tab):
+    from PyQt6.QtWidgets import QScrollArea, QSplitter
+
+    tab.resize(1400, 900)
+    tab.show()
+    _fit_and_apply(qtbot, tab)
+    areas = [a for a in tab.findChildren(QScrollArea) if a.__class__ is QScrollArea]
+    assert areas == [tab.page_scroll]
+    assert tab.page_scroll.widgetResizable()
+    assert not tab.findChildren(QSplitter)
+    assert tab.page_scroll.widget() is tab.page
+    for w in (tab.fit_button, tab.stack, tab.plot_tabs, tab.defs_table):
+        assert tab.page.isAncestorOf(w)
+
+
+def test_tables_show_all_rows_without_own_scrollbar(qtbot, tab):
+    tab.resize(1400, 900)
+    tab.show()
+    _fit_and_apply(qtbot, tab)
+    tab.plot_tabs.setCurrentWidget(tab.plot_lorenz.parentWidget())
+    qtbot.wait(50)
+    assert tab.defs_table.rowCount() == 3
+    for t in (tab.defs_table, tab.excl_table, tab.pay_table, tab.units_view):
+        assert t.verticalScrollBar().maximum() == 0
+        rows = t.model().rowCount()
+        need = t.horizontalHeader().height() + sum(t.rowHeight(r) for r in range(rows))
+        assert t.height() >= need
+    assert tab.plot_fzi.minimumHeight() >= 420
+
+
+def test_controls_need_no_horizontal_scrollbar(qtbot, tab):
+    tab.resize(1400, 900)
+    tab.show()
+    _fit_and_apply(qtbot, tab)
+    qtbot.wait(50)
+    assert tab.page_scroll.horizontalScrollBar().maximum() == 0
+    controls = tab.fit_button.parentWidget()
+    assert controls.width() >= 300
+    for w in (tab.method_combo, tab.min_phie_spin, tab.ob_k_spin, tab.status_label):
+        right = w.mapTo(controls, w.rect().topRight()).x()
+        assert right <= controls.width()
+
+
+def test_wheel_over_plot_scrolls_the_page(qtbot, tab):
+    from PyQt6.QtCore import QPoint, QPointF
+    from PyQt6.QtGui import QWheelEvent
+    from PyQt6.QtWidgets import QApplication
+
+    tab.resize(1400, 500)
+    tab.show()
+    _fit_and_apply(qtbot, tab)
+    qtbot.wait(50)
+    bar = tab.page_scroll.verticalScrollBar()
+    assert bar.maximum() > 0
+    canvas = tab.plot_fzi.canvas
+    pos = QPointF(canvas.width() / 2, canvas.height() / 2)
+    ev = QWheelEvent(pos, canvas.mapToGlobal(pos), QPoint(0, 0), QPoint(0, -120),
+                     Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                     Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(canvas, ev)
+    assert bar.value() > 0
