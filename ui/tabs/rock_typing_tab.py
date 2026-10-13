@@ -64,6 +64,8 @@ PAY_COLUMNS = (("rt", "RT"), ("samples", "Samples"), ("gross_sand", "Gross sand"
 CONTROLS_MIN_WIDTH = 300
 CONTROLS_MAX_WIDTH = 340
 PLOT_MIN_HEIGHT = 460
+FIT_TIP = ("Least-squares log10 RQI vs log10 phi_z per rock type. Slope near 1 and high R\u00b2 "
+           "mean one hydraulic unit; diagnostic only, the representative FZI is the geometric mean.")
 
 
 def fit_table_height(table):
@@ -312,8 +314,28 @@ class RockTypingTab(QWidget):
         self.units_view.model().modelReset.connect(lambda: fit_table_height(self.units_view))
         fit_table_height(self.units_view)
         ll.addWidget(self.units_view)
+        rqi_page = QWidget()
+        rl = QVBoxLayout(rqi_page)
+        rl.setContentsMargins(0, 0, 0, 0)
+        self.fit_line_check = QCheckBox("Free-slope fit")
+        self.fit_line_check.setChecked(True)
+        self.fit_line_check.setToolTip(FIT_TIP)
+        self.fit_line_check.toggled.connect(self._on_fit_line_toggled)
+        rl.addWidget(self.fit_line_check)
+        self.plot_rqi.setMinimumHeight(PLOT_MIN_HEIGHT)
+        self.plot_rqi.canvas.installEventFilter(self)   # wheel over a plot scrolls the page
+        rl.addWidget(self.plot_rqi)
+        self.fit_table = QTableWidget(0, 5)
+        self.fit_table.setHorizontalHeaderLabels(
+            ["Rock type", "Samples", "Fit slope", "Fit intercept (FZI)", "Fit R\u00b2"])
+        self.fit_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.fit_table.setToolTip(FIT_TIP)
+        self.fit_table.verticalHeader().setVisible(False)
+        self.fit_table.horizontalHeader().setStretchLastSection(True)
+        fit_table_height(self.fit_table)
+        rl.addWidget(self.fit_table)
         for widget, title in ((self.plot_fzi, "FZI"), (self.plot_phik, "Phi-K"),
-                              (self.plot_rqi, "RQI-phiz"), (self.plot_r35, "R35"),
+                              (rqi_page, "RQI-phiz"), (self.plot_r35, "R35"),
                               (lorenz, "Lorenz")):
             if isinstance(widget, PlotWidget):
                 widget.setMinimumHeight(PLOT_MIN_HEIGHT)
@@ -742,6 +764,12 @@ class RockTypingTab(QWidget):
             self._plot_lorenz()
             fit_table_height(self.units_view)
 
+    def _on_fit_line_toggled(self, _checked):
+        """Display-only switch: redraw the RQI-phiz figure alone (now if visible, else later)."""
+        self._plot_done.pop(2, None)
+        if self.plot_tabs.currentIndex() == 2:
+            self._ensure_plot(2)
+
     def _on_plot_tab_changed(self, idx: int):
         self._ensure_plot(idx)
 
@@ -1031,10 +1059,24 @@ class RockTypingTab(QWidget):
         ax.scatter(d["PHIE"], d[col], s=3, color=get_plot_color("SW_DEFAULT"), alpha=0.25,
                    label=f"log {col}", zorder=0)
 
+    def _fill_fit_table(self, fits):
+        t = self.fit_table
+        t.setRowCount(len(fits))
+        for r, f in enumerate(fits):
+            vals = [str(f["rt"]), str(f["n"]), _fmt(f["slope"], 2),
+                    _fmt(f["intercept_fzi"], 3), _fmt(f["r2"], 3)]
+            for c, text in enumerate(vals):
+                item = QTableWidgetItem(text)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                t.setItem(r, c, item)
+        fit_table_height(t)
+
     def _plot_rqi(self, sub, labels, rset, n_rt):
         pw = self.plot_rqi
         if not len(sub):
             pw.clear()
+            self.fit_table.setRowCount(0)
+            fit_table_height(self.fit_table)
             return
         ax = pw.get_axes()
         phiz = rt.phi_z(sub["phi"].to_numpy(float))
@@ -1045,11 +1087,25 @@ class RockTypingTab(QWidget):
         for i, f in enumerate((rset or {}).get("fzi") or []):
             if f is not None:
                 ax.plot(pz, float(f) * pz, color=colors[i], linewidth=1.2, linestyle="--")
+        fits = rt.free_slope_fits(phiz, rqi, labels, n_rt) if n_rt else []
+        self._fill_fit_table(fits)
+        if self.fit_line_check.isChecked():
+            for f in fits:
+                if f["slope"] is None:
+                    continue
+                xs = np.array([f["phiz_min"], f["phiz_max"]])
+                label = f"RT {f['rt']} fit: slope {f['slope']:.2f}"
+                if f["r2"] is not None:
+                    label += f", R\u00b2 {f['r2']:.2f}"
+                ax.plot(xs, f["intercept_fzi"] * xs ** f["slope"], color=colors[f["rt"] - 1],
+                        linewidth=0.9, linestyle="-", label=label)
+            if ax.get_legend_handles_labels()[0]:
+                ax.legend(fontsize=8, loc="best")
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.set_xlabel("phi_z = phi / (1 - phi)")
         ax.set_ylabel("RQI (um)")
-        ax.set_title("RQI vs phi_z, unit-slope lines at each FZI")
+        ax.set_title("RQI vs phi_z: dashed = unit slope at each FZI, solid = free-slope fit")
         pw.refresh()
 
     def _plot_r35(self, sub):

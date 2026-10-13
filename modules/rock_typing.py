@@ -73,6 +73,36 @@ def phi_z(phie) -> np.ndarray:
         return np.where(ok, phie / np.where(ok, 1.0 - phie, 1.0), np.nan)
 
 
+def free_slope_fits(phiz, rqi_values, labels, n_rt, min_samples=3) -> list[dict]:
+    """Per rock type least-squares ``log10(RQI) = a + b * log10(phi_z)`` (diagnostic only).
+
+    One dict per type 1..n_rt: ``rt``, ``n``, ``slope`` (b), ``intercept_fzi`` (10**a, the RQI at
+    phi_z = 1), ``r2`` (in log space), ``phiz_min``, ``phiz_max``. Only finite, positive samples
+    count. ``slope``, ``intercept_fzi`` and ``r2`` are None with fewer than ``min_samples`` samples
+    or identical phi_z; ``r2`` is also None when log RQI has no spread. Label 0 is ignored.
+    """
+    x, y, lab = np.broadcast_arrays(_arr(phiz), _arr(rqi_values), np.asarray(labels))
+    ok = np.isfinite(x) & np.isfinite(y) & (x > 0) & (y > 0)
+    out = []
+    for i in range(1, int(n_rt) + 1):
+        sel = ok & (lab == i)
+        n = int(sel.sum())
+        rec = {"rt": i, "n": n, "slope": None, "intercept_fzi": None, "r2": None,
+               "phiz_min": float(x[sel].min()) if n else None,
+               "phiz_max": float(x[sel].max()) if n else None}
+        if n >= max(int(min_samples), 2):
+            lx, ly = np.log10(x[sel]), np.log10(y[sel])
+            if np.ptp(lx) > 0:
+                b, a = np.polyfit(lx, ly, 1)
+                sstot = float(np.sum((ly - ly.mean()) ** 2))
+                rec["slope"], rec["intercept_fzi"] = float(b), float(10.0 ** a)
+                if sstot > 0:
+                    ssres = float(np.sum((ly - (a + b * lx)) ** 2))
+                    rec["r2"] = 1.0 - ssres / sstot
+        out.append(rec)
+    return out
+
+
 def fzi(k, phie) -> np.ndarray:
     """Flow zone indicator ``RQI / phi_z`` (um)."""
     with np.errstate(invalid="ignore", divide="ignore"):

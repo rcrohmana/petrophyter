@@ -363,3 +363,42 @@ def test_set_json_round_trip_is_byte_identical():
     first = json.dumps(defs, sort_keys=True, default=str)
     again = json.dumps(json.loads(first), sort_keys=True, default=str)
     assert first == again
+
+
+# ---------------------------------------------------------------------------
+# Free-slope fit (diagnostic)
+# ---------------------------------------------------------------------------
+def test_free_slope_fit_recovers_power_law():
+    pz = np.linspace(0.1, 0.5, 12)
+    f = rt.free_slope_fits(pz, 2.0 * pz ** 1.5, np.ones(12, int), 2)
+    assert f[0]["slope"] == pytest.approx(1.5)
+    assert f[0]["intercept_fzi"] == pytest.approx(2.0)
+    assert f[0]["r2"] == pytest.approx(1.0)
+    assert (f[0]["phiz_min"], f[0]["phiz_max"]) == (pz.min(), pz.max())
+    assert f[1]["n"] == 0 and f[1]["slope"] is None
+
+
+def test_free_slope_fit_too_few_or_identical_phiz_is_none():
+    f = rt.free_slope_fits([0.1, 0.2], [0.1, 0.3], [1, 1], 1)
+    assert f[0]["n"] == 2 and f[0]["slope"] is None and f[0]["r2"] is None
+    f = rt.free_slope_fits([0.2, 0.2, 0.2], [0.1, 0.3, 0.2], [1, 1, 1], 1)
+    assert f[0]["slope"] is None and f[0]["intercept_fzi"] is None
+
+
+def test_free_slope_fit_ignores_label_zero_and_bad_values():
+    pz = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
+    rq = 2.0 * pz ** 1.5
+    labels = np.array([1, 1, 1, 1, 0, 1, 1])
+    pz = pz.copy()
+    rq = rq.copy()
+    rq[4] = 99.0                       # unassigned outlier: ignored
+    pz[5], rq[6] = np.nan, -1.0        # NaN and non-positive: dropped
+    f = rt.free_slope_fits(pz, rq, labels, 1)
+    assert f[0]["n"] == 4
+    assert f[0]["slope"] == pytest.approx(1.5)
+    assert f[0]["phiz_max"] == pytest.approx(0.4)
+
+
+def test_free_slope_fit_flat_rqi_has_no_r2():
+    f = rt.free_slope_fits([0.1, 0.2, 0.4], [1.0, 1.0, 1.0], [1, 1, 1], 1)
+    assert f[0]["slope"] == pytest.approx(0.0, abs=1e-9) and f[0]["r2"] is None

@@ -3,6 +3,7 @@
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import copy
 from types import SimpleNamespace
 
 import numpy as np
@@ -487,3 +488,56 @@ def test_main_window_run_all_button_calls_the_run_all_handler(qtbot, monkeypatch
     w.rock_tab.run_all_requested.emit()
     assert calls == [1]
 
+
+
+# ---------------------------------------------------------------------------
+# RQI-phiz free-slope fit lines (diagnostic)
+# ---------------------------------------------------------------------------
+def _solid_lines(tab):
+    ax = tab.plot_rqi.figure.axes[0]
+    return [ln for ln in ax.get_lines() if ln.get_linestyle() == "-"]
+
+
+def test_rqi_plot_draws_solid_fit_line_per_type(qtbot, tab):
+    _fit(qtbot, tab)
+    tab.plot_tabs.setCurrentIndex(2)
+    rset = tab._plot_ctx["rset"]
+    ax = tab.plot_rqi.figure.axes[0]
+    assert len(_solid_lines(tab)) == int(rset["n_rt"]) == tab.fit_table.rowCount()
+    assert any("fit: slope" in t.get_text() and "R²" in t.get_text()
+               for t in ax.get_legend().get_texts())
+    assert "solid = free-slope fit" in ax.get_title()
+    assert not (tab.fit_table.item(0, 2).flags() & Qt.ItemFlag.ItemIsEditable)
+
+
+def test_fit_checkbox_redraws_only_rqi_plot(qtbot, tab, monkeypatch):
+    from ui.widgets.plot_widget import PlotWidget
+
+    _fit(qtbot, tab)
+    tab.plot_tabs.setCurrentIndex(2)
+    assert tab.fit_line_check.isChecked()
+    drawn = []
+    orig = PlotWidget.refresh
+    monkeypatch.setattr(PlotWidget, "refresh", lambda self, *a, **k: (drawn.append(self),
+                                                                       orig(self, *a, **k))[1])
+    tab.fit_line_check.setChecked(False)
+    assert drawn == [tab.plot_rqi]
+    assert _solid_lines(tab) == []
+    # hidden sub-tab: only marked not done, drawn on show
+    tab.plot_tabs.setCurrentIndex(0)
+    drawn.clear()
+    tab.fit_line_check.setChecked(True)
+    assert drawn == [] and 2 not in tab._plot_done
+    tab.plot_tabs.setCurrentIndex(2)
+    assert drawn == [tab.plot_rqi] and _solid_lines(tab)
+
+
+def test_fit_lines_leave_project_definitions_alone(qtbot, tab):
+    _fit(qtbot, tab)
+    tab.apply_button.click()
+    before = copy.deepcopy(tab.model.project.rock_types)
+    tab.plot_tabs.setCurrentIndex(2)
+    tab.fit_line_check.setChecked(False)
+    tab.fit_line_check.setChecked(True)
+    assert tab.model.project.rock_types == before
+    assert "Fit slope" not in str(before)

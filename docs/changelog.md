@@ -10,7 +10,7 @@ until you turn it on, and sessions that do not use it are still saved as format 
 - **Rock Typing tab.** RQI and FZI from core porosity and permeability, every excluded core row counted
   by reason; rock types fitted on log10 FZI (pooled over the project, or per well or per zone) with a
   suggested count; **Fit** runs in the background, **Apply to project** writes the definitions; FZI,
-  Phi-K, RQI-phiz, Winland R35 and Lorenz/SMLP plots; editable definitions; a banner when the core
+  Phi-K, RQI-phiz (with a diagnostic free-slope fit per type), Winland R35 and Lorenz/SMLP plots; editable definitions; a banner when the core
   changed since the fit.
 - **Rock types in the run.** `RQI`, `FZI`, `ROCK_TYPE`, `ROCK_TYPE_SOURCE`, `RT_MARGIN`, optional
   `PERM_RT` and `R35`; core labels win within the core matching distance; near-boundary,
@@ -24,7 +24,7 @@ until you turn it on, and sessions that do not use it are still saved as format 
   message instead of being misread.
 - The Rock Typing tab says what to do after enabling rock types and where they appear; it stays
   responsive while open, redrawing only what changed.
-- 1507 tests.
+- 1514 tests.
 
 ## v1.7.3 (Build 20261011)
 
