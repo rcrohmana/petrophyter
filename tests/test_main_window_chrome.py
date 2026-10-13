@@ -96,11 +96,13 @@ def test_action_icons_refresh_on_theme_change(window):
     assert before != after
 
 
-def test_parameters_window_is_modeless_tool(window):
+def test_parameters_window_is_modeless_dialog(window):
     from PyQt6.QtCore import Qt
     pw = window.params_window
     assert not pw.isModal()
-    assert pw.windowFlags() & Qt.WindowType.Tool
+    flags = pw.windowFlags()
+    assert (flags & Qt.WindowType.WindowType_Mask) == Qt.WindowType.Dialog
+    assert flags & Qt.WindowType.WindowCloseButtonHint
     assert pw.parent() is window
 
 

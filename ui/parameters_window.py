@@ -68,7 +68,11 @@ class ParametersWindow(QDialog):
     apply_perm_clicked = pyqtSignal()
 
     def __init__(self, model, parent=None):
-        super().__init__(parent, Qt.WindowType.Tool)
+        # A normal dialog frame, not Qt.Tool: the tool caption's close button sits flush with
+        # the right edge on Windows. Owned by the main window, it stays above it and off the
+        # taskbar.
+        super().__init__(parent, Qt.WindowType.Dialog | Qt.WindowType.WindowTitleHint
+                         | Qt.WindowType.WindowCloseButtonHint)
         self.model = model
         self.setObjectName("ParametersWindow")
         self.setWindowTitle("Parameters — Petrophyter")
