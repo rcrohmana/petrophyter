@@ -83,3 +83,91 @@ def test_classic_log_track_only_with_rock_type(qtbot):
     axes = plot.figure.axes
     assert len(axes) == 7
     assert axes[6].get_title() == "Rock Type"
+
+
+def _naive_bands(depth, rt, faded):
+    """Reference: per-sample half-step intervals, merged when (rt, faded) repeat."""
+    n = len(depth)
+    mid = (depth[1:] + depth[:-1]) / 2.0
+    edges = np.concatenate(([depth[0] - (mid[0] - depth[0])], mid,
+                            [depth[-1] + (depth[-1] - mid[-1])]))
+    out = []
+    for i in range(n):
+        key = (int(rt[i]), bool(faded[i]))
+        if out and out[-1][2:] == key:
+            out[-1] = (out[-1][0], float(edges[i + 1]), *key)
+        else:
+            out.append((float(edges[i]), float(edges[i + 1]), *key))
+    return out
+
+
+def _random_results(n, seed=0):
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({
+        "DEPTH": 1000 + np.arange(n) * 0.5,
+        "GR": rng.random(n) * 100, "PHIE": rng.random(n) * 0.3, "SW": rng.random(n),
+        "ROCK_TYPE": rng.integers(0, 6, n),
+        "RT_MARGIN": np.where(rng.random(n) < 0.2, 0.01, 0.5),
+        "ROCK_TYPE_SOURCE": np.where(rng.random(n) < 0.1, "log", "core"),
+    })
+
+
+def test_bands_match_naive_reference():
+    df = _random_results(500, seed=3)
+    bands = ts.rock_type_bands(df["DEPTH"], df["ROCK_TYPE"], df["RT_MARGIN"],
+                               df["ROCK_TYPE_SOURCE"], 0.05)
+    faded = ((df["RT_MARGIN"].values < 0.05) | (df["ROCK_TYPE_SOURCE"].values == "log")) \
+        & (df["ROCK_TYPE"].values > 0)
+    ref = _naive_bands(df["DEPTH"].values, df["ROCK_TYPE"].values, faded)
+    assert len(bands) == len(ref)
+    for got, want in zip(bands, ref):
+        assert got[2:] == want[2:]
+        assert got[0] == pytest.approx(want[0]) and got[1] == pytest.approx(want[1])
+
+
+def _band_artists(plot):
+    ax = plot.figure.axes[-1]
+    return ax, len(ax.collections) + len(ax.patches)
+
+
+def test_classic_track_artist_count_is_bounded(qapp):
+    plot = CompositeLogPlot()
+    plot.plot_petrophysics_summary(_random_results(2000), rt_count=5)
+    assert _band_artists(plot)[1] <= 2 * 5 + 3
+    # same bound for a much larger, equally varied column
+    plot.plot_petrophysics_summary(_random_results(6000, seed=1), rt_count=5)
+    ax, n_artists = _band_artists(plot)
+    assert n_artists <= 2 * 5 + 3
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert labels == [f"RT {i}" for i in range(1, 6)] or set(labels) <= {f"RT {i}" for i in range(1, 6)}
+
+
+def test_classic_track_covers_all_depths(qapp):
+    from matplotlib.collections import PolyCollection
+    df = _random_results(300, seed=5)
+    plot = CompositeLogPlot()
+    plot.plot_petrophysics_summary(df, rt_count=5)
+    ax = plot.figure.axes[-1]
+    spans = []
+    for coll in ax.collections:
+        if isinstance(coll, PolyCollection):
+            for path in coll.get_paths():
+                ys = path.vertices[:, 1]
+                spans.append((ys.min(), ys.max()))
+    spans.sort()
+    assert spans[0][0] == pytest.approx(1000 - 0.25)
+    assert spans[-1][1] == pytest.approx(1000 + 299 * 0.5 + 0.25)
+    for (_, hi), (lo, _) in zip(spans, spans[1:]):
+        assert lo == pytest.approx(hi)
+
+
+@pytest.mark.slow
+def test_classic_track_random_labels_fast(qapp):
+    import time
+    plot = CompositeLogPlot()
+    df = _random_results(8000)
+    t = time.perf_counter()
+    plot.plot_petrophysics_summary(df, rt_count=5)
+    plot.canvas.draw()
+    assert time.perf_counter() - t < 4.0
+

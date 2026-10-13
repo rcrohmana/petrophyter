@@ -526,21 +526,42 @@ class CompositeLogPlot(PlotWidget):
         rt = results["ROCK_TYPE"].values
         bands = ts.rock_type_bands(depth, rt, margin, source, margin_min)
         n_types = n_types or int(np.nanmax(np.append(np.asarray(rt, dtype=float), 0)))
-        seen = set()
+        # One PolyCollection for all solid bands (per-face colours) and one hatched
+        # collection per colour for the weak bands: a bounded artist count however
+        # many bands there are.
+        from matplotlib.collections import PolyCollection
+        from matplotlib.patches import Patch
+        from matplotlib.colors import to_rgba
+        order = []
+        solid_verts, solid_colors = [], []
+        weak = {}
         for top, base, rock_type, faded in bands:
+            if rock_type not in order:
+                order.append(rock_type)
+            rect = ((0, top), (1, top), (1, base), (0, base))
             color = get_rock_type_color(rock_type, n_types)
-            ax.fill_betweenx(
-                [top, base], 0, 1, facecolor=color,
-                alpha=0.45 if faded else 1.0, hatch="///" if faded else None,
-                edgecolor=color if faded else "none", linewidth=0,
-                label=f"RT {rock_type}" if rock_type >= 1 and rock_type not in seen else None,
-            )
-            seen.add(rock_type)
+            if faded:
+                weak.setdefault(color, []).append(rect)
+            else:
+                solid_verts.append(rect)
+                solid_colors.append(to_rgba(color))
+        if solid_verts:
+            ax.add_collection(PolyCollection(
+                solid_verts, facecolors=solid_colors, edgecolors="none", linewidths=0))
+        for color, verts in weak.items():
+            ax.add_collection(PolyCollection(
+                verts, facecolors=[to_rgba(color, 0.45)], edgecolors=[to_rgba(color)],
+                linewidths=0, hatch="///"))
+        if bands:
+            ax.autoscale_view(scalex=False)
+        seen = set(order)
+        handles = [Patch(facecolor=get_rock_type_color(rt_, n_types), label=f"RT {rt_}")
+                   for rt_ in order if rt_ >= 1]
         ax.set_xlim(0, 1)
         ax.set_xticks([])
         ax.set_title("Rock Type", fontsize=TITLE_SIZE)
-        if seen - {0}:
-            ax.legend(loc="upper right", fontsize=6)
+        if handles:
+            ax.legend(handles=handles, loc="upper right", fontsize=6)
 
     def plot_petrophysics_summary(
         self,
