@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QDialog,
 )
-from PyQt6.QtCore import Qt, QSettings, QElapsedTimer
+from PyQt6.QtCore import Qt, QSettings, QElapsedTimer, QTimer
 from datetime import datetime, timezone
 import functools
 import logging
@@ -376,9 +376,14 @@ class MainWindow(QMainWindow):
         # Model signals
         self.model.data_loaded.connect(self._on_data_loaded)
         self.model.analysis_complete.connect(self._on_results_updated)
-        # The Rock Typing tab also follows the core, the wells and the active well.
-        for signal in (self.model.core_data_loaded, self.model.project.wells_changed,
-                       self.model.project.active_well_changed):
+        # The Rock Typing tab also follows the core and the wells; a new active well reaches it
+        # through _on_active_well_changed (well part only).
+        # Bursts (core for N wells, several wells_changed) coalesce into one refresh.
+        self._rock_timer = QTimer(self)
+        self._rock_timer.setSingleShot(True)
+        self._rock_timer.setInterval(0)
+        self._rock_timer.timeout.connect(self._refresh_current_tab)
+        for signal in (self.model.core_data_loaded, self.model.project.wells_changed):
             signal.connect(self._mark_rock_tab_dirty)
 
     def _on_about_triggered(self):
@@ -1194,7 +1199,7 @@ class MainWindow(QMainWindow):
             return  # _finish_load refreshes once at the end
         # The Data Browser listens to the same signal (connected earlier) and
         # has already rebuilt itself for this change.
-        self._refresh_active_well_ui(browser_fresh=True)
+        self._refresh_active_well_ui(browser_fresh=True, rock_well_only=True)
 
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
@@ -1212,8 +1217,12 @@ class MainWindow(QMainWindow):
         )
 
     @_restoring_guard
-    def _refresh_active_well_ui(self, browser_fresh: bool = False):
-        """Point every control and tab at the active well."""
+    def _refresh_active_well_ui(self, browser_fresh: bool = False, rock_well_only: bool = False):
+        """Point every control and tab at the active well.
+
+        ``rock_well_only``: only the active well changed, so the Rock Typing tab refreshes its
+        well part (pay table, log overlay) instead of everything.
+        """
         ds = self.model.active_well
         if ds is None:
             self._refreshed_for = None
@@ -1264,7 +1273,7 @@ class MainWindow(QMainWindow):
         self._refresh_qc_chip()
         self._sync_stale_label()
         self._refresh_window_title()
-        self._update_all_tabs(rebuild_browser=not browser_fresh)
+        self._update_all_tabs(rebuild_browser=not browser_fresh, rock_well_only=rock_well_only)
 
     def _reset_ui(self):
         """Fresh-state UI: no well is active."""
@@ -1838,19 +1847,27 @@ class MainWindow(QMainWindow):
         """Handle results updated signal."""
         self._update_all_tabs()
 
-    def _update_all_tabs(self, rebuild_browser: bool = True):
+    def _update_all_tabs(self, rebuild_browser: bool = True, rock_well_only: bool = False):
         """Update the tabs with current results (hidden plot tabs lazily)."""
         if rebuild_browser:
             self.data_browser.rebuild()
-        self._dirty_tabs.update(self._lazy_tabs)
+        rock_clean = (rock_well_only and self.tab_widget.currentWidget() is self.rock_tab
+                      and self.rock_tab not in self._dirty_tabs)
+        self._dirty_tabs.update(t for t in self._lazy_tabs
+                                if not (rock_well_only and t is self.rock_tab))
+        if rock_well_only:
+            if rock_clean:
+                self.rock_tab.update_active_well()
+            else:
+                self._dirty_tabs.add(self.rock_tab)
         self._refresh_current_tab()
         self.summary_tab.update_display()
         self.export_tab.update_display()
 
     def _mark_rock_tab_dirty(self, *_):
-        """Core, wells or the active well changed: the Rock Typing tab catches up when visible."""
+        """Core or wells changed: the Rock Typing tab catches up once, when visible."""
         self._dirty_tabs.add(self.rock_tab)
-        self._refresh_current_tab()
+        self._rock_timer.start()
 
     def _refresh_current_tab(self, *_):
         """Redraw the current tab if results changed while it was hidden."""

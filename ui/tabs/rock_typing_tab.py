@@ -114,6 +114,13 @@ class RockTypingTab(QWidget):
         self._set_key = svc.POOLED_KEY
         self._last_stored = None         # stored definitions the controls were last filled from
         self._updating = False
+        # Caches keyed on a data stamp (see _wells_stamp) so unchanged data is not rebuilt.
+        self._inputs_cache = None        # (wells stamp, inputs)
+        self._table_cache = None         # (wells stamp, settings key, table, report)
+        self._stale_cache = None         # (key, bool)
+        # Lazy plot sub-tabs: what is on each figure, and the context to draw it from.
+        self._plot_ctx = None
+        self._plot_done = {}
         self._setup_ui()
         self.update_display()
 
@@ -300,6 +307,7 @@ class RockTypingTab(QWidget):
                 widget.setMinimumHeight(PLOT_MIN_HEIGHT)
                 widget.canvas.installEventFilter(self)   # wheel over a plot scrolls the page
             self.plot_tabs.addTab(widget, title)
+        self.plot_tabs.currentChanged.connect(self._on_plot_tab_changed)
         cl.addWidget(self.plot_tabs)
         bl = cl
 
@@ -449,8 +457,7 @@ class RockTypingTab(QWidget):
         return self._worker is not None
 
     def _render(self):
-        inputs = rt.core_inputs(self.model)
-        self._table, self._report = rt.build_core_table(inputs, self.settings())
+        inputs, self._table, self._report = self._core()
         valid = int(self._report["valid"])
         reason = None if valid else self._missing_reason(inputs)
         self.fit_button.setEnabled(valid > 0 and not self._running())
@@ -460,11 +467,63 @@ class RockTypingTab(QWidget):
         defs = self._current()
         self._render_banner(defs)
         self._render_enable_hint()
-        if not reason:
+        if reason:
+            self._plot_ctx = None
+            self._plot_done.clear()
+        else:
             if not self._running() and self._proposal is None:
                 self._set_status_text(self._counts_text(), "muted")
             self._render_set_combo(defs)
             self._render_all(defs)
+
+    # ------------------------------------------------------------- caches
+    def _wells_stamp(self) -> tuple:
+        """Cheap stamp of everything the core table reads from the project's wells."""
+        out = []
+        for w in self.model.project.wells:
+            core = getattr(w, "core_data", None)
+            data = getattr(core, "data", None)
+            cols = tuple(getattr(core, a, None) for a in ("depth_col", "porosity_col", "perm_col"))
+            digest = None
+            if data is not None and all(c in data.columns for c in cols if c):
+                try:       # a few KB per well; catches in-place edits the sha does not see
+                    digest = hash(b"".join(
+                        pd.to_numeric(data[c], errors="coerce").to_numpy(dtype=float).tobytes()
+                        for c in cols if c))
+                except Exception:
+                    digest = None
+            out.append((str(getattr(w, "key", "")), getattr(w, "core_sha256", None),
+                        getattr(w, "tops_sha256", None), id(core), id(data), cols,
+                        bool(getattr(core, "depth_is_tvd", False)), digest,
+                        id(getattr(w, "formation_tops", None))))
+        return tuple(out)
+
+    def _core(self):
+        """``(inputs, table, report)`` for the project core and the UI settings, cached."""
+        stamp = self._wells_stamp()
+        if self._inputs_cache is None or self._inputs_cache[0] != stamp:
+            self._inputs_cache = (stamp, rt.core_inputs(self.model))
+            self._table_cache = None
+        inputs = self._inputs_cache[1]
+        settings = self.settings()
+        skey = repr(sorted(settings.items()))
+        if self._table_cache is None or self._table_cache[:2] != (stamp, skey):
+            table, report = rt.build_core_table(inputs, settings)
+            self._table_cache = (stamp, skey, table, report)
+        return inputs, self._table_cache[2], self._table_cache[3]
+
+    def _is_stale(self, defs) -> bool:
+        """``svc.fingerprint_is_stale`` on the cached core inputs, remembered per data stamp."""
+        stored = defs.get("fingerprint")
+        if not stored:
+            return True
+        stamp = self._inputs_cache[0] if self._inputs_cache else self._wells_stamp()
+        key = (stamp, repr(stored), repr(sorted((defs.get("settings") or {}).items())))
+        if self._stale_cache is None or self._stale_cache[0] != key:
+            inputs = self._inputs_cache[1] if self._inputs_cache else rt.core_inputs(self.model)
+            stale = svc.fingerprint_from_inputs(inputs, defs.get("settings")) != stored
+            self._stale_cache = (key, stale)
+        return self._stale_cache[1]
 
     def _missing_reason(self, inputs) -> str:
         wells = list(self.model.project.wells)
@@ -505,7 +564,7 @@ class RockTypingTab(QWidget):
         msg = ""
         if defs:
             try:
-                stale = svc.fingerprint_is_stale(defs, self.model)
+                stale = self._is_stale(defs)
             except Exception:                      # a fingerprint problem must not break the tab
                 logger.exception("fingerprint check failed")
                 stale = False
@@ -588,6 +647,7 @@ class RockTypingTab(QWidget):
 
     # --------------------------------------------------------------- render
     def _render_all(self, defs):
+        """Definitions part (tables, context for the plots) and the visible plot sub-tab."""
         rows, method = self._valid_rows(defs)
         rset = self._active_set(defs)
         sub = self._rows_for_key(rows, defs, self._set_key)
@@ -596,12 +656,64 @@ class RockTypingTab(QWidget):
         self._render_defs_table(defs, rset, sub, labels, method)
         self._render_exclusions()
         self._render_pay()
-        self._plot_fzi(sub, labels, rset, method)
-        self._plot_phik(sub, labels, rset, n_rt)
-        self._plot_rqi(sub, labels, rset, n_rt)
-        self._plot_r35(sub)
-        self._plot_lorenz()
+        self._plot_ctx = {
+            "sub": sub, "labels": labels, "rset": rset, "method": method, "n_rt": n_rt,
+            "defs": defs,
+            "base": (self._inputs_cache[0] if self._inputs_cache else None,
+                     self._table_cache[1] if self._table_cache else None,
+                     self._set_key, method)}
+        self._ensure_plot(self.plot_tabs.currentIndex())
         self._fit_tables()
+
+    # ---- lazy plot sub-tabs
+    def _plot_signature(self, idx):
+        """``(values, refs)``: what figure ``idx`` shows; ``refs`` are compared by identity."""
+        ctx = self._plot_ctx
+        values = [ctx["base"]]
+        refs = [ctx["defs"]]
+        active = str(getattr(self.model.active_well, "key", None))
+        if idx == 1:
+            values.append(active)
+            refs.append(getattr(self.model, "results", None))
+        elif idx == 4:
+            values.append(active)
+            refs.append(getattr(self.model, "summary", None))
+        return tuple(values), refs
+
+    def _ensure_plot(self, idx: int):
+        """Draw plot sub-tab ``idx`` unless it already shows the current data."""
+        ctx = self._plot_ctx
+        if ctx is None or idx < 0:
+            return
+        values, refs = self._plot_signature(idx)
+        done = self._plot_done.get(idx)
+        if (done is not None and done[0] == values and len(done[1]) == len(refs)
+                and all(a is b for a, b in zip(done[1], refs))):
+            return
+        self._plot_done[idx] = (values, refs)
+        sub, labels, rset = ctx["sub"], ctx["labels"], ctx["rset"]
+        if idx == 0:
+            self._plot_fzi(sub, labels, rset, ctx["method"])
+        elif idx == 1:
+            self._plot_phik(sub, labels, rset, ctx["n_rt"])
+        elif idx == 2:
+            self._plot_rqi(sub, labels, rset, ctx["n_rt"])
+        elif idx == 3:
+            self._plot_r35(sub)
+        elif idx == 4:
+            self._plot_lorenz()
+            fit_table_height(self.units_view)
+
+    def _on_plot_tab_changed(self, idx: int):
+        self._ensure_plot(idx)
+
+    def update_active_well(self):
+        """The active well changed: only its pay table and the plots that show it."""
+        if self._plot_ctx is None:
+            return
+        self._render_pay()
+        fit_table_height(self.pay_table)
+        self._ensure_plot(self.plot_tabs.currentIndex())
 
     def _fit_tables(self):
         for t in (self.defs_table, self.excl_table, self.pay_table, self.units_view):
@@ -1137,6 +1249,7 @@ class RockTypingTab(QWidget):
 
     # ------------------------------------------------------------ lifecycle
     def refresh_theme(self):
+        self._plot_done.clear()
         for plot in (self.plot_fzi, self.plot_phik, self.plot_rqi, self.plot_r35,
                      self.plot_lorenz):
             plot.refresh_theme()

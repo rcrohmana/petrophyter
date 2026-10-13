@@ -238,3 +238,137 @@ def test_wheel_over_plot_scrolls_the_page(qtbot, tab):
                      Qt.ScrollPhase.NoScrollPhase, False)
     QApplication.sendEvent(canvas, ev)
     assert bar.value() > 0
+
+
+# ---------------------------------------------------------------------------
+# Render cost: counters, never wall-clock
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def counters(monkeypatch):
+    from ui.widgets.plot_widget import PlotWidget
+
+    calls = {"figure": 0, "pay": 0, "table": 0, "update": 0}
+
+    def count(owner, name, key):
+        orig = getattr(owner, name)
+
+        def wrapper(*a, **k):
+            calls[key] += 1
+            return orig(*a, **k)
+        monkeypatch.setattr(owner, name, wrapper)
+
+    count(PlotWidget, "refresh", "figure")
+    count(RockTypingTab, "_render_pay", "pay")
+    count(RockTypingTab, "update_display", "update")
+    count(rt, "build_core_table", "table")
+    return calls
+
+
+def _reset(calls):
+    for k in calls:
+        calls[k] = 0
+
+
+def _window_on_rock_tab(qtbot):
+    from models.project import WellDataset
+    from ui.main_window import MainWindow
+
+    w = MainWindow()
+    qtbot.addWidget(w)
+    for i in range(3):
+        key = f"WELL:W{i}"
+        ds = WellDataset(key, f"W{i}")
+        ds.core_data = _handler(20, i)
+        ds.core_data.get_summary = lambda: {}
+        w.model.project._wells[key] = ds
+    w.model.project.set_active("WELL:W0", force=True)
+    w.tab_widget.setCurrentWidget(w.rock_tab)
+    w.rock_tab.update_display()
+    qtbot.wait(30)
+    w._dirty_tabs.clear()
+    return w
+
+
+def test_active_well_change_renders_only_the_pay_table(qtbot, counters):
+    w = _window_on_rock_tab(qtbot)
+    assert w.rock_tab.plot_tabs.currentIndex() == 0
+    _reset(counters)
+    w.model.project.set_active("WELL:W1", force=True)
+    qtbot.wait(30)
+    assert counters["figure"] == 0
+    assert counters["pay"] == 1
+    assert counters["update"] == 0
+    assert counters["table"] == 0
+
+
+def test_active_well_change_redraws_phik_only_when_visible(qtbot, counters):
+    w = _window_on_rock_tab(qtbot)
+    w.rock_tab.plot_tabs.setCurrentIndex(1)
+    qtbot.wait(30)
+    # The overlay follows the active well's results: a new results object means a redraw.
+    w.model.results = pd.DataFrame({"PHIE": [0.1, 0.2], "PERM_RT": [1.0, 10.0]})
+    _reset(counters)
+    w.model.project.set_active("WELL:W1", force=True)
+    assert counters["figure"] == 1
+    assert counters["pay"] == 1
+
+
+def test_burst_of_wells_changed_renders_once(qtbot, counters):
+    w = _window_on_rock_tab(qtbot)
+    _reset(counters)
+    for _ in range(3):
+        w.model.project.wells_changed.emit()
+    assert counters["update"] == 0          # coalesced, not run inside the emit
+    qtbot.waitUntil(lambda: counters["update"] >= 1, timeout=2000)
+    qtbot.wait(30)
+    assert counters["update"] == 1
+
+
+def test_hidden_rock_tab_stays_untouched_until_shown(qtbot, counters):
+    w = _window_on_rock_tab(qtbot)
+    w.tab_widget.setCurrentIndex(0)
+    _reset(counters)
+    w.model.project.wells_changed.emit()
+    w.model.project.set_active("WELL:W2", force=True)
+    qtbot.wait(30)
+    assert counters["update"] == 0 and counters["figure"] == 0
+    w.tab_widget.setCurrentWidget(w.rock_tab)
+    assert counters["update"] == 1
+
+
+def test_plot_subtab_switch_renders_only_that_figure(qtbot, tab, counters):
+    tab.plot_tabs.setCurrentIndex(0)
+    tab.update_display()
+    _reset(counters)
+    tab.update_display()
+    assert counters["figure"] == 0          # unchanged data: FZI already shows it
+    tab.plot_tabs.setCurrentIndex(2)
+    assert counters["figure"] == 1
+    tab.plot_tabs.setCurrentIndex(3)
+    assert counters["figure"] == 2
+
+
+def test_only_the_visible_subtab_is_drawn_on_update(qtbot, tab, counters):
+    tab.plot_tabs.setCurrentIndex(0)
+    tab.update_display()
+    assert set(tab._plot_done) == {0}
+    _reset(counters)
+    tab.min_phie_spin.setValue(0.01)        # a settings change redraws the visible figure only
+    assert counters["figure"] == 1
+
+
+def test_unchanged_data_does_not_rebuild_core_table(qtbot, tab, counters):
+    tab.update_display()
+    _reset(counters)
+    tab.update_display()
+    tab.update_display()
+    assert counters["table"] == 0
+
+
+def test_core_edit_in_place_rebuilds_table(qtbot, tab, counters):
+    tab.update_display()
+    _reset(counters)
+    core = tab.model.project._wells["WELL:W0"].core_data
+    core.data.loc[core.data.index[0], "perm"] *= 3.0
+    tab.update_display()
+    assert counters["table"] == 1
