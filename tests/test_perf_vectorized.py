@@ -262,3 +262,21 @@ def test_vectorised_ws_is_fast():
         "RT", pd.Series(phi, index=calc.data.index), rw=0.05, a=1.0, m=2.0, n=2.0, qv=0.3, B=4.0
     )
     assert time.perf_counter() - t0 < 2.0
+
+
+def test_vectorised_simandoux_general_n_is_fast():
+    rng = np.random.default_rng(7)
+    n = 10000
+    rt = rng.uniform(1, 200, n)
+    phi = rng.uniform(0.05, 0.35, n)
+    vsh = rng.uniform(0, 0.8, n)
+    calc = _calc(rt, phi)
+    idx = calc.data.index
+    args = ("RT", pd.Series(phi, index=idx), pd.Series(vsh, index=idx), 0.05, 5.0, 0.62, 2.15, 2.1)
+    calc.calculate_sw_simandoux(*args)  # warm up
+    times = []
+    for _ in range(5):
+        t0 = time.perf_counter()
+        calc.calculate_sw_simandoux(*args)
+        times.append(time.perf_counter() - t0)
+    assert min(times) < 0.05

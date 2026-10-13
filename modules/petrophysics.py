@@ -1388,32 +1388,27 @@ class PetrophysicsCalculator:
             raw = (-B + np.sqrt(discriminant)) / (2 * A)
         else:
             # General n: f(Sw) = A*Sw^n + B*Sw - C is strictly increasing for
-            # Sw > 0 (A > 0, B >= 0), so it has a unique root. Solve per row.
+            # Sw > 0 (A > 0, B >= 0), so it has a unique root. All rows are
+            # solved at once with the vectorised Brent solver.
             # Previously the n argument was ignored and n=2 was always used.
             A_arr = np.broadcast_to(np.asarray(A, dtype=float), rt_safe.shape)
             B_arr = np.broadcast_to(np.asarray(B, dtype=float), rt_safe.shape)
-            C_arr = np.asarray(C, dtype=float)
+            C_arr = np.broadcast_to(np.asarray(C, dtype=float), rt_safe.shape)
 
-            sw_list = []
-            for i in range(len(rt_safe)):
-                A_i, B_i, C_i = A_arr[i], B_arr[i], C_arr[i]
-                if np.isnan(A_i) or np.isnan(B_i) or np.isnan(C_i):
-                    sw_list.append(np.nan)
-                    continue
+            def simandoux_func(sw_val):
+                return A_arr * np.power(sw_val, n) + B_arr * sw_val - C_arr
 
-                def simandoux_func(sw_val):
-                    return A_i * np.power(sw_val, n) + B_i * sw_val - C_i
+            valid = ~(np.isnan(A_arr) | np.isnan(B_arr) | np.isnan(C_arr))
+            with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+                # f(0) = -C <= 0. If f(1) <= 0 the root is >= 1 (fully wet).
+                wet = valid & (simandoux_func(np.ones(rt_safe.shape)) <= 0)
+                bracketed = valid & ~wet
+                root, failed = _vectorized_brentq(simandoux_func, 0.0, 1.0, bracketed)
 
-                # f(0) = -C_i <= 0. If f(1) <= 0 the root is >= 1 (fully wet).
-                if simandoux_func(1.0) <= 0:
-                    sw_list.append(1.0)
-                    continue
-                try:
-                    sw_list.append(brentq(simandoux_func, 0.0, 1.0))
-                except Exception:
-                    sw_list.append(np.nan)
-
-            raw = np.array(sw_list, dtype=float)
+            raw = np.full(rt_safe.shape, np.nan)
+            solved = bracketed & ~failed
+            raw[solved] = root[solved]
+            raw[wet] = 1.0
 
         sw = self._finish_sw("SW_SIMAN", raw, solve, no_porosity)
         self.results["SW_SIMAN"] = sw
