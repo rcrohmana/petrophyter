@@ -2,7 +2,29 @@
 
 # Version History
 
-## v1.7.3 (Build 20261011) — Current Release
+## v1.8.0 (Build 20261013) — Current Release
+
+See the [release notes](releases/v1.8.0.md) for details. Rock typing is optional: **results do not change**
+until you turn it on, and sessions that do not use it are still saved as format 2.1.
+
+- **Rock Typing tab.** RQI and FZI from core porosity and permeability, every excluded core row counted
+  by reason; rock types fitted on log10 FZI (pooled over the project, or per well or per zone) with a
+  suggested count; **Fit** runs in the background, **Apply to project** writes the definitions; FZI,
+  Phi-K, RQI-phiz, Winland R35 and Lorenz/SMLP plots; editable definitions; a banner when the core
+  changed since the fit.
+- **Rock types in the run.** `RQI`, `FZI`, `ROCK_TYPE`, `ROCK_TYPE_SOURCE`, `RT_MARGIN`, optional
+  `PERM_RT` and `R35`; core labels win within the core matching distance; near-boundary,
+  outside-range and core-versus-log agreement counted.
+- **Primary permeability** (Timur, Wyllie-Rose or Rock type, project or well) feeds `FLOW_UNIT` and the
+  quality flags.
+- **Pay and HCPV per rock type** in the Summary and a **Rock Types** sheet in the Excel export; field
+  totals only for project-wide definitions. **Export definitions** writes the definitions to CSV.
+- **Rock Type log track** when the results hold rock types.
+- **Session format 2.2** when rock typing is used; a session from a newer Petrophyter is refused with a
+  message instead of being misread.
+- 1468 tests.
+
+## v1.7.3 (Build 20261011)
 
 See the [release notes](releases/v1.7.3.md) for details, including the confirmed defaults. Results do not
 change.
