@@ -156,6 +156,12 @@ def _make_table() -> tuple:
     return table, model
 
 
+ROCK_HINT_NO_DEFS = ("Rock typing is on but no definitions are applied. Fit and apply them in the "
+                     "Rock Typing tab.")
+ROCK_HINT_RUN = ("Rock typing is on. Run the analysis for this well (or Run All Wells) to see "
+                 "pay and HCPV per rock type here.")
+
+
 class SummaryTab(QWidget):
     """Summary Tab - analysis summary and net pay."""
 
@@ -435,29 +441,54 @@ class SummaryTab(QWidget):
             head += f", fit scope {rock['fit_scope']}"
         return head + ". Samples: " + "; ".join(parts) + "."
 
+    def refresh_rock_types(self):
+        """Redraw only the Rock types group, and only when what it shows changed.
+
+        Called when the rock typing switch or the applied definitions change; a full
+        ``update_display`` is not needed for that.
+        """
+        if not self.model.calculated or self.model.summary is None:
+            return
+        rock = self.model.summary.get("rock_types")
+        enabled = bool(getattr(self.model, "rock_typing_enabled", False))
+        hint = ""
+        if not rock and enabled:
+            hint = ROCK_HINT_NO_DEFS if not self.model.project.rock_types else ROCK_HINT_RUN
+        key = (bool(hint), hint, id(rock), len(wells_with_rock_types(self.model.project.wells)))
+        if key != getattr(self, "_rock_key", None):
+            self._update_rock_types()
+
     def _update_rock_types(self):
         """Rock types of the active well, and wells by rock type with a field total.
 
-        Hidden entirely when no well has ``summary["rock_types"]`` (the feature is off).
+        Hidden when rock typing is off and no well has ``summary["rock_types"]``. When it is on
+        but the active well has none, the group shows a hint saying what to do next.
         The field total exists only when every contributing well has fit scope
         ``project``; otherwise the table says "mixed definitions".
         """
         summary = self.model.summary if self.model.calculated else None
         rock = (summary or {}).get("rock_types")
         wells = wells_with_rock_types(self.model.project.wells)
-        self.rock_group.setVisible(bool(rock) or bool(wells))
+        hint = ""
+        if not rock and getattr(self.model, "rock_typing_enabled", False):
+            hint = ROCK_HINT_NO_DEFS if not self.model.project.rock_types else ROCK_HINT_RUN
+        self._rock_key = (bool(hint), hint, id(rock), len(wells))
+        self.rock_group.setVisible(bool(rock) or bool(wells) or bool(hint))
         empty = pd.DataFrame(columns=ROCK_TABLE_COLUMNS)
         self.rock_model.set_table(empty)
         self.rock_wells_model.set_table(pd.DataFrame(columns=ROCK_WELLS_COLUMNS))
         self.rock_note.setText("")
         self.rock_wells_note.setText("")
-        if not (rock or wells):
+        if not (rock or wells or hint):
             return
         n_types = len(rock.get("by_rt") or []) if rock else 0
 
         # ---- active well ----
         self.rock_table.setVisible(bool(rock))
-        self.rock_note.setVisible(bool(rock))
+        self.rock_note.setVisible(bool(rock) or bool(hint))
+        if hint:
+            self.rock_note.setText(hint)
+            set_status(self.rock_note, "warning")
         if rock:
             frame = pd.DataFrame(well_rock_type_rows(rock, ""), columns=ROCKTYPE_COLUMNS)
             rows, tooltips, swatches, states = [], {}, {}, {}

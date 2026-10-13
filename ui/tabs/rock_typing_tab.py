@@ -102,6 +102,7 @@ class RockTypingTab(QWidget):
     """Rock Typing tab: controls on the left, plots and tables on the right."""
 
     fit_finished = pyqtSignal()      # a Fit ended (completed, refused or cancelled)
+    run_all_requested = pyqtSignal()  # "Run All Wells" in the next-step guidance
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -121,8 +122,14 @@ class RockTypingTab(QWidget):
         # Lazy plot sub-tabs: what is on each figure, and the context to draw it from.
         self._plot_ctx = None
         self._plot_done = {}
+        self._batch_running = False
         self._setup_ui()
         self.update_display()
+        # The next-step line follows runs, stale flags and the active well. It only sets a
+        # label and a button, so it is safe on every signal (no table or plot work).
+        for signal in (model.parameters_changed, model.analysis_complete,
+                       model.project.well_updated, model.project.active_well_changed):
+            signal.connect(self._render_enable_hint)
 
     # ------------------------------------------------------------------ UI
     def _setup_ui(self):
@@ -230,6 +237,11 @@ class RockTypingTab(QWidget):
         set_status(self.enable_hint, "warning")
         self.enable_hint.setVisible(False)
         v.addWidget(self.enable_hint)
+        self.run_all_button = QPushButton("Run All Wells")
+        self.run_all_button.setToolTip("Run the analysis for every well with the rock types on.")
+        self.run_all_button.setVisible(False)
+        self.run_all_button.clicked.connect(self.run_all_requested.emit)
+        v.addWidget(self.run_all_button)
 
         section("Settings")
         self.reservoir_check = QCheckBox("Reservoir only (gross sand)")
@@ -583,12 +595,38 @@ class RockTypingTab(QWidget):
         return any(abs(float(ui[k]) - float(stored.get(k, rt.DEFAULT_SETTINGS[k]))) > 1e-9
                    for k in ("ob_phi_factor", "ob_k_factor"))
 
-    def _render_enable_hint(self):
+    RUN_LINE = "Rock typing is on. Run the analysis (or Run All Wells) to compute rock types."
+    DONE_LINE = ("Rock types are in the results: Summary → Rock types, Log Display → "
+                 "Rock Type track, and the exports.")
+    NO_DEFS_LINE = "No definitions applied yet: fit and apply rock types first."
+    DROP_LINE = "Rock types are in the current results. The next run drops them."
+
+    def _guidance(self):
+        """``(text, status, show_run_all)`` for the enable checkbox; text is empty when idle."""
         on = self.enable_check.isChecked()
-        msg = "No definitions applied yet: fit and apply rock types first." \
-            if on and not self._stored() else ""
+        ds = getattr(self.model, "active_well", None)
+        summary = getattr(ds, "summary", None) if getattr(ds, "calculated", False) else None
+        has_rt = bool((summary or {}).get("rock_types"))
+        if not on:
+            return (self.DROP_LINE, "muted", False) if has_rt else ("", "muted", False)
+        if not self._stored():
+            return self.NO_DEFS_LINE, "warning", False
+        if has_rt and not getattr(ds, "stale", False):
+            return self.DONE_LINE, "success", False
+        return self.RUN_LINE, "warning", True
+
+    def set_batch_running(self, running: bool):
+        """Run All Wells is unavailable while a batch is running."""
+        self._batch_running = bool(running)
+        self.run_all_button.setEnabled(not self._batch_running)
+
+    def _render_enable_hint(self, *_):
+        msg, status, run_all = self._guidance()
         self.enable_hint.setText(msg)
+        set_status(self.enable_hint, status)
         self.enable_hint.setVisible(bool(msg))
+        self.run_all_button.setVisible(run_all)
+        self.run_all_button.setEnabled(not self._batch_running)
 
     # -------------------------------------------------------- data for plots
     def _render_set_combo(self, defs):
@@ -1243,9 +1281,12 @@ class RockTypingTab(QWidget):
         self._last_stored = self._stored()
         self._proposal = None
         self._render()
-        self._set_status_text(
-            "Applied to the project. Run Analysis (or Run All Wells) to use the rock types.",
-            "success")
+        if self.enable_check.isChecked():
+            self._set_status_text("Applied to the project. " + self.RUN_LINE, "warning")
+        else:
+            self._set_status_text(
+                "Applied to the project. Run Analysis (or Run All Wells) to use the rock types.",
+                "success")
 
     # ------------------------------------------------------------ lifecycle
     def refresh_theme(self):

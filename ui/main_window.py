@@ -340,6 +340,9 @@ class MainWindow(QMainWindow):
             lambda path: self.show_banner("success", f"Exported to {path}")
         )
         self.summary_tab.well_activated.connect(self._on_well_selected)
+        # Rock typing switch / applied definitions: only the Summary's Rock types group follows.
+        self.model.parameters_changed.connect(self.summary_tab.refresh_rock_types)
+        self.rock_tab.run_all_requested.connect(self._on_run_all)
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -1204,6 +1207,7 @@ class MainWindow(QMainWindow):
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
         self.actions_["stop_analysis"].setEnabled(self.batch_runner.is_running())
+        self.rock_tab.set_batch_running(self.batch_runner.is_running())
         if self._busy:
             return  # _set_busy(None) refreshes
         project = self.model.project

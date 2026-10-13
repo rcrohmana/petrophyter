@@ -844,3 +844,63 @@ def test_rock_definitions_frame_and_csv(tmp_path, export_tab, model):
     model.project.rock_types = defs
     export_tab.update_display()
     assert not export_tab.definitions_btn.isHidden()
+
+
+def _strip_rock_types(m):
+    for ds in m.project.wells:
+        ds.summary.pop("rock_types", None)
+
+
+def test_summary_rock_group_hints_to_run_when_enabled_without_results(qtbot, rock_model):
+    _strip_rock_types(rock_model)
+    rock_model.project.rock_types = {"sets": {}}
+    rock_model.rock_typing_enabled = True
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert not tab.rock_group.isHidden()
+    assert tab.rock_note.text() == (
+        "Rock typing is on. Run the analysis for this well (or Run All Wells) to see pay and "
+        "HCPV per rock type here.")
+    assert tab.rock_note.property("status") == "warning"
+    assert tab.rock_table.isHidden()
+
+
+def test_summary_rock_group_hints_to_apply_definitions(qtbot, rock_model):
+    _strip_rock_types(rock_model)
+    rock_model.project.rock_types = None
+    rock_model.rock_typing_enabled = True
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert not tab.rock_group.isHidden()
+    assert tab.rock_note.text() == (
+        "Rock typing is on but no definitions are applied. Fit and apply them in the Rock "
+        "Typing tab.")
+
+
+def test_summary_rock_group_hidden_when_disabled_without_results(qtbot, rock_model):
+    _strip_rock_types(rock_model)
+    rock_model.rock_typing_enabled = False
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.rock_group.isHidden()
+
+
+def test_summary_rock_group_follows_the_switch_cheaply(qtbot, rock_model, monkeypatch):
+    _strip_rock_types(rock_model)
+    rock_model.project.rock_types = {"sets": {}}
+    tab = SummaryTab(rock_model)
+    qtbot.addWidget(tab)
+    tab.update_display()
+    assert tab.rock_group.isHidden()
+    full = []
+    monkeypatch.setattr(SummaryTab, "update_display", lambda self: full.append(1))
+    rock_model.rock_typing_enabled = True
+    tab.refresh_rock_types()
+    assert not tab.rock_group.isHidden() and not full
+    rock_model.rock_typing_enabled = False
+    tab.refresh_rock_types()
+    assert tab.rock_group.isHidden()
+

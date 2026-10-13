@@ -372,3 +372,118 @@ def test_core_edit_in_place_rebuilds_table(qtbot, tab, counters):
     core.data.loc[core.data.index[0], "perm"] *= 3.0
     tab.update_display()
     assert counters["table"] == 1
+
+
+# ---------------------------------------------------------------- next-step guidance
+def _fake_active(monkeypatch, *, rock=False, stale=False, calculated=True):
+    ds = SimpleNamespace(
+        calculated=calculated, stale=stale,
+        summary={"rock_types": {"by_rt": []}} if rock else {})
+    monkeypatch.setattr(AppModel, "active_well", property(lambda self: ds))
+    return ds
+
+
+def test_guidance_enabled_without_definitions(tab):
+    tab.enable_check.setChecked(True)
+    assert tab.enable_hint.text() == "No definitions applied yet: fit and apply rock types first."
+    assert tab.enable_hint.property("status") == "warning"
+    assert not tab.run_all_button.isVisibleTo(tab)
+
+
+def test_guidance_enabled_with_definitions_asks_for_a_run(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=False)
+    tab.enable_check.setChecked(True)
+    assert tab.enable_hint.text() == (
+        "Rock typing is on. Run the analysis (or Run All Wells) to compute rock types.")
+    assert tab.enable_hint.property("status") == "warning"
+    assert tab.run_all_button.isVisibleTo(tab) and tab.run_all_button.isEnabled()
+
+
+def test_guidance_stale_results_ask_for_a_run(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=True, stale=True)
+    tab.enable_check.setChecked(True)
+    assert tab.enable_hint.text().startswith("Rock typing is on. Run the analysis")
+    assert tab.run_all_button.isVisibleTo(tab)
+
+
+def test_guidance_results_with_rock_types_say_where(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=True)
+    tab.enable_check.setChecked(True)
+    assert tab.enable_hint.text() == (
+        "Rock types are in the results: Summary → Rock types, Log Display → "
+        "Rock Type track, and the exports.")
+    assert tab.enable_hint.property("status") == "success"
+    assert not tab.run_all_button.isVisibleTo(tab)
+
+
+def test_guidance_disabled_after_a_run_says_next_run_drops_them(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=True)
+    tab.enable_check.setChecked(True)
+    tab.enable_check.setChecked(False)
+    assert tab.enable_hint.text() == (
+        "Rock types are in the current results. The next run drops them.")
+    assert not tab.run_all_button.isVisibleTo(tab)
+
+
+def test_guidance_disabled_without_results_is_silent(tab):
+    assert not tab.enable_hint.isVisibleTo(tab)
+
+
+def test_guidance_follows_a_finished_run(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    ds = _fake_active(monkeypatch, rock=False)
+    tab.enable_check.setChecked(True)
+    assert tab.run_all_button.isVisibleTo(tab)
+    ds.summary = {"rock_types": {"by_rt": []}}
+    tab.model.analysis_complete.emit()
+    assert tab.enable_hint.text().startswith("Rock types are in the results")
+    assert not tab.run_all_button.isVisibleTo(tab)
+
+
+def test_apply_while_enabled_says_to_run(qtbot, tab, monkeypatch):
+    _fake_active(monkeypatch, rock=False)
+    tab.enable_check.setChecked(True)
+    _fit(qtbot, tab)
+    tab.apply_button.click()
+    assert tab.status_label.text() == (
+        "Applied to the project. Rock typing is on. Run the analysis (or Run All Wells) "
+        "to compute rock types.")
+    assert tab.status_label.property("status") == "warning"
+    assert tab.enable_hint.text().startswith("Rock typing is on. Run the analysis")
+
+
+def test_run_all_button_emits_and_is_off_during_a_batch(qtbot, tab, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=False)
+    tab.enable_check.setChecked(True)
+    with qtbot.waitSignal(tab.run_all_requested, timeout=1000):
+        tab.run_all_button.click()
+    tab.set_batch_running(True)
+    assert not tab.run_all_button.isEnabled()
+    tab.set_batch_running(False)
+    assert tab.run_all_button.isEnabled()
+
+
+def test_guidance_update_is_cheap(qtbot, tab, counters, monkeypatch):
+    _fit_and_apply(qtbot, tab)
+    _fake_active(monkeypatch, rock=False)
+    _reset(counters)
+    tab.enable_check.setChecked(True)
+    tab.model.parameters_changed.emit()
+    assert counters["update"] == 0 and counters["table"] == 0 and counters["figure"] == 0
+
+
+def test_main_window_run_all_button_calls_the_run_all_handler(qtbot, monkeypatch):
+    from ui.main_window import MainWindow
+
+    calls = []
+    monkeypatch.setattr(MainWindow, "_on_run_all", lambda self: calls.append(1))
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.rock_tab.run_all_requested.emit()
+    assert calls == [1]
+
