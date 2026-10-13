@@ -2,14 +2,14 @@
 
 # Session Management
 
-Session management was introduced in v1.1 for project continuity. Since format 2.0 a session stores the whole multi-well project; format 2.1 adds the record of how each well's tops and core data were imported, and format 2.2 *(v1.8.0)* adds the rock typing definitions and settings.
+Session management was introduced in v1.1 for project continuity. Since format 2.0 a session stores the whole multi-well project; format 2.1 adds the record of how each well's tops and core data were imported, format 2.2 *(v1.8.0)* adds the rock typing definitions and settings, and format 2.3 *(v1.9.0)* adds the Monte Carlo uncertainty setup.
 
 - **Session → Save Session…** (`Ctrl+S`): write the project to the current session file (the one last saved or loaded); the first time, it asks for a file.
 - **Session → Save Session As…** (`Ctrl+Shift+S`): choose a new file, which becomes the current one *(v1.7.1)*.
 - **Session → Load Session…:** Re-open the saved wells and restore every parameter scope.
 - **Version Compatibility:** Track the session format version.
 
-A format 2.1 or 2.2 session stores:
+A format 2.1, 2.2 or 2.3 session stores:
 
 - `global_params`: the project parameters (all the values listed below);
 - `zone_params`: project · zone parameters, keyed by zone name;
@@ -27,6 +27,16 @@ Core labels used in the log are derived from the core each time, never saved. Re
 
 **Opening a 2.2 session in an older version.** A 2.2 session opens in version 1.7.x (and 1.7.0): the rock typing settings and definitions are ignored without a message, the rest of the project loads normally, and a session saved again from that version no longer contains them. **Opening a newer session.** See below.
 
+**Format 2.3: uncertainty** *(v1.9.0)*. A session is written as format **2.3** only when at least one Monte Carlo distribution is enabled on **Parameters → Uncertainty**. Otherwise it is written as 2.2 (rock typing used) or 2.1, exactly as before, and a project whose distributions are all disabled leaves no trace in the file. A 2.3 session adds the top-level key `uncertainty`:
+
+- `n`, `seed` and `sampling` (`lhs` or `random`);
+- `distributions`: for each of `a`, `m`, `n`, `rw`, `rsh`, `vsh_cutoff`, `phi_cutoff` and `sw_cutoff`, the fields `enabled`, `kind` (`triangular`, `normal` or `uniform`), `mode` (`relative` or `additive`), `low`, `mid`, `high` and `sd`. Relative offsets are stored as fractions (0.10 is +10 %);
+- `correlations`: a list of `[parameter, parameter, rho]` entries, for example `["m", "n", 0.5]`; empty when the m–n correlation is 0.
+
+The Monte Carlo **result is not saved**. The seed, N, sampling and ranges are saved, so loading the session and running **Analysis → Run Uncertainty…** gives the same numbers. A session from before 1.9.0 has no `uncertainty` key: it loads with the default setup (nothing enabled, N 300, seed 12345, Latin hypercube) and behaves as before. The distributions are not part of the well parameters, so changing them never marks a well out of date.
+
+**Opening a 2.3 session in an older version.** Version 1.8.0 and older read the file with the compatible fields: the `uncertainty` key is ignored without a message, and a session saved again from that version no longer contains it.
+
 **Sessions from a newer Petrophyter.** Petrophyter refuses a session whose format major version is higher than the one it writes (3.0 or 9.0, when this version writes 2.x). It shows the message **This session was saved by a newer Petrophyter (format X.Y). Update Petrophyter to open it.** with the format of the file in place of X.Y, and changes nothing in the open project. Without this guard, such a file would be read as an old parameter-only session. Sessions of format 1.x, 2.0, 2.1 and 2.2 all load.
 
 **Sessions from 1.7.1 and older** *(v1.7.2)*. Version 1.7.2 corrects several calculations (porosity,
@@ -41,7 +51,7 @@ the other parameters; version 1.7.1 and older ignore them.
 
 **Merged wells** *(v1.7.1)*. Each merged well keeps its own merge step and gap limit, so a project with wells merged at different steps restores each one as it was merged. Sessions saved by v1.7.0 and older stored the last merge step of the project for every merged well; such wells are merged again under the v1.7.1 rules (no edge extrapolation, resistivity interpolated in log10) with that step, and a banner note names the step and the row count. If a merged well's row count looks wrong, import it again with **Merge LAS Files**.
 
-Loading a 2.0, 2.1 or 2.2 session replaces the loaded wells: the LAS, tops, and core files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
+Loading a 2.0, 2.1, 2.2 or 2.3 session replaces the loaded wells: the LAS, tops, and core files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
 
 **Source fingerprints** *(v1.7.2)*. When a file is loaded, Petrophyter computes its SHA-256 hash and size from the bytes it reads. The session stores them next to the paths: `source_fingerprints` for each well (one entry per LAS file, so a merged well has one per file), and `tops_sha256` and `core_sha256` for the tops and core files. Saving never reads the files again. The `sources` list is unchanged, so an older version still opens the session.
 
@@ -66,7 +76,7 @@ Project parameters include:
 - Temperature settings: correction on or off, surface temperature, gradient and its Auto mode, Rw reference temperature, temperature datum depth, Rsh reference temperature, and Waxman-Smits B from temperature. Older sessions load with the datum at 0, no Rsh reference temperature, and B from temperature off, which reproduces their results.
 - Merge and core settings
 
-The current session format version is **2.2** (written only when rock typing is used; otherwise **2.1**). Format 2.0 and 2.1 files still load, with rock typing off, with name matching for tops and core data. Format 1.x files still load: they hold parameters only, which are applied to the project (and, when a well is loaded, to its Rw, Rsh, and GR baseline as well values), and the loaded wells stay in place. Version 1.4 added `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
+The current session format version is **2.3** (written only when a Monte Carlo distribution is enabled; otherwise **2.2** when rock typing is used, or **2.1**). Format 2.0 and 2.1 files still load, with rock typing off, with name matching for tops and core data. Format 1.x files still load: they hold parameters only, which are applied to the project (and, when a well is loaded, to its Rw, Rsh, and GR baseline as well values), and the loaded wells stay in place. Version 1.4 added `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
 
 **Lithology presets.** A named lithology preset at a well, zone, or well · zone scope now supplies a, m, and n at that scope. When an older session holds explicit a, m, and n entries equal to the preset's values at the same scope, loading removes those entries and keeps the preset, so later changes of the preset flow down. A note in the load banner reports it. Entries that differ from the preset stay explicit, and the project-level values are not touched.
 

@@ -31,7 +31,7 @@ The main window has five areas:
 - **Menu bar.** From left to right: **File**, **Session**, **Analysis**, **Parameters**, **Corrections**, **View**, and **Help**.
 - **Main toolbar.** Four controls on the left: **Open LAS File(s)…**, **Save Session…**, **Parameters Window**, and **Run Analysis**, plus **Run All Wells** once two or more wells are loaded. On the right, a well selector appears once two or more wells are loaded, next to a well indicator that shows a status dot and a summary of the active well such as `Well name · 12,345 rows · 18 curves`, or `No data loaded`.
 - **Data Browser.** A read-only tree on the left that summarizes the loaded well. See [What the Data Browser shows](#what-the-data-browser-shows).
-- **Result tabs.** Seven tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Rock Typing**, **Summary**, and **Export**. A notification banner appears above the tabs when there is something to report.
+- **Result tabs.** Eight tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Rock Typing**, **Summary**, **Uncertainty**, and **Export**. A notification banner appears above the tabs when there is something to report.
 - **Status bar.** The left side shows the latest message. The right side holds the stale-results label, a progress bar, and the QC chip. See [Running the analysis](#running-the-analysis).
 
 Parameters are not part of the main window. They live in the separate [Parameters window](#the-parameters-window).
@@ -44,7 +44,8 @@ Parameters are not part of the main window. They live in the separate [Parameter
 4. Run the analysis with **Analysis → Run Analysis**, or every well at once with **Analysis → Run All Wells**.
 5. Optionally, with core porosity and permeability loaded, fit rock types in the **Rock Typing** tab and run again (see [Rock Typing](#rock-typing)).
 6. Review the result tabs.
-7. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
+7. Optionally, give parameters distributions on **Parameters → Uncertainty** and run **Analysis → Run Uncertainty…** to get P90/P50/P10 (see [Uncertainty (Monte Carlo)](#uncertainty-monte-carlo)).
+8. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
 
 ## Loading data
 
@@ -152,6 +153,7 @@ A page list on the left groups the pages under four headings:
 |---|---|---|
 | **Analysis** | **Analysis Scope** | Whole Well or Per-Formation analysis, and which formations to include |
 | **Analysis** | **Curve Mapping** | Which curve is used as GR, RHOB, NPHI, DT, and RT, and optionally TVD (used for formation temperature). The **Mapped curves** table below the choices shows each curve's unit from the file, its coverage (share of the well's samples with a value, in warning colour below 50 %), its range, and **Auto** (the curve detected from the curve names) or **Manual** (chosen by you; the tooltip names the curve detection would pick) |
+| **Analysis** | **Uncertainty** | The Monte Carlo setup: a distribution for each of a, m, n, Rw, Rsh and the three cutoffs, the number of realisations, the seed, the sampling and the m–n correlation. Nothing is varied until you enable a distribution; see [Uncertainty (Monte Carlo)](#uncertainty-monte-carlo) |
 | **Analysis** | **Core Matching** | Core depth unit (Auto, M, FT) and the maximum distance for matching core samples to log depths; enabled after core data is loaded |
 | **Parameters** | **Porosity Method** | Primary PHIE method used downstream for Sw, permeability, and HCPV, and the **D-N combination** (Average or RMS) for PHIT and PHIE_DN |
 | **Parameters** | **VShale** | GR baseline (statistical or custom GRmin and GRmax), the Vshale methods (Linear, Larionov Tertiary, Larionov Older) and the **Primary Vsh** |
@@ -244,6 +246,8 @@ While the analysis runs:
 - a success banner reports the net pay, gross sand, and net-to-gross ratio, for example `Analysis complete — Net Pay 42.5 ft · Gross Sand 120.0 ft · N/G 35.4%`. When the run had warnings (for example, Rw could not be estimated automatically, or part of the interval has no porosity), the banner is a warning, such as `Analysis complete with 2 warnings — …`, with a **Review** button that opens **Diagnostics → Run issues** for that well. Only warnings and errors count: notes (information), such as how many samples Swirr limited, keep the banner a success.
 
 **Analysis → Stop analysis**, the **Stop analysis** toolbar button next to Run, or `Esc` while a run is active stops the run. Wells that finished keep their new results, wells that were not run keep their earlier state, and an info banner reports, for example, `Analysis stopped — 3 wells finished, 2 not run`. The action is disabled when nothing is running.
+
+**Analysis → Run Uncertainty…** starts the Monte Carlo analysis and **Analysis → Stop Monte Carlo** stops it; both are described under [Uncertainty (Monte Carlo)](#uncertainty-monte-carlo). Neither has a keyboard shortcut.
 
 If the analysis fails, an **Analysis Error** dialog opens and the status bar shows **Analysis failed**. When several wells run and only some fail, the others keep their results and one warning banner names each failed well and the reason; a failed well's dot in the Data Browser turns to the error colour. After a multi-well run the banner reads, for example, **Analysis complete for 4 wells (2 unchanged)**, and **· 1 with warnings · Review** when any well had warnings.
 
@@ -380,9 +384,47 @@ With two or more wells, a **Wells** table lists every well with its status, pay 
 
 When the run has rock types, a **Rock types** group sits below the Zones table. For the active well it lists, per rock type and for the unassigned samples, the gross sand, net reservoir and net pay thickness, N/G pay, the average PHIE and Sw in pay, the HCPV, the geometric-mean permeability, the FZI and the share of core-labelled samples; with two or more wells it also lists each well's rock types. A **Field total** per rock type is shown only for a **Project pooled** fit, where a rock type means the same rock in every well; for a per-well or per-zone fit the table reads **mixed definitions** and shows no field total. The group is hidden while rock typing is off and no run has rock types. When rock typing is on but the active well has not been run with it, the group shows a hint instead: **Rock typing is on. Run the analysis for this well (or Run All Wells) to see pay and HCPV per rock type here.**, or, when no definitions are applied, **Rock typing is on but no definitions are applied. Fit and apply them in the Rock Typing tab.**
 
+### Uncertainty (Monte Carlo)
+
+The **Uncertainty** tab turns the deterministic HCPV and net pay into a range. You give some parameters a distribution, Petrophyter re-evaluates the saturation and pay stage many times with values drawn from those distributions, and the tab reports **P90 / P50 / P10** for the field, each well and each zone, plus a histogram, an exceedance curve and a tornado. It is optional: until you enable a distribution nothing is computed, and the deterministic results, the Summary and the exports are never changed by it. The equations are in [Calculation Methods](calculation-methods.md#uncertainty-monte-carlo-v190).
+
+**Setting up the distributions.** Open **Parameters → Uncertainty** in the Parameters window (page group **Analysis**). Each row is one parameter: **a**, **m**, **n**, **Rw (ohm·m)**, **Rsh (ohm·m)**, **Vsh cutoff**, **PHIE cutoff** and **Sw cutoff**. For a row:
+
+- check the box on the left to vary that parameter (the other controls stay disabled until you do);
+- **Kind** is **Triangular** (Low, Mid and High), **Normal** (Mid is the mean offset, Sd the standard deviation; draws are truncated at three standard deviations) or **Uniform** (Low and High);
+- **Mode** is **Relative** or **Additive**. A relative offset is a percentage of the value (Low `-10 %` and High `+10 %` give values between 0.9 and 1.1 times the value); an additive offset is in the unit of the parameter (m `-0.15` to `+0.15`). Rw, Rsh and a start as relative, m, n and the three cutoffs as additive.
+
+Low, Mid, High and Sd are offsets from the value the analysis resolved for each well and zone, not absolute values. The same draw is applied to every well and zone in a realisation, on top of whatever scopes, lithology presets or automatic estimates gave each of them its own value, so the wells move together (the widest field spread). A line under the table repeats this and names what is not varied: **porosity, shale point, GR baseline**. A tornado without them understates the total uncertainty.
+
+**Suggested ranges** fills every row with a triangular range and its default mode: a ±10 %, m ±0.15, n ±0.20, Rw and Rsh −20 % to +25 %, Vsh cutoff ±0.05, PHIE cutoff ±0.02, Sw cutoff ±0.05. It overwrites the values you typed but enables nothing; use it as a starting point and edit the ranges to what you know about the field.
+
+Below the table:
+
+- **N** is the number of realisations, from 50 to 5000 (300 by default). Use more for smoother percentiles.
+- **Seed** and **New seed**: the same seed, N, sampling and ranges always give the same numbers, so a result can be reproduced; **New seed** draws a different random seed.
+- **Sampling** is **Latin hypercube** (the default; it covers each range evenly, so percentiles settle with fewer realisations) or **Random**.
+- **rho(m, n)** is the rank correlation between the m and n draws, from −0.95 to 0.95. The default 0 draws them independently; a non-zero value needs both m and n enabled, otherwise the page reports it and the run is refused.
+
+Edits are stored in the project at once and mark the session as changed, but they never make a well out of date. A message under the controls explains an invalid setting (for example a triangular range whose Low is above its High). Nothing enabled is a normal starting state, not an error.
+
+**Running and stopping.** Choose **Analysis → Run Uncertainty…** (or press **Run Monte Carlo** on the Uncertainty tab; there is no keyboard shortcut). It uses the current parameters of every well that has data and an RT curve, whether or not the wells have been run. The status bar shows `Monte Carlo 230/300`, and you can keep working. **Analysis → Stop Monte Carlo** (or **Cancel** on the tab) stops the run and keeps no partial result. The action is greyed out, with a tooltip saying why, when no distribution is enabled, when a Monte Carlo run is already going, or while an analysis run is in progress; starting it with no well that has an RT curve shows a warning banner instead. The run works on its own copy of the data and parameters. **New Project** or **Load Session…** cancels a Monte Carlo run and discards its result. Closing the window while it runs asks **Monte Carlo is still running. Quit anyway?** If it fails, a **Monte Carlo failed** dialog gives the reason.
+
+**Reading the tab.** Choose the **Metric**: HCPV net pay, HCPV net reservoir, Net pay, Avg PHIE in pay or Avg Sw in pay. HCPV and thickness are in ft (HCPV is a column thickness per unit area, not a volume). The header line gives the seed, N, sampling and the run time.
+
+- **Table.** One row for the **Field**, then each well with its zones indented, with **P90**, **P50**, **P10**, **Mean**, **Deterministic**, **N valid** (realisations where the metric is defined) and **P(zero)** (the share of realisations with no net pay). The convention is the industry one: **P90 is the low case, the value exceeded with 90 % probability; P10 is the high case**, so P90 ≤ P50 ≤ P10. **Deterministic** is the same calculation with every offset at zero, on the current parameters. The Field row is computed from the per-realisation field totals, not by adding well percentiles, so it can differ from the sum of the wells' P90 values. Select a row to draw it.
+- **Histogram and exceedance.** Bars of the realisations for the selected row, with P90, P50 and P10 as vertical lines and the deterministic value dashed, and the exceedance curve (the percent of realisations at or above each value) on the right axis.
+- **Tornado.** For HCPV net pay and Net pay, one bar per enabled parameter: the output when only that parameter is at the 10th and at the 90th percentile of its own distribution and everything else is at its base value, sorted by swing, with the deterministic value as the centre line. The table below gives the input values, the outputs, the swing and a **Rank corr. (field)** column, the rank correlation of the parameter's draws with the field value of the selected metric over all realisations. The tornado changes one parameter at a time, so it misses interactions; the rank correlation, which uses the whole sample, is the cross-check.
+- **Diagnostics.** The share of draws clipped to the physical limits of each parameter, the share of realisations with no net pay for each well, any well left out and why (for example no RT curve), and warnings. **Percentiles not converged at N = ...; increase N** appears when P90, P50 or P10 of the field HCPV net pay or net pay differ by more than 2 % of the P50 between the first and the second half of the realisations; raise N and run again.
+
+**Out of date.** An **Out of date** chip appears when the result no longer matches the project: a well's parameters changed (or it was removed), a well with an RT curve was added, or the distributions, N, seed or sampling changed. The result stays readable. When a well's deterministic run is out of date, a note says that the **Deterministic** column uses the current parameters while the Summary tab is out of date. Run Uncertainty again to refresh.
+
+**Reproducing a result.** Results are not saved in a session; the configuration is. Open the session, run Uncertainty with the same seed, and the numbers are identical. The Excel export (below) records the seed, N and sampling next to the statistics.
+
 ### Export
 
 Choose the **Scope**: **Active well** or, with two or more wells, **All wells**. Use **Download CSV** to save the full results table, **Download Excel** to save a workbook with the results and a summary, or **Download LAS** to save the results as LAS. For **All wells**, the CSV has a `WELL` column, the workbook has a **Summary** sheet with the field total, a **Zones** sheet, and one results sheet per analysed well, and LAS asks for a folder and writes one file per well with its own header. The **Results Preview** title says what it shows, for example **Preview — showing 500 of 4,812 rows (well Alpha)**; the preview always shows the active well, and with **All wells** a note reads, for example, **Export contains 3 wells, 12,340 rows**. **Depth interval** is an explicit choice: **All depths**, or **Selected interval (1000–1019 ft)** using **Top MD** and **Bottom MD**. The choice applies to the preview and to every export (CSV, Excel and LAS, for one well or all wells), and is written in the provenance as **Depth interval**. The Excel **Summary** sheet still describes the whole run. A success banner reports the saved path.
+
+With a Monte Carlo result, the workbook also gets an **Uncertainty** and a **Tornado** sheet (see [Visualization and Export](visualization-and-export.md#uncertainty-in-the-exports-v190)); CSV and LAS are unchanged.
 
 With rock typing on, the results (CSV, and the well sheets and the combined sheet of the workbook) carry the extra columns `RQI`, `FZI`, `ROCK_TYPE`, `ROCK_TYPE_SOURCE` and `RT_MARGIN`, plus `PERM_RT` and `R35` when those are turned on. The workbook adds a **Rock Types** sheet with one row per well and rock type, an **Unassigned** row per well, and **Field total** rows when the definitions are project-wide. **Export definitions** (shown once definitions are applied) saves the rock-type definitions table to CSV. LAS writes `ROCK_TYPE`, `FZI`, `RQI`, `RT_MARGIN` and `PERM_RT` as numeric curves; the text column `ROCK_TYPE_SOURCE` is left out, like the other text columns. Without rock typing, nothing is added.
 
@@ -397,7 +439,7 @@ A session is a JSON file that stores the project, so you can reopen it later.
 
 An asterisk at the start of the window title (`*BKS-01 — Petrophyter`) means there are unsaved changes: loaded or removed wells, tops, core data, merges, parameters, or curve mapping. Running an analysis does not count. Closing the window, loading a session, or starting a new project with unsaved changes asks **Save**, **Discard**, or **Cancel**; **Cancel**, or cancelling the Save's file dialog, keeps everything as it is.
 
-Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. The rock-type definitions and settings are saved with the session, so a loaded session keeps them. See [Session Management](session-management.md) for the complete list of saved parameters.
+Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. The rock-type definitions and settings are saved with the session, so a loaded session keeps them. So are the Monte Carlo distributions, N, seed and sampling, but not the Monte Carlo result: run **Analysis → Run Uncertainty…** again and the seed reproduces it. See [Session Management](session-management.md) for the complete list of saved parameters.
 
 ## Appearance
 
@@ -426,6 +468,10 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 
 - **Plot Engine shows Interactive (requires pyqtgraph) and it cannot be selected.** pyqtgraph is missing from the Python environment. Launch Petrophyter with `run_petrophyter.bat`, which uses the `mldl` environment, or install it with `pip install pyqtgraph`. Meanwhile, choose **Classic (matplotlib)** under **Advanced → Plot Engine**.
 - **Run Analysis is greyed out.** Load a LAS file first. The action is also disabled while a run is in progress.
+- **Run Uncertainty… is greyed out.** Enable at least one distribution on **Parameters → Uncertainty**; hover the action for the reason. It is also disabled while a Monte Carlo run or an analysis run is in progress. If a warning says no well has an RT curve, map an RT curve in **Curve Mapping** and load a well that has one.
+- **A well is missing from the Uncertainty tab.** It could not be evaluated (no RT curve, no effective porosity, or the analysis failed). The Diagnostics list on the tab names it and gives the reason; the field row leaves it out.
+- **The Uncertainty tab shows Out of date.** A well's parameters, the distributions, N, the seed or the sampling changed since the run. Press **Analysis → Run Uncertainty…** again.
+- **Percentiles not converged at N = …; increase N.** The field P90, P50 or P10 moved by more than 2 % of the P50 between the first and the second half of the realisations. Raise **N** on **Parameters → Uncertainty** (up to 5000) and run again.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Run All Wells skips a well.** Its results are up to date. Use **Run Analysis** (`F5`) to rerun the active well anyway.
 - **In the import dialog, a file well has no match.** The name in the well column does not match the header of any loaded well. Pick the loaded well by hand in the **Match** column, check the spelling or the UWI, or load the well's LAS file first. The **Assign to N wells** button stays disabled while a file well that fits several loaded wells is unresolved; hover it to see why.

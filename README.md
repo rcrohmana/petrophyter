@@ -22,6 +22,7 @@ Key capabilities include:
 - Core-calibrated permeability and statistical core-data validation
 - Rock typing from core (RQI/FZI with k-means, or Winland R35), applied to every well through the logs, with permeability, net pay, and HCPV per rock type
 - HCPV and configurable net-pay analysis
+- Monte Carlo uncertainty on HCPV and net pay: P90/P50/P10 per field, well, and zone, with histogram, exceedance curve, and tornado
 - Formation-top overlays and quality-control diagnostics
 - Interactive GPU-accelerated six-track log visualization, plus a Rock Type track when rock typing is on
 - Excel, CSV, and LAS export, per well or for all wells with a field summary

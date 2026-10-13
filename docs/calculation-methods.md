@@ -342,6 +342,130 @@ For an `ok` zone, the limiting cutoff is the one with the lowest pass fraction a
 - Display modes: Net Pay, Net Reservoir, Gross, and Fraction Only
 - Visibility can be toggled with a checkbox.
 
+## Uncertainty (Monte Carlo) *(v1.9.0)*
+
+The deterministic HCPV and net pay depend on parameters that are never known exactly. The Monte Carlo analysis
+repeats the saturation and pay stage N times with the parameters drawn from distributions you define, and
+reports the spread. It reuses the same code as the analysis (the same Sw method selection, Rw and Rsh
+temperature factor, cutoff comparisons and thickness rule), and it never changes the deterministic results.
+HCPV here is the column thickness `Σ PHIE × (1 − Sw) × dz` in ft, as in the section above, not a volume: there
+is no area, contact or fluid factor.
+
+### Parameters varied
+
+Eight parameters can be varied: `a`, `m`, `n`, `Rw`, `Rsh`, and the Vsh, PHIE and Sw cutoffs. One distribution
+per parameter is defined for the whole project, and one realisation draws one offset `δ` per parameter. Each
+well and zone segment then takes its own resolved value `v` (after scopes, lithology presets, automatic
+estimates and calibrations) and uses
+
+- relative mode: `v' = v × (1 + δ)`, with `δ` a fraction (0.10 is +10 %);
+- additive mode: `v' = v + δ`, with `δ` in the unit of the parameter.
+
+Relative is the default for `a`, `Rw` and `Rsh` (positive, skewed quantities), additive for `m`, `n` and the
+cutoffs. An automatic Rw or Rsh is perturbed after it is estimated; it is not re-estimated for each draw. The
+formation temperature factor is applied afterwards to the perturbed Rw and Rsh. Because the same `δ` applies to
+every well and zone, the wells are perfectly dependent for each parameter: this is conservative, and it gives
+the widest field spread.
+
+Only the primary Sw model is evaluated in each realisation. A segment without an RT curve has Sw = 1, as in the
+analysis, and samples with no valid resistivity or no valid Sw are excluded from pay and HCPV.
+
+**Not varied:** porosity (matrix and fluid densities, shale point, NPHI matrix, gas correction and the
+D-N combination), the GR baseline and Vsh, temperature, depth and the thickness rule, and the permeability
+coefficients. Permeability, Swirr and flow units do not enter HCPV, net pay or the averages in pay, so they
+are not computed. A tornado without the porosity and shale inputs understates the total uncertainty, and
+the tab and the exports say so.
+
+### Distributions and sampling
+
+| Kind | Offset `δ` | Notes |
+|---|---|---|
+| Triangular | Low, Mid (mode), High | Needs Low ≤ Mid ≤ High |
+| Normal | mean = Mid, standard deviation = Sd | Truncated at ±3 Sd; needs Sd ≥ 0 |
+| Uniform | Low to High | Needs Low ≤ High |
+
+A distribution with zero width is a constant. The marginals are the inverse CDFs of these distributions applied
+to uniform numbers `u`. The numbers come from one random generator initialised with the **seed**:
+
+- **Latin hypercube** (default): the unit interval is cut into N equal strata for each parameter and each
+  stratum is hit exactly once, so the percentiles settle with fewer realisations than plain random draws.
+- **Random**: independent uniform numbers.
+
+The draws are generated before the realisations are evaluated, so the same configuration, seed, parameters and
+data always give the same numbers.
+
+**Correlation between m and n.** With a requested rank correlation `ρ`, the uniforms are mapped to standard
+normals, `z = Φ⁻¹(u)`, correlated with the Cholesky factor of the correlation matrix, `z' = z Lᵀ`, and mapped
+back, `u' = Φ(z')` (a Gaussian copula). The matrix entry is `2 sin(πρ / 6)`, which makes the rank (Spearman)
+correlation of the draws close to `ρ`. The matrix must be positive definite and `|ρ| < 1`, and both parameters must be
+enabled, or the run is refused. The default is `ρ = 0`, independent draws; published cementation and saturation
+exponents are often positively related, and the choice is yours. `a` and `m` are also related in practice;
+keeping `a` fixed is the usual alternative to correlating them.
+
+### Physical limits
+
+After the offset is applied, the value is clipped to these limits for every segment. The share of realisations in
+which a parameter was clipped is reported in the diagnostics.
+
+| Parameter | Limits |
+|---|---|
+| `a` | 0.1 to 5 |
+| `m`, `n` | 1.0 to 4.0 |
+| `Rw` | 0.001 to 100 ohm·m |
+| `Rsh` | 0.05 to 5000 ohm·m |
+| Vsh cutoff, Sw cutoff | above 0 up to 1 |
+| PHIE cutoff | 0 to 0.5 |
+
+### Exceedance statistics
+
+The industry convention is used everywhere (tables, plots, exports): **P90 is the low case, the value exceeded
+with 90 % probability; P10 is the high case.**
+
+```
+P90 = percentile(x, 10)     P50 = percentile(x, 50)     P10 = percentile(x, 90)
+```
+
+so `P90 ≤ P50 ≤ P10` always. Percentiles use linear interpolation. The mean, the standard deviation (N − 1),
+the minimum and the maximum are reported with them. A realisation where a metric is undefined (for example the
+average PHIE when no sample is pay) is left out of that metric's statistics and not counted in **N valid**.
+**P(zero)** is the share of realisations with zero net pay in the scope, so a P90 of 0 is explained and not hidden.
+
+**Convergence check.** P90, P50 and P10 are recomputed on the first and on the second half of the realisations
+for the field HCPV net pay and net pay. If any differs between the halves by more than 2 % of the P50, the
+result carries the warning *Percentiles not converged at N = ...; increase N*.
+
+**Deterministic value.** Reported beside the percentiles, it is the same calculation with every `δ = 0`, on the
+current parameters (it equals the Summary values for a well that is up to date).
+
+### Aggregation over wells and zones
+
+Within a realisation all wells and zones share the same draw. For each realisation the field values are
+
+- HCPV and thickness (net pay, net reservoir): the sum over wells;
+- average PHIE in pay: weighted by each well's net pay;
+- average Sw in pay: weighted by each well's pore thickness over pay, `Σ PHIE × dz`, falling back to net pay weights
+  in a realisation where no well has any; wells whose average is undefined are skipped.
+
+These are the same rules as the **Field total** of the Summary. The percentiles are then taken on the vector of
+the N field values, never by adding well percentiles: when wells respond in opposite directions to a parameter,
+the field P90 differs from the sum of the wells' P90. A zone is evaluated in the same way, over its own samples,
+within each well. A well that cannot be evaluated (no RT curve, no effective porosity, or a failed analysis) is
+left out of every row, including the field, and is named in the diagnostics.
+
+### Tornado and rank correlation
+
+The tornado is one-at-a-time. For each enabled parameter the model is evaluated with that parameter at the 10th
+and at the 90th percentile of its own distribution (clipped as above) and every other parameter at its base
+value (`δ = 0`). The two outputs are reported as the *output at the low input* and the *output at the high
+input*, not as P-values of the output, because the direction of the response differs by parameter. The bar
+runs from the smaller to the larger output, the swing is `|output at high − output at low|`, the rows are sorted
+by swing, and the deterministic value is the centre line. It is available for HCPV net pay and net pay, for the field,
+each well and each zone.
+
+One-at-a-time ignores interactions between parameters and any correlation. As a cross-check, the Monte Carlo
+sample gives the Spearman rank correlation between each parameter's draws and the field value of the metric
+over all realisations (positive: a larger offset gives a larger result).
+
 ## Rock Typing *(v1.8.0)*
 
 Rock typing is optional and off by default. With it off, no column, summary entry or parameter is added and the
