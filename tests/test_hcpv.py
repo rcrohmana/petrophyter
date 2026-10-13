@@ -332,3 +332,34 @@ class TestHcpvWithTotalPorosityModels:
         old_swt = PetrophysicsCalculator(calc.data).calculate_sw_dual_water(
             "RT", phie, rw=0.05, a=0.62, m=2.15, n=2.0, swb=0.1, rwb=0.2)
         assert (phie * (1 - old_swt))[0] == pytest.approx(0.1717, abs=5e-5)
+
+
+class TestHcpvPerRockType:
+    """P1: net-pay HCPV split by rock type adds up to the well total."""
+
+    def test_per_type_hcpv_sums_equal_the_cumulative_total(self):
+        from modules.rock_typing import rock_type_rows
+
+        rng = np.random.default_rng(7)
+        n = 60
+        depth = 1000.0 + 0.5 * np.arange(n)
+        phie = pd.Series(rng.uniform(0.05, 0.3, n))
+        sw = pd.Series(rng.uniform(0.1, 0.9, n))
+        vsh = pd.Series(rng.uniform(0.0, 0.6, n))
+        calc = PetrophysicsCalculator(pd.DataFrame({"DEPTH": depth}))
+        totals = calc.calculate_net_pay(vsh, phie, sw)
+        calc.calculate_hcpv(phie=phie, sw=sw, depth=calc.data["DEPTH"])
+        rock = rng.integers(0, 4, n)
+        calc.results["ROCK_TYPE"] = rock
+        calc.results["ROCK_TYPE_SOURCE"] = np.where(rock > 0, "log", "x_vsh")
+        calc.results["RT_MARGIN"] = np.where(rock > 0, 0.3, np.nan)
+        rt = {"set": {"n_rt": 3, "fzi": [1.0, 2.0, 3.0]}, "settings": {"lorenz": False}}
+        section = rock_type_rows(calc.results, vsh, phie, sw, depth_increments(calc.data["DEPTH"]),
+                                 None, rt)
+        rows = section["by_rt"] + [section["unassigned"]]
+        by_hand = [calc.results.loc[rock == t, "dHCPV_NET_PAY"].sum() for t in (1, 2, 3, 0)]
+        assert [r["hcpv_net_pay"] for r in rows] == pytest.approx(by_hand)
+        assert sum(r["hcpv_net_pay"] for r in rows) == pytest.approx(
+            calc.results["HCPV_CUM_NET_PAY"].iloc[-1])
+        assert sum(r["net_pay"] for r in rows) == pytest.approx(totals["net_pay"])
+        assert sum(r["gross_sand"] for r in rows) == pytest.approx(totals["gross_sand"])

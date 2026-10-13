@@ -1003,7 +1003,44 @@ class AppModel(QObject):
             # only carried (and hashed) when a shale parameter is AUTO.
             for key in SHALE_SETTING_DEFAULTS:
                 flat[key] = getattr(self, key, SHALE_SETTING_DEFAULTS[key])
+        flat["rock_types"] = flat["rock_core"] = None
+        if self.rock_typing_enabled and self.project.rock_types:
+            self._rock_typing_params(ds, flat)
         return copy.deepcopy(flat)
+
+    def _rock_typing_params(self, ds: WellDataset, flat: dict):
+        """Rock-type definitions resolved for one well, and its core labels (spec 6.2).
+
+        ``flat["rock_types"]`` = {method, feature, fit_scope, set, zone_sets, settings, basis,
+        core_max_dist}; ``flat["rock_core"]`` = {"depth": [...], "rt": [...]} or None. Plain
+        floats, ints, strings, lists and dicts only, so the stale-tracking hash survives a
+        session save and load. Stays None when no set applies to the well.
+        """
+        from modules.rock_typing import core_labels, well_core_input
+
+        defs = self.project.rock_types
+        sets = defs.get("sets") or {}
+        scope = defs.get("fit_scope", "project")
+        pooled = sets.get("*")
+        chosen, zone_sets, basis = pooled, {}, "pooled"
+        if scope == "well":
+            if str(ds.key) in sets:
+                chosen, basis = sets[str(ds.key)], "well"
+            elif pooled is not None:
+                basis = "pooled fallback"
+        elif scope == "zone":
+            zone_sets = {z: sets[z] for z in self.zones_for(ds) if z in sets and z != "*"}
+            basis = "zone" if zone_sets else "pooled"
+        if chosen is None:
+            chosen = next(iter(zone_sets.values()), None)
+        if chosen is None:
+            return
+        rt = {"method": defs.get("method", "fzi"), "feature": defs.get("feature", "log10_fzi"),
+              "fit_scope": scope, "set": chosen, "zone_sets": zone_sets,
+              "settings": dict(defs.get("settings") or {}), "basis": basis,
+              "core_max_dist": float(self.core_max_dist)}
+        flat["rock_types"] = rt
+        flat["rock_core"] = core_labels(well_core_input(ds), rt)
 
     @staticmethod
     def _temperature_header(ds: WellDataset) -> dict:

@@ -36,6 +36,10 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "RSH_AUTO_FEW_SHALE": ("warning", "params.rw.rsh_value"),
     "RSH_AUTO_CLAMPED": ("warning", "params.rw.rsh_value"),
     "RSH_AUTO_NOTE": ("warning", "params.rw.rsh_value"),
+    # Rock typing (only when the feature is on)
+    "ROCK_TYPES_UNCORED": ("warning", None),
+    "ROCK_TYPES_NO_DEFINITIONS": ("warning", None),
+    "PERM_PRIMARY_FALLBACK": ("warning", None),
     # Tops and zones
     "FORMATION_MISSING": ("warning", "tops"),
     "FORMATION_OVERLAP": ("warning", "tops"),

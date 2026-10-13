@@ -26,6 +26,8 @@ from modules.param_scopes import (
     juhasz_b, normalize_zone, resolve_tvd,
 )
 from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
+from modules.rock_typing import (
+    apply_rock_types, rock_type_rows, rock_typing_unavailable)
 from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
 from modules.statistics_utils import (
     MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
@@ -818,7 +820,7 @@ def _swirr_method_label(method, n_fallback, warnings):
     return method
 
 
-def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
+def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=None):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
     ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
@@ -897,7 +899,7 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings):
     sp["rw"], sp["rsh"] = values["rw"], values["rsh"]
     sp["rw_mode"] = sp["rsh_mode"] = "manual"
     pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
-                             tctx, warnings, rsh_auto)
+                             tctx, warnings, rsh_auto, zone)
     resolved = {"gr_baseline": [sp["gr_min_manual"], sp["gr_max_manual"]],
                 "rw": values["rw"], "rsh": values["rsh"]}
     return calc, pay, _sources_table(sp, sources, resolved)
@@ -937,15 +939,30 @@ def _well_sources(p, rw_source, rsh_source, shale_failed=()):
 # ---------------------------------------------------------------------------
 # Saturation, Swirr, permeability, pay flags
 # ---------------------------------------------------------------------------
+def _primary_perm(p):
+    """``(column, reason)``: the permeability that feeds FLOW_UNIT and the quality flags.
+
+    ``reason`` is why "Rock type" fell back to Timur, else None.
+    """
+    choice = p.get("perm_primary") or "Timur"
+    if choice == "Wyllie-Rose":
+        return "PERM_WR", None
+    if choice == "Rock type":
+        reason = rock_typing_unavailable(p)
+        return ("PERM_RT", None) if reason is None else ("PERM_TIMUR", reason)
+    return "PERM_TIMUR", None
+
+
 def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                       rsh_auto=False):
+                       rsh_auto=False, zone=None):
     """Sw, Swirr, permeability and pay flags on ``calc``.
 
     ``rw`` is a number (at the reference temperature when the Arps correction is
     on, ``tctx.factor``); ``rsh`` is an auto estimate at that temperature when
     ``rsh_auto`` or a manual value (see :func:`_rsh_effective`). Returns the
     ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
-    this calculator's samples.
+    this calculator's samples. ``zone`` (a name, or a Series of zone labels) picks the
+    rock-type set; it is only read when rock typing is on.
     """
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
@@ -1017,8 +1034,14 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
 
     perm_timur = calc.calculate_permeability_timur(phie, swirr)
     calc.calculate_permeability_wyllie_rose(phie, swirr, p["perm_C"], p["perm_P"], p["perm_Q"])
-    calc.classify_flow_units(perm_timur)
-    calc.get_permeability_quality_flags(perm_timur, swirr, phie)
+    apply_rock_types(calc, data, p, vsh, zone, warnings)
+    perm_column, fallback = _primary_perm(p)
+    if fallback is not None:
+        warnings.add("PERM_PRIMARY_FALLBACK",
+                     f"Primary permeability 'Rock type' not used ({fallback}); Timur is used.")
+    perm_primary = perm_timur if perm_column == "PERM_TIMUR" else calc.results[perm_column]
+    calc.classify_flow_units(perm_primary)
+    calc.get_permeability_quality_flags(perm_primary, swirr, phie)
 
     sw_for_pay = calc.results.get("SW", pd.Series([1.0] * len(data), index=data.index))
     pay = calc.calculate_net_pay(
@@ -1319,7 +1342,7 @@ def run_pipeline(
     if not plan:
         emit("Calculating Swirr...", 65)
         pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                                 rsh_auto)
+                                 rsh_auto, labels)
         emit("Calculating permeability...", 75)
         emit("Calculating net pay...", 85)
         summary = dict(pay["summary"])
@@ -1335,7 +1358,7 @@ def run_pipeline(
         for i, zone in enumerate(zones):
             emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
             seg_calc, seg_pay, table = _zone_curves(
-                data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings
+                data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings, zone
             )
             parts.append(seg_calc.results)
             pays.append(seg_pay)
@@ -1353,7 +1376,7 @@ def run_pipeline(
             )
             _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
             pays.append(_saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
-                                           rw, rsh, tctx, warnings, rsh_auto))
+                                           rw, rsh, tctx, warnings, rsh_auto, labels[rest]))
             parts.append(rest_calc.results)
             _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
             flag_calcs.append(rest_calc)
@@ -1433,6 +1456,17 @@ def run_pipeline(
         summary["zone_diagnostics"] = _zone_diagnostics_by_zone(
             labels, (pay["vsh"], pay["phie"], pay["sw"]),
             _sample_dz(data), param_sources, warnings)
+
+    if p["rock_typing_enabled"] and p["rock_types"]:
+        if "ROCK_TYPE" in calc.results.columns:
+            infos = [c.rock_type_info for c in flag_calcs if hasattr(c, "rock_type_info")]
+            info = pd.concat(infos).reindex(data.index) if infos else None
+            summary["rock_types"] = rock_type_rows(
+                calc.results, pay["vsh"], pay["phie"], pay["sw"], _sample_dz(data), labels,
+                p["rock_types"], info, _primary_perm(p)[0])
+    elif p["rock_typing_enabled"]:
+        warnings.add("ROCK_TYPES_NO_DEFINITIONS",
+                     "Rock typing is on but no definitions are applied; no rock types computed.")
 
     vsh_cutoffs = {}
     for zone in (dict.fromkeys(labels.dropna()) if labels is not None else ()):

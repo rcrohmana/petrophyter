@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.vq import ClusterError, kmeans2
 
+from modules.petrophysics import pay_summary
+
 K_RQI = 0.0314                       # um, k in mD, phi as a fraction
 PERM_CLIP = (0.001, 50000.0)         # same clip as PERM_TIMUR
 R35_BOUNDARIES = [-1.0, -0.301, 0.301, 1.0]   # log10 um: 0.1, 0.5, 2, 10 (Martin et al. 1997)
@@ -150,8 +152,8 @@ def _load_excluded_counts(handler) -> Dict[str, int]:
     return counts
 
 
-def core_inputs(model) -> List[CoreInput]:
-    """Snapshot of every well's core (GUI thread): wells with porosity and permeability columns.
+def well_core_input(well) -> Optional[CoreInput]:
+    """One well's core as plain arrays, or None without a porosity and permeability column.
 
     Zone per core row: ``assign_zones`` (the pipeline's) on the well's formation tops, with
     the core depth taken as measured depth. A well whose core depth is TVD
@@ -161,30 +163,66 @@ def core_inputs(model) -> List[CoreInput]:
     from modules.param_scopes import UNZONED
     from modules.pipeline import assign_zones      # lazy: pipeline imports this module
 
-    out: List[CoreInput] = []
-    for well in model.project.wells:
-        core = getattr(well, "core_data", None)
-        data = getattr(core, "data", None)
-        if core is None or data is None:
-            continue
-        if not (core.depth_col and core.porosity_col and core.perm_col):
-            continue
-        cols = (core.depth_col, core.porosity_col, core.perm_col)
-        if any(c not in data.columns for c in cols):
-            continue
-        depth, phi, k = (pd.to_numeric(data[c], errors="coerce").to_numpy(dtype=float).copy()
-                         for c in cols)
-        tvd = bool(getattr(core, "depth_is_tvd", False))
-        if tvd or getattr(well, "formation_tops", None) is None:
-            zone = np.full(len(depth), UNZONED, dtype=object)
-        else:
-            labels, _ = assign_zones(pd.Series(depth), well.formation_tops)
-            zone = labels.to_numpy(dtype=object)
-        out.append(CoreInput(
-            well_key=str(well.key), well=str(well.display_name or well.key),
-            depth_ft=depth, phi=phi, k=k, zone=zone, depth_is_tvd=tvd,
-            load_excluded=_load_excluded_counts(core)))
-    return out
+    core = getattr(well, "core_data", None)
+    data = getattr(core, "data", None)
+    if core is None or data is None:
+        return None
+    if not (core.depth_col and core.porosity_col and core.perm_col):
+        return None
+    cols = (core.depth_col, core.porosity_col, core.perm_col)
+    if any(c not in data.columns for c in cols):
+        return None
+    depth, phi, k = (pd.to_numeric(data[c], errors="coerce").to_numpy(dtype=float).copy()
+                     for c in cols)
+    tvd = bool(getattr(core, "depth_is_tvd", False))
+    if tvd or getattr(well, "formation_tops", None) is None:
+        zone = np.full(len(depth), UNZONED, dtype=object)
+    else:
+        labels, _ = assign_zones(pd.Series(depth), well.formation_tops)
+        zone = labels.to_numpy(dtype=object)
+    return CoreInput(
+        well_key=str(well.key), well=str(well.display_name or well.key),
+        depth_ft=depth, phi=phi, k=k, zone=zone, depth_is_tvd=tvd,
+        load_excluded=_load_excluded_counts(core))
+
+
+def core_inputs(model) -> List[CoreInput]:
+    """Snapshot of every well's core (GUI thread): wells with porosity and permeability columns."""
+    inputs = (well_core_input(well) for well in model.project.wells)
+    return [ci for ci in inputs if ci is not None]
+
+
+def core_labels(ci: CoreInput, rt: dict) -> Optional[dict]:
+    """``{"depth": [...], "rt": [...]}`` of one well's valid, non-TVD core rows, as plain lists.
+
+    ``rt`` is the resolved ``rock_types`` dict (``method``, ``set``, ``zone_sets``,
+    ``settings``). Each row takes the class of its own feature (log10 FZI, or log10 R35 for
+    the r35 method) in the set for its zone; sorted by depth. None when nothing is labelled
+    (no valid row, or TVD core depth, which cannot be matched to the MD of the logs).
+    """
+    if ci is None or ci.depth_is_tvd:
+        return None
+    table, _ = build_core_table([ci], rt.get("settings"))
+    table = table[table["status"] == STATUS_OK]
+    if table.empty:
+        return None
+    phi, k = table["phi"].to_numpy(dtype=float), table["k"].to_numpy(dtype=float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        feature = (np.log10(winland_r35(k, phi)) if rt.get("method") == "r35"
+                   else table["log_fzi"].to_numpy(dtype=float))
+    label = np.zeros(len(table), dtype=int)
+    zone = table["zone"].to_numpy(dtype=object)
+    zsets = rt.get("zone_sets") or {}
+    for z in pd.unique(zone):
+        mask = zone == z
+        label[mask] = classify(feature[mask], zsets.get(z) or rt["set"])[0]
+    keep = (label > 0) & np.isfinite(table["depth"].to_numpy(dtype=float))
+    if not keep.any():
+        return None
+    depth = table["depth"].to_numpy(dtype=float)[keep]
+    order = np.argsort(depth, kind="stable")
+    return {"depth": [float(v) for v in depth[order]],
+            "rt": [int(v) for v in label[keep][order]]}
 
 
 def _settings(settings) -> dict:
@@ -686,3 +724,258 @@ def smlp_units(curve, eps=0.02, min_thickness_ft=5.0) -> List[dict]:
                       "storage_fraction": st, "flow_fraction": fl, "slope": float(sl),
                       "class": _slope_class(sl)})
     return units
+
+
+# ---------------------------------------------------------------------------
+# Pipeline hook: rock type per log sample (spec section 6)
+# ---------------------------------------------------------------------------
+SOURCE_CODES = ("core", "log", "x_vsh", "x_phie", "x_perm", "x_nan")
+RANGE_MARGIN = 0.5          # log10 units beyond the fitted feature range
+DEFAULT_CORE_MAX_DIST = 2.0
+
+
+def _definition_sets(rt) -> list:
+    """Every set of a resolved ``rock_types`` dict: the well's set, then the zone sets."""
+    if not rt:
+        return []
+    sets = [rt.get("set")] + list((rt.get("zone_sets") or {}).values())
+    return [s for s in sets if s]
+
+
+def rock_typing_unavailable(p) -> Optional[str]:
+    """Why ``PERM_RT`` cannot be the primary permeability, or None when it can."""
+    rt = p.get("rock_types")
+    if not p.get("rock_typing_enabled"):
+        return "rock typing is off"
+    if not _definition_sets(rt):
+        return "no rock-type definitions are applied"
+    if any(v is None for s in _definition_sets(rt) for v in (s.get("fzi") or [None])):
+        return "a rock type has no representative FZI"
+    return None
+
+
+def _zone_groups(zone, index, rt) -> List[Tuple[np.ndarray, dict]]:
+    """``[(sample mask, set)]``: the zone's set where there is one, else the well's set."""
+    base = rt.get("set") or {}
+    zsets = rt.get("zone_sets") or {}
+    n = len(index)
+    if zone is None or not zsets:
+        return [(np.ones(n, dtype=bool), base)]
+    if isinstance(zone, str):
+        return [(np.ones(n, dtype=bool), zsets.get(zone) or base)]
+    codes, names = pd.factorize(np.asarray(zone, dtype=object))
+    groups = [(codes == i, zsets.get(z) or base) for i, z in enumerate(names)]
+    if (codes < 0).any():
+        groups.append((codes < 0, base))        # unlabelled samples take the well's set
+    return groups
+
+
+def _nearest_core(depth, core_depth, core_rt, max_dist):
+    """``(label, hit)`` per sample: the rock type of the nearest core sample within ``max_dist``."""
+    n = len(depth)
+    if not len(core_depth):
+        return np.zeros(n, dtype=int), np.zeros(n, dtype=bool)
+    order = np.argsort(core_depth, kind="stable")
+    cd, cr = core_depth[order], core_rt[order]
+    with np.errstate(invalid="ignore"):
+        pos = np.searchsorted(cd, depth)
+        left = np.clip(pos - 1, 0, len(cd) - 1)
+        right = np.clip(pos, 0, len(cd) - 1)
+        dl, dr = np.abs(depth - cd[left]), np.abs(depth - cd[right])
+        use_right = dr < dl
+        near = np.where(use_right, right, left)
+        dist = np.where(use_right, dr, dl)
+        hit = np.isfinite(dist) & (dist <= max_dist)
+    return np.where(hit, cr[near], 0).astype(int), hit
+
+
+def apply_rock_types(calc, data, p, vsh, zone=None, warnings=None) -> None:
+    """Rock type per log sample onto ``calc.results`` (pipeline hook, spec 6.1 to 6.4).
+
+    Does nothing unless ``p["rock_typing_enabled"]`` and ``p["rock_types"]`` (the definitions
+    resolved for the well by ``AppModel.params_for_well``) are set. ``zone`` is a zone name
+    (a zone segment), a Series of zone labels aligned with ``data`` (several zones), or None;
+    the zone's set is used where ``zone_sets`` has one, else the well's ``set``.
+
+    Columns: RQI, FZI (um, where defined), ROCK_TYPE (int, 0 = unassigned), ROCK_TYPE_SOURCE
+    (core / log / x_vsh / x_phie / x_perm / x_nan), RT_MARGIN (log10 units to the nearest
+    boundary); PERM_RT when ``perm_primary`` is "Rock type" or ``settings.perm_rt_column``;
+    R35 (um) when ``settings.r35_column``. Eligibility priority: x_vsh, x_phie, x_perm, x_nan.
+    A core label replaces the log class of an eligible sample within ``core_max_dist`` of a
+    labelled core sample. ``calc.rock_type_info`` (DataFrame: log_rt, outside) feeds the summary.
+    """
+    rt = p.get("rock_types")
+    if not p.get("rock_typing_enabled") or not rt or not _definition_sets(rt):
+        return
+    s = _settings(rt.get("settings"))
+    index = data.index
+    n = len(index)
+    res = calc.results
+    phie = np.asarray(res["PHIE"], dtype=float) if "PHIE" in res else np.full(n, np.nan)
+    log_col = "PERM_WR" if p.get("rt_log_perm") == "Wyllie-Rose" else "PERM_TIMUR"
+    k = np.asarray(res[log_col], dtype=float) if log_col in res else np.full(n, np.nan)
+    vsh_a = np.asarray(vsh, dtype=float)
+
+    rq, fz = rqi(k, phie), fzi(k, phie)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        feature = np.log10(winland_r35(k, phie) if rt.get("method") == "r35" else fz)
+
+    source = np.full(n, "", dtype=object)
+    reservoir_only = bool(s["reservoir_only"])
+    with np.errstate(invalid="ignore"):
+        source[reservoir_only & ~np.isfinite(vsh_a)] = "x_nan"
+        source[~np.isfinite(k) | (k <= PERM_CLIP[0]) | (k >= PERM_CLIP[1])] = "x_perm"
+        source[~np.isfinite(phie) | (phie < s["min_phie"])] = "x_phie"
+        source[reservoir_only & (vsh_a >= float(p.get("vsh_cutoff", 0.4)))] = "x_vsh"
+    source[(source == "") & ~np.isfinite(feature)] = "x_nan"
+    eligible = source == ""
+
+    groups = _zone_groups(zone, index, rt)
+    rock = np.zeros(n, dtype=int)
+    margin = np.full(n, np.nan)
+    outside = np.zeros(n, dtype=bool)
+    for mask, rset in groups:
+        sel = mask & eligible
+        if not sel.any():
+            continue
+        r, m = classify(feature[sel], rset)
+        rock[sel], margin[sel] = r, m
+        rng = rset.get("feature_range")
+        if rng:
+            outside[sel] = (feature[sel] < rng[0] - RANGE_MARGIN) | (feature[sel] > rng[1] + RANGE_MARGIN)
+    log_rt = rock.copy()
+    source[eligible] = "log"
+
+    core = p.get("rock_core") or {}
+    core_depth = np.asarray(core.get("depth") or [], dtype=float)
+    core_rt = np.asarray(core.get("rt") or [], dtype=int)
+    if s["use_core_labels"] and len(core_depth) and "DEPTH" in data.columns:
+        label, hit = _nearest_core(np.asarray(data["DEPTH"], dtype=float), core_depth, core_rt,
+                                   float(rt.get("core_max_dist") or DEFAULT_CORE_MAX_DIST))
+        hit &= eligible & (label > 0)
+        rock[hit] = label[hit]
+        source[hit] = "core"
+    if warnings is not None and not len(core_depth):
+        warnings.add("ROCK_TYPES_UNCORED",
+                     "No core labels for this well: rock types are log-derived with the "
+                     "project definitions.")
+
+    out = {"RQI": rq, "FZI": fz, "ROCK_TYPE": rock, "ROCK_TYPE_SOURCE": source,
+           "RT_MARGIN": margin}
+    if p.get("perm_primary") == "Rock type" or s.get("perm_rt_column"):
+        fz_rt = np.full(n, np.nan)
+        for mask, rset in groups:
+            table = np.array([np.nan if v is None else float(v) for v in (rset.get("fzi") or [])])
+            sel = mask & (rock > 0) & (rock <= len(table))
+            fz_rt[sel] = table[rock[sel] - 1]
+        with np.errstate(invalid="ignore"):
+            out["PERM_RT"] = np.where(rock > 0, perm_from_fzi(fz_rt, phie), np.nan)
+    if s["r35_column"]:
+        out["R35"] = winland_r35(k, phie)
+    for name, values in out.items():
+        res[name] = pd.Series(values, index=index)
+    calc.rock_type_info = pd.DataFrame({"log_rt": log_rt, "outside": outside}, index=index)
+
+
+def _positive_geomean(values) -> Optional[float]:
+    v = np.asarray(values, dtype=float)
+    v = v[np.isfinite(v) & (v > 0)]
+    return float(np.exp(np.mean(np.log(v)))) if len(v) else None
+
+
+def rock_type_rows(results, vsh, phie, sw, dz, labels, rt, info=None, perm_col="PERM_TIMUR",
+                   hcpv_col="dHCPV_NET_PAY") -> dict:
+    """``summary["rock_types"]``: pay, HCPV and counts per rock type (spec 6.5).
+
+    ``results`` is the run's result frame (flags, ROCK_TYPE, ROCK_TYPE_SOURCE, RT_MARGIN,
+    ``hcpv_col``); ``vsh``/``phie``/``sw`` the series the pay flags were made from; ``dz`` the
+    per-sample thickness (array or scalar, as for the well totals); ``labels`` the zone labels
+    or None; ``rt`` the resolved definitions; ``info`` the concatenated
+    ``calc.rock_type_info``; ``perm_col`` the primary permeability column.
+    Every sample is in exactly one of ``by_rt`` and ``unassigned``, so the sums of net pay and
+    HCPV over both equal the well totals. ``pct_core`` is a percentage of the group's samples.
+    """
+    s = _settings(rt.get("settings"))
+    n = len(results)
+    rock = np.asarray(results["ROCK_TYPE"].fillna(0), dtype=int)
+    source = np.asarray(results["ROCK_TYPE_SOURCE"].fillna("x_nan"), dtype=object)
+    margin = np.asarray(results["RT_MARGIN"], dtype=float)
+    gross, res_f, pay_f = (np.asarray(results[c]).astype(bool)
+                           for c in ("GROSS_SAND_FLAG", "NET_RES_FLAG", "NET_PAY_FLAG"))
+    vsh_a, phie_a, sw_a = (np.asarray(x, dtype=float) for x in (vsh, phie, sw))
+    dz_a = np.broadcast_to(np.asarray(dz, dtype=float), (n,))
+    dh = (np.asarray(results[hcpv_col], dtype=float) if hcpv_col in results.columns
+          else np.zeros(n))
+    perm = (np.asarray(results[perm_col], dtype=float) if perm_col in results.columns
+            else np.full(n, np.nan))
+    base = rt.get("set") or {}
+    zsets = rt.get("zone_sets") or {}
+    n_types = max([int(x.get("n_rt") or len(x.get("fzi") or [])) for x in _definition_sets(rt)]
+                  + [0])
+
+    def measures(mask, code, rset):
+        row = {"rt": int(code), "samples": int(mask.sum())}
+        row.update(pay_summary(gross[mask], res_f[mask], pay_f[mask], vsh_a[mask], phie_a[mask],
+                               sw_a[mask], dz_a[mask]))
+        row["hcpv_net_pay"] = float(dh[mask].sum())
+        row["perm_geomean"] = _positive_geomean(perm[mask & pay_f])
+        fzi_list = (rset or {}).get("fzi") or []
+        row["fzi"] = (float(fzi_list[code - 1])
+                      if 1 <= code <= len(fzi_list) and fzi_list[code - 1] is not None else None)
+        count = int(mask.sum())
+        row["pct_core"] = float(100.0 * (mask & (source == "core")).sum() / count) if count else 0.0
+        return row
+
+    by_rt = [measures(rock == c, c, base) for c in range(1, n_types + 1)]
+    unassigned = measures(rock == 0, 0, None)
+    by_zone = []
+    if labels is not None:
+        zl = np.asarray(labels, dtype=object)
+        depth = np.asarray(results["DEPTH"], dtype=float) if "DEPTH" in results.columns else None
+        zones = list(pd.unique(zl[pd.notna(zl)]))
+        if depth is not None:
+            zones.sort(key=lambda z: np.nanmin(depth[zl == z]))
+        for z in zones:
+            zmask = zl == z
+            for c in sorted(set(rock[zmask].tolist())):
+                row = {"zone": z}
+                row.update(measures(zmask & (rock == c), c, zsets.get(z) or base))
+                by_zone.append(row)
+    assigned = rock > 0
+    counts = {c: int((source == c).sum()) for c in SOURCE_CODES}
+    with np.errstate(invalid="ignore"):
+        counts["near_boundary"] = int((assigned & (margin < s["margin_min"])).sum())
+    counts["outside_range"] = int(info["outside"].sum()) if info is not None else 0
+    counts["perm_rt_missing"] = 0
+    if "PERM_RT" in results.columns:
+        counts["perm_rt_missing"] = int(
+            (assigned & ~np.isfinite(np.asarray(results["PERM_RT"], dtype=float))).sum())
+
+    agree = {"n": 0, "fraction": None, "confusion": [[0] * n_types for _ in range(n_types)]}
+    if info is not None and n_types:
+        log_rt = np.asarray(info["log_rt"], dtype=int)
+        sel = ((source == "core") & (log_rt >= 1) & (rock >= 1)
+               & (rock <= n_types) & (log_rt <= n_types))
+        if sel.any():
+            flat = np.bincount((rock[sel] - 1) * n_types + (log_rt[sel] - 1),
+                               minlength=n_types * n_types)
+            agree["confusion"] = flat.reshape(n_types, n_types).astype(int).tolist()
+            agree["n"] = int(sel.sum())
+            agree["fraction"] = float((rock[sel] == log_rt[sel]).mean())
+
+    notes = [str(rt["basis"])] if rt.get("basis") else []
+    if counts["core"] == 0:
+        notes.append("Rock types are log-derived with the project definitions (no core label used).")
+    out = {"method": rt.get("method", "fzi"), "fit_scope": rt.get("fit_scope"),
+           "basis": rt.get("basis"), "by_rt": by_rt, "unassigned": unassigned,
+           "by_zone_rt": by_zone, "counts": counts, "agreement": agree, "notes": notes}
+    if s["lorenz"]:
+        pick = res_f & np.isfinite(perm) & np.isfinite(phie_a)
+        depth = (np.asarray(results["DEPTH"], dtype=float) if "DEPTH" in results.columns
+                 else np.arange(n, dtype=float))
+        coefficient = lorenz_coefficient(phie_a[pick], perm[pick], dz_a[pick])
+        out["lorenz"] = {
+            "basis": perm_col,
+            "coefficient": float(coefficient) if np.isfinite(coefficient) else None,
+            "units": smlp_units(smlp(depth[pick], phie_a[pick], perm[pick], dz_a[pick]))}
+    return out
