@@ -31,22 +31,30 @@ def _load_golden(name):
     return results, summary
 
 
+def _assert_value_equal(a, e, where):
+    if isinstance(e, dict):
+        _assert_summary_equal(a, e, where)
+    elif isinstance(e, list):
+        if any(isinstance(x, (dict, float, list)) for x in e):
+            # Rows of dicts can hold NaN (an empty rock type), which == never matches.
+            assert len(a) == len(e), where
+            for i, (x, y) in enumerate(zip(a, e)):
+                _assert_value_equal(x, y, f"{where}[{i}]")
+        else:
+            assert list(a) == e, where
+    elif isinstance(e, float):
+        if math.isnan(e):
+            assert a is None or (isinstance(a, float) and math.isnan(a)), where
+        else:
+            assert a == pytest.approx(e, rel=1e-12, abs=1e-15), where
+    else:
+        assert a == e, where
+
+
 def _assert_summary_equal(actual, expected, path="summary"):
     assert set(actual) == set(expected), f"{path}: keys {set(actual) ^ set(expected)}"
     for key in expected:
-        a, e = actual[key], expected[key]
-        where = f"{path}.{key}"
-        if isinstance(e, dict):
-            _assert_summary_equal(a, e, where)
-        elif isinstance(e, list):
-            assert list(a) == e, where
-        elif isinstance(e, float):
-            if math.isnan(e):
-                assert a is None or (isinstance(a, float) and math.isnan(a)), where
-            else:
-                assert a == pytest.approx(e, rel=1e-12, abs=1e-15), where
-        else:
-            assert a == e, where
+        _assert_value_equal(actual[key], expected[key], f"{path}.{key}")
 
 
 def _assert_matches_golden(name, results, summary):
