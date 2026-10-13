@@ -36,6 +36,20 @@ class FakeResult:
     basis: dict = field(default_factory=dict)
     config_hash: str = ""
     keys: tuple = ()
+    # Empty result fields, so the Uncertainty tab can render this fake.
+    n: int = 0
+    seed: int = 0
+    sampling: str = "lhs"
+    elapsed_s: float = 0.0
+    names: tuple = ()
+    wells: list = field(default_factory=list)
+    zones: dict = field(default_factory=dict)
+    values: dict = field(default_factory=dict)
+    deterministic: dict = field(default_factory=dict)
+    stats: dict = field(default_factory=dict)
+    tornado: dict = field(default_factory=dict)
+    rank_corr: dict = field(default_factory=dict)
+    clipped: dict = field(default_factory=dict)
 
 
 @dataclass

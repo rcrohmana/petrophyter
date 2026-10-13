@@ -31,6 +31,7 @@ from .widgets.parameter_groups import (
     SwirEstimationGroup, SwModelsGroup, TemperatureGroup, VShaleParamsGroup,
 )
 from .widgets.scope_bar import ScopeBar
+from .widgets.uncertainty_params import UncertaintyParamsPage
 from .widgets.zone_grid import ZoneParamGrid
 from themes.helpers import set_status
 from themes.icon_loader import get_icon
@@ -41,6 +42,7 @@ PAGES = (
     ("scope", "Analysis Scope", "Analysis", "crosshair"),
     ("curves", "Curve Mapping", "Analysis", "spline"),
     ("core", "Core Matching", "Analysis", "cylinder"),
+    ("uncertainty", "Uncertainty", "Analysis", "sigma"),
     ("porosity", "Porosity Method", "Parameters", "percent"),
     ("vshale", "VShale", "Parameters", "mountain"),
     ("cutoffs", "Cutoffs", "Parameters", "scissors"),
@@ -66,6 +68,7 @@ class ParametersWindow(QDialog):
     calculate_perm_clicked = pyqtSignal()
     revert_applied = pyqtSignal(str)   # well key whose last-run parameters were restored
     apply_perm_clicked = pyqtSignal()
+    uncertainty_config_changed = pyqtSignal()   # Monte Carlo setup edited (not a scoped parameter)
 
     def __init__(self, model, parent=None):
         # A normal dialog frame, not Qt.Tool: the tool caption's close button sits flush with
@@ -112,6 +115,8 @@ class ParametersWindow(QDialog):
         self.swir_params_widget = SwirEstimationGroup()
         self.gas_correction_widget = GasCorrectionGroup()
         self.scope_bar = ScopeBar(self.model)
+        self.uncertainty_page = UncertaintyParamsPage(self.model)
+        self.uncertainty_page.config_changed.connect(self.uncertainty_config_changed.emit)
         self.zone_grid = ZoneParamGrid(self.model)
         # Core matching (was under the sidebar's Core Data group)
         self.core_unit_combo = QComboBox()
@@ -169,6 +174,7 @@ class ParametersWindow(QDialog):
             "perm": self._page(("Coefficients", self.perm_params_widget),
                                ("Swirr estimation", self.swir_params_widget)),
             "gas": self._page(self.gas_correction_widget),
+            "uncertainty": self._page(self.uncertainty_page),
             "zones": self._page(self.zone_grid),
         }
         self.page_list = QListWidget()
@@ -251,6 +257,10 @@ class ParametersWindow(QDialog):
         for key, (row, _index) in self._rows.items():
             self.page_list.item(row).setIcon(get_icon(icons[key]))
         self.zone_grid.refresh_theme()
+
+    def refresh_uncertainty(self):
+        """Show the project's Monte Carlo setup (session load, New Project)."""
+        self.uncertainty_page.load_from_config()
 
     def set_core_available(self, available: bool):
         self.core_unit_combo.setEnabled(available)

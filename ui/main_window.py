@@ -64,6 +64,7 @@ from .tabs.log_display_tab import LogDisplayTab
 from .tabs.diagnostics_tab import DiagnosticsTab
 from .tabs.rock_typing_tab import RockTypingTab
 from .tabs.summary_tab import SummaryTab
+from .tabs.uncertainty_tab import UncertaintyTab
 from .tabs.export_tab import ExportTab
 
 from modules.formation_tops import FormationTops, extend_last_bottom
@@ -247,6 +248,7 @@ class MainWindow(QMainWindow):
         self.diag_tab = DiagnosticsTab(self.model)
         self.rock_tab = RockTypingTab(self.model)
         self.summary_tab = SummaryTab(self.model)
+        self.uncertainty_tab = UncertaintyTab(self.model)
         self.export_tab = ExportTab(self.model)
 
         self.tab_widget.addTab(self.qc_tab, "Data QC")
@@ -255,6 +257,7 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.diag_tab, "Diagnostics")
         self.tab_widget.addTab(self.rock_tab, "Rock Typing")
         self.tab_widget.addTab(self.summary_tab, "Summary")
+        self.tab_widget.addTab(self.uncertainty_tab, "Uncertainty")
         self.tab_widget.addTab(self.export_tab, "Export")
         # Plot tabs redraw only while visible; the others are marked dirty
         # and catch up when they become current.
@@ -318,6 +321,9 @@ class MainWindow(QMainWindow):
 
         self.params_window.parameters_updated.connect(self._on_parameters_updated)
         self.params_window.revert_applied.connect(self._on_params_reverted)
+        self.params_window.uncertainty_config_changed.connect(self._refresh_uncertainty_actions)
+        self.uncertainty_runner.started.connect(self._refresh_uncertainty_actions)
+        self.uncertainty_runner.finished.connect(self._refresh_uncertainty_actions)
         self.model.parameters_changed.connect(self._on_parameters_updated)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
 
@@ -359,6 +365,20 @@ class MainWindow(QMainWindow):
         self.uncertainty_runner.completed.connect(self._on_uncertainty_completed)
         self.uncertainty_runner.failed.connect(self._on_uncertainty_failed)
         self.uncertainty_runner.finished.connect(self._on_uncertainty_finished)
+        # The Uncertainty tab draws lazily (when visible); stale checks are cheap hash compares.
+        tab = self.uncertainty_tab
+        self.uncertainty_result_changed.connect(tab.update_display)
+        self.uncertainty_runner.started.connect(lambda *_: tab.set_running(True))
+        self.uncertainty_runner.finished.connect(lambda *_: tab.set_running(False))
+        self.uncertainty_runner.progress.connect(tab.set_progress)
+        tab.run_requested.connect(lambda: self.run_uncertainty())
+        tab.cancel_requested.connect(lambda: self.cancel_uncertainty())
+        for signal in (self.model.parameters_changed, self.model.scoped_params_changed,
+                       self.params_window.uncertainty_config_changed):
+            signal.connect(lambda *_: tab.refresh_stale())
+        # Adding or removing a well can drop the result (Project clears it); update_display
+        # notices that and is otherwise a no-op.
+        self.model.project.wells_changed.connect(lambda *_: tab.update_display())
         self.diag_tab.goto_requested.connect(self._on_goto_target)
 
         # Merge service signals
@@ -556,6 +576,8 @@ class MainWindow(QMainWindow):
         act("load_session", "Load Session…", "folder-input", "Ctrl+Shift+O", self._on_load_session)
         act("run_analysis", "Run Analysis", "play", "F5", self._on_run_analysis)
         act("run_all", "Run All Wells", "layers", "Ctrl+Shift+R", self._on_run_all)
+        act("run_uncertainty", "Run Uncertainty…", "sigma", None, self.run_uncertainty)
+        act("stop_uncertainty", "Stop Monte Carlo", "circle-stop", None, self.cancel_uncertainty)
         # Esc is bound to the action, which is enabled only while a run is active.
         act("stop_analysis", "Stop analysis", "circle-stop", "Esc", self._on_stop_analysis)
         act("toggle_browser", "Data Browser", "panel-left", "Ctrl+B",
@@ -580,6 +602,8 @@ class MainWindow(QMainWindow):
         self.actions_["run_analysis"].setEnabled(False)
         self.actions_["run_all"].setEnabled(False)
         self.actions_["stop_analysis"].setEnabled(False)
+        self.actions_["run_uncertainty"].setEnabled(False)
+        self.actions_["stop_uncertainty"].setEnabled(False)
         self.actions_["save_merged"].setEnabled(False)
         self.actions_["toggle_browser"].setChecked(True)
 
@@ -600,6 +624,8 @@ class MainWindow(QMainWindow):
         analysis = bar.addMenu("&Analysis")
         analysis.addAction(self.actions_["run_analysis"])
         analysis.addAction(self.actions_["run_all"])
+        analysis.addAction(self.actions_["run_uncertainty"])
+        analysis.addAction(self.actions_["stop_uncertainty"])
         analysis.addAction(self.actions_["stop_analysis"])
         self._menus["analysis"] = analysis
         view = bar.addMenu("&View")
@@ -719,6 +745,7 @@ class MainWindow(QMainWindow):
         self._sync_stale_label()
         for key in changed:
             project.well_updated.emit(key)
+        self.uncertainty_tab.refresh_stale()
 
     def _on_content_changed(self, *_):
         """Wells, tops, core or merge data changed (not while a session is being installed)."""
@@ -934,6 +961,7 @@ class MainWindow(QMainWindow):
             getattr(self, "diag_tab", None),
             getattr(self, "rock_tab", None),
             getattr(self, "summary_tab", None),
+            getattr(self, "uncertainty_tab", None),
             getattr(self, "export_tab", None),
         ]:
             if tab and hasattr(tab, "refresh_theme"):
@@ -1215,9 +1243,31 @@ class MainWindow(QMainWindow):
         # has already rebuilt itself for this change.
         self._refresh_active_well_ui(browser_fresh=True, rock_well_only=True)
 
+    def _refresh_uncertainty_page(self):
+        """The project's Monte Carlo setup was replaced (session load, New Project)."""
+        self.params_window.refresh_uncertainty()
+        self._refresh_uncertainty_actions()
+
+    def _refresh_uncertainty_actions(self, *_args):
+        """Run Uncertainty needs an enabled distribution, no MC run and no batch; Stop needs a run."""
+        mc_running = self.uncertainty_runner.is_running()
+        if not self.model.project.uncertainty.enabled_names():
+            tip = "Enable a distribution on Parameters → Uncertainty"
+        elif mc_running:
+            tip = "Monte Carlo is running"
+        elif self.batch_runner.is_running():
+            tip = "Wait for the analysis to finish"
+        else:
+            tip = ""
+        run = self.actions_["run_uncertainty"]
+        run.setEnabled(not tip)
+        run.setToolTip(tip or "Run the Monte Carlo uncertainty analysis")
+        self.actions_["stop_uncertainty"].setEnabled(mc_running)
+
     def _refresh_run_action(self):
         """Run is disabled only while the ACTIVE well is running; other wells may run."""
         self.actions_["stop_analysis"].setEnabled(self.batch_runner.is_running())
+        self._refresh_uncertainty_actions()
         self.rock_tab.set_batch_running(self.batch_runner.is_running())
         if self._busy:
             return  # _set_busy(None) refreshes
@@ -2244,6 +2294,7 @@ class MainWindow(QMainWindow):
                 notes = session_level_notes(session_data)
                 notes += self.session_service.restore_wells(self.model, session_data)
                 self._update_ui_from_model()
+                self._refresh_uncertainty_page()
             finally:
                 self._session_swap = False
             # A 1.x file holds parameters only: the open wells stay, so the project
@@ -2345,6 +2396,7 @@ class MainWindow(QMainWindow):
                 self._bulk_loading = False
             self._update_ui_from_model()
             self._refresh_active_well_ui()
+            self._refresh_uncertainty_page()
         finally:
             self._session_swap = False
         self._mark_session_loaded(self._restore_path)
@@ -2382,6 +2434,7 @@ class MainWindow(QMainWindow):
         self.batch_runner.cancel()
         self._discard_uncertainty()
         self.model.reset()
+        self._refresh_uncertainty_page()
         self.model.session_path = None
         self.model.mark_clean()
         self._refresh_window_title()
