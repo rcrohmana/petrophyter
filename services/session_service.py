@@ -15,6 +15,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
+from modules.uncertainty import UncertaintyConfig, config_from_dict, config_to_dict
 from version import APP_VERSION, version_tuple
 
 logger = logging.getLogger(__name__)
@@ -138,8 +139,15 @@ def _major(version) -> Optional[int]:
         return None
 
 
+def _uncertainty_in_use(project) -> bool:
+    cfg = getattr(project, "uncertainty", None)
+    dists = getattr(cfg, "distributions", None) or {}
+    return any(getattr(d, "enabled", False) for d in dists.values())
+
+
 def session_version_for(project_or_model) -> str:
-    """"2.2" when rock typing is on or the project holds rock types, else "2.1".
+    """"2.3" when an uncertainty distribution is enabled; "2.2" when rock typing is on or the
+    project holds rock types; else "2.1".
 
     Accepts an ``AppModel`` or a ``Project``, so a session that does not use the
     feature stays readable by the previous release.
@@ -147,6 +155,8 @@ def session_version_for(project_or_model) -> str:
     project = getattr(project_or_model, "project", project_or_model)
     in_use = (bool(getattr(project_or_model, "rock_typing_enabled", False))
               or bool(getattr(project, "rock_types", None)))
+    if _uncertainty_in_use(project):
+        return "2.3"
     return "2.2" if in_use else "2.1"
 
 
@@ -524,7 +534,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.2"
+    SESSION_VERSION = "2.3"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
@@ -645,6 +655,12 @@ class SessionService(QObject):
                     model.project.rock_types = copy.deepcopy(
                         session_data.get("rock_types") or None
                     )
+                    try:
+                        model.project.uncertainty = config_from_dict(
+                            session_data.get("uncertainty"))
+                    except Exception:
+                        model.project.uncertainty = UncertaintyConfig()
+                    model.project.uncertainty_result = None
                 return True
 
             self._upgrade_legacy(session_data)
@@ -1113,4 +1129,7 @@ class SessionService(QObject):
         if rock_types:
             # Written only when the project holds rock types, so a 2.1 file stays as before.
             data["rock_types"] = rock_types
+        if project is not None and _uncertainty_in_use(project):
+            # Written only when a distribution is enabled; results are never saved.
+            data["uncertainty"] = config_to_dict(project.uncertainty)
         return _json_safe(data)

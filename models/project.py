@@ -15,6 +15,7 @@ from typing import Dict, Iterator, List, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from modules.las_utils import normalize_well_name, well_key
+from modules.uncertainty import UncertaintyConfig
 
 
 def default_curve_mapping() -> Dict[str, str]:
@@ -169,6 +170,9 @@ class Project(QObject):
         # Rock-type definitions (rock typing); None until the feature holds any.
         self.rock_types_rev = 0
         self.rock_types: Optional[dict] = None
+        # Monte Carlo uncertainty: the saved setup, and the latest run (never saved).
+        self.uncertainty = UncertaintyConfig()
+        self.uncertainty_result = None
 
     # ---- access ----
     def __len__(self) -> int:
@@ -219,6 +223,8 @@ class Project(QObject):
             dataset.key = make_well_key(dataset.well_info, dataset.las_filename)
         if dataset.key in self._wells and not replace:
             dataset.key = self.unique_key(dataset.key)
+        if dataset.key in self._wells:
+            self.uncertainty_result = None    # a replaced well makes the last run stale
         self._wells[dataset.key] = dataset
         self.wells_changed.emit()
         if activate or self._active_key is None:
@@ -229,6 +235,7 @@ class Project(QObject):
         if key not in self._wells:
             return
         del self._wells[key]
+        self.uncertainty_result = None
         self.wells_changed.emit()
         if key == self._active_key:
             self._active_key = None
@@ -270,5 +277,7 @@ class Project(QObject):
         self._active_key = None
         self.zone_params = {}
         self.rock_types = None
+        self.uncertainty = UncertaintyConfig()
+        self.uncertainty_result = None
         self.wells_changed.emit()
         self.active_well_changed.emit("")
