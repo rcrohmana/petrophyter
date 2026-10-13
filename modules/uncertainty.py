@@ -12,12 +12,21 @@ Convention: P90 is the low case (exceeded with 90 % probability), P10 the high c
 from __future__ import annotations
 
 import math
+import time
 import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 from scipy import stats
+
+from modules.issue_codes import IssueLog
+from modules.las_utils import mask_nonpositive
+from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
+from modules.pipeline import (
+    PARAM_DEFAULTS, PipelineError, _filter_formations, _primary_sw, run_pipeline,
+)
 
 # Canonical parameter order: sampling columns follow this order, never the UI order.
 PARAM_ORDER: Tuple[str, ...] = ("a", "m", "n", "rw", "rsh", "vsh_cutoff", "phi_cutoff", "sw_cutoff")
@@ -426,3 +435,386 @@ def config_from_dict(d: Optional[Dict[str, Any]]) -> UncertaintyConfig:
             except (TypeError, ValueError):
                 continue
     return cfg
+
+
+# ---------------------------------------------------------------------------------------------
+# Kernel: freeze a well once, evaluate any number of realisations
+# ---------------------------------------------------------------------------------------------
+
+METRICS: Tuple[str, ...] = ("hcpv_net_pay", "hcpv_net_res", "net_pay", "net_res",
+                            "avg_phie_pay", "avg_sw_pay", "phih_pay")
+TORNADO_METRICS: Tuple[str, ...] = ("hcpv_net_pay", "net_pay")
+TORNADO_QUANTILES = (0.10, 0.90)
+
+
+class UncertaintyExcluded(Exception):
+    """A well that cannot be evaluated (no RT, no PHIE, pipeline failure); str() is the reason."""
+
+
+@dataclass
+class _Segment:
+    """One saturation segment: its samples, resolved parameters and a private calculator."""
+
+    positions: np.ndarray
+    params: Dict[str, Any]
+    rw: float
+    rsh: float
+    rsh_auto: bool
+    tctx: Any
+    has_rt: bool
+    data: pd.DataFrame
+    vsh_s: pd.Series
+    vsh: np.ndarray
+    phie: np.ndarray
+    calc: PetrophysicsCalculator
+    sw_base: Optional[np.ndarray] = None
+
+
+@dataclass
+class FrozenWell:
+    """Everything one well needs for any number of realisations.
+
+    ``base_summary`` is the summary of the base ``run_pipeline`` call (the deterministic column).
+    ``zones`` are the zone labels in depth order. The remaining fields are internals; each
+    segment holds its own calculator, so one FrozenWell must not be evaluated from two threads.
+    """
+
+    key: str
+    name: str
+    base_summary: dict
+    zones: list
+    segments: list = field(default_factory=list, repr=False)
+    dz: Any = field(default=None, repr=False)
+    vsh: Any = field(default=None, repr=False)
+    phie: Any = field(default=None, repr=False)
+    zone_idx: Dict[str, np.ndarray] = field(default_factory=dict, repr=False)
+    curve_mapping: Dict[str, str] = field(default_factory=dict, repr=False)
+
+
+def _primary_sw_values(seg: _Segment, frozen_mapping, sp, rw, rsh, warn) -> np.ndarray:
+    sw, _, _, _ = _primary_sw(seg.calc, seg.data, frozen_mapping, sp, seg.vsh_s, rw, rsh,
+                              seg.tctx, warn, seg.rsh_auto, only_primary=True)
+    return np.asarray(sw, dtype=float)
+
+
+def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> FrozenWell:
+    """Run the pipeline once with capture and keep what any realisation needs.
+
+    Raises UncertaintyExcluded when the well cannot be evaluated: no RT, no PHIE, or a
+    pipeline failure. Inputs are not modified.
+    """
+    capture: list = []
+    try:
+        results, summary = run_pipeline(data, curve_mapping, params, None, formation_tops,
+                                        capture=capture)
+    except PipelineError as exc:
+        raise UncertaintyExcluded(f"analysis failed: {exc}") from exc
+    if not capture or not any(b.has_rt for b in capture):
+        raise UncertaintyExcluded("no RT curve")
+    if not any(np.isfinite(b.phie).any() for b in capture):
+        raise UncertaintyExcluded("no effective porosity (PHIE)")
+
+    # The data the pipeline's segments saw: non-positive resistivity, density and slowness are
+    # NaN, then the formation filter (positions in the capture refer to these rows).
+    p = {**PARAM_DEFAULTS, **params}
+    filt = data.copy()
+    for logical in ("RT", "RHOB", "DT"):
+        mask_nonpositive(filt, [curve_mapping.get(logical, logical)])
+    filt = _filter_formations(filt, p, formation_tops)
+    n = len(filt)
+    if n != len(results):
+        raise UncertaintyExcluded("internal: sample count differs from the pipeline result")
+
+    if "DEPTH" in filt.columns:
+        dz = depth_increments(filt["DEPTH"]).to_numpy(dtype=float)
+    else:
+        dz = np.full(n, 0.1)
+
+    vsh_all = np.full(n, np.nan)
+    phie_all = np.full(n, np.nan)
+    segments: List[_Segment] = []
+    for b in capture:
+        seg_data = filt.iloc[b.positions]
+        calc = PetrophysicsCalculator(seg_data)
+        calc.results["PHIE"] = pd.Series(b.phie, index=seg_data.index)
+        calc.results["PHIT"] = pd.Series(b.phit, index=seg_data.index)
+        seg = _Segment(
+            positions=np.asarray(b.positions, dtype=np.intp), params=dict(b.params),
+            rw=b.rw, rsh=b.rsh, rsh_auto=bool(b.rsh_auto), tctx=b.tctx, has_rt=bool(b.has_rt),
+            data=seg_data, vsh_s=pd.Series(b.vsh, index=seg_data.index),
+            vsh=np.asarray(b.vsh, dtype=float), phie=np.asarray(b.phie, dtype=float), calc=calc)
+        vsh_all[seg.positions] = seg.vsh
+        phie_all[seg.positions] = seg.phie
+        if seg.has_rt:
+            sp = seg.params
+            seg.sw_base = _primary_sw_values(seg, curve_mapping, sp, seg.rw, seg.rsh, IssueLog())
+        segments.append(seg)
+
+    zones = [row["zone"] for row in summary.get("zones") or []]
+    zone_idx: Dict[str, np.ndarray] = {}
+    if zones:
+        if "ZONE" not in results.columns:
+            raise UncertaintyExcluded("internal: zoned summary without a ZONE column")
+        labels = results["ZONE"].to_numpy()
+        for z in zones:
+            zone_idx[z] = np.flatnonzero(labels == z)
+    return FrozenWell(key=key, name=name, base_summary=summary, zones=zones, segments=segments,
+                      dz=dz, vsh=vsh_all, phie=phie_all, zone_idx=zone_idx,
+                      curve_mapping=dict(curve_mapping))
+
+
+def _scope_metrics(vsh, phie, sw, dz, gross, res, pay, hcpv_pay_d, hcpv_res_d, idx) -> Dict[str, float]:
+    """Metrics of one scope (idx None = whole well). pay_summary does the thickness/averages."""
+    if idx is None:
+        ps = pay_summary(gross, res, pay, vsh, phie, sw, dz)
+        # Well level: last value of the cumulative, as the pipeline reads it.
+        hp = float(np.cumsum(hcpv_pay_d)[-1]) if hcpv_pay_d.size else 0.0
+        hr = float(np.cumsum(hcpv_res_d)[-1]) if hcpv_res_d.size else 0.0
+    else:
+        ps = pay_summary(gross[idx], res[idx], pay[idx], vsh[idx], phie[idx], sw[idx], dz[idx])
+        hp = float(hcpv_pay_d[idx].sum())
+        hr = float(hcpv_res_d[idx].sum())
+    return {"hcpv_net_pay": hp, "hcpv_net_res": hr, "net_pay": ps["net_pay"],
+            "net_res": ps["net_reservoir"], "avg_phie_pay": ps["avg_phie_pay"],
+            "avg_sw_pay": ps["avg_sw_pay"], "phih_pay": ps["phih_pay"]}
+
+
+def evaluate(frozen: FrozenWell, theta: Dict[str, float],
+             modes: Optional[Dict[str, str]] = None) -> dict:
+    """One realisation. ``theta`` = {name: offset} for the varied parameters (missing = 0).
+
+    ``modes`` ({name: "relative" | "additive"}) defaults to DEFAULT_MODES; run_monte_carlo passes
+    the configured modes. Returns {"well": metrics, "zones": {zone: metrics},
+    "clipped": {name: bool_any_segment_clipped}}.
+    """
+    mode_of = {**DEFAULT_MODES, **(modes or {})}
+    theta = {k: float(v) for k, v in theta.items() if k in BOUNDS}
+    clipped = {k: False for k in theta}
+    saturation_varied = any(k in SATURATION_PARAMS for k in theta)
+    warn = IssueLog()
+
+    def apply(name, base):
+        value, was = apply_offset(name, base, theta[name], mode_of[name])
+        if was:
+            clipped[name] = True
+        return value
+
+    n = len(frozen.dz)
+    sw_all = np.full(n, np.nan)
+    gross = np.zeros(n, dtype=bool)
+    res = np.zeros(n, dtype=bool)
+    pay = np.zeros(n, dtype=bool)
+    for seg in frozen.segments:
+        sp = seg.params
+        c_v = apply("vsh_cutoff", sp["vsh_cutoff"]) if "vsh_cutoff" in theta else sp["vsh_cutoff"]
+        c_phi = apply("phi_cutoff", sp["phi_cutoff"]) if "phi_cutoff" in theta else sp["phi_cutoff"]
+        c_sw = apply("sw_cutoff", sp["sw_cutoff"]) if "sw_cutoff" in theta else sp["sw_cutoff"]
+        if not seg.has_rt:
+            sw = np.ones(len(seg.positions))
+        elif not saturation_varied:
+            sw = seg.sw_base
+        else:
+            p2 = dict(sp)
+            for nm in ("a", "m", "n"):
+                if nm in theta:
+                    p2[nm] = apply(nm, sp[nm])
+            rw = apply("rw", seg.rw) if "rw" in theta else seg.rw
+            rsh = apply("rsh", seg.rsh) if "rsh" in theta else seg.rsh
+            sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn)
+        pos = seg.positions
+        g = seg.vsh < c_v
+        r = g & (seg.phie > c_phi)
+        pay_seg = r & (sw < c_sw)
+        sw_all[pos] = sw
+        gross[pos], res[pos], pay[pos] = g, r, pay_seg
+
+    with np.errstate(invalid="ignore"):
+        frac = np.clip(frozen.phie * (1.0 - sw_all), 0.0, 1.0)
+        d_pay = np.nan_to_num(np.where(pay, frac, 0.0) * frozen.dz, nan=0.0)
+        d_res = np.nan_to_num(np.where(res, frac, 0.0) * frozen.dz, nan=0.0)
+    args = (frozen.vsh, frozen.phie, sw_all, frozen.dz, gross, res, pay, d_pay, d_res)
+    return {
+        "well": _scope_metrics(*args, None),
+        "zones": {z: _scope_metrics(*args, frozen.zone_idx[z]) for z in frozen.zones},
+        "clipped": clipped,
+    }
+
+
+# ---------------------------------------------------------------------------------------------
+# Aggregation and Monte Carlo
+# ---------------------------------------------------------------------------------------------
+
+def aggregate_field(well_arrays: List[Dict[str, np.ndarray]]) -> Dict[str, np.ndarray]:
+    """Field vectors from per-well metric vectors (same rule as export_service.wells_summary_frame).
+
+    Sums for HCPV and thickness; average PHIE weighted by net pay; average Sw weighted by phih_pay,
+    falling back to the net pay weights in a realisation where no well has phih_pay > 0; wells
+    with an undefined average (or zero weight) are skipped.
+    """
+    stack = {m: np.vstack([np.atleast_1d(w[m]).astype(float) for w in well_arrays]) for m in METRICS}
+    out = {m: stack[m].sum(axis=0) for m in ("hcpv_net_pay", "hcpv_net_res", "net_pay",
+                                              "net_res", "phih_pay")}
+    net = np.nan_to_num(stack["net_pay"], nan=0.0)
+    phih = np.nan_to_num(stack["phih_pay"], nan=0.0)
+    use_phih = (phih > 0).any(axis=0)
+
+    def weighted(avg, weights):
+        valid = np.isfinite(avg) & (weights > 0)
+        den = np.where(valid, weights, 0.0).sum(axis=0)
+        num = np.where(valid, np.nan_to_num(avg) * weights, 0.0).sum(axis=0)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(den > 0, num / np.where(den > 0, den, 1.0), np.nan)
+
+    out["avg_phie_pay"] = weighted(stack["avg_phie_pay"], net)
+    out["avg_sw_pay"] = weighted(stack["avg_sw_pay"], np.where(use_phih[None, :], phih, net))
+    return out
+
+
+@dataclass
+class MCResult:
+    config: dict
+    n: int
+    seed: int
+    sampling: str
+    names: tuple
+    offsets: np.ndarray
+    wells: list
+    excluded: list
+    zones: dict
+    values: dict
+    deterministic: dict
+    stats: dict
+    tornado: dict
+    rank_corr: dict
+    clipped: dict
+    warnings: list
+    elapsed_s: float
+    basis: dict = field(default_factory=dict)
+    config_hash: str = ""
+
+
+def _scope_series(frozen_wells, per_well_zone: Dict[Tuple[int, Optional[str]], Dict[str, np.ndarray]]):
+    """{(scope, metric): array} for field, wells and zones from per-(well, zone) metric arrays."""
+    out: Dict[Tuple[Any, str], np.ndarray] = {}
+    field_in = []
+    for wi, fw in enumerate(frozen_wells):
+        well = per_well_zone[(wi, None)]
+        field_in.append(well)
+        for m in METRICS:
+            out[(fw.key, m)] = well[m]
+        for z in fw.zones:
+            for m in METRICS:
+                out[((fw.key, z), m)] = per_well_zone[(wi, z)][m]
+    for m, v in aggregate_field(field_in).items():
+        out[("field", m)] = v
+    return out
+
+
+def _run_batch(frozen_wells, thetas: List[Dict[str, float]], modes, cancel=None, progress=None,
+               clipped_out: Optional[Dict[str, np.ndarray]] = None):
+    """Evaluate every theta for every well; returns per-(well, zone) metric arrays or None."""
+    n = len(thetas)
+    per = {}
+    for wi, fw in enumerate(frozen_wells):
+        for z in [None] + list(fw.zones):
+            per[(wi, z)] = {m: np.full(n, np.nan) for m in METRICS}
+    step = max(1, n // 100)
+    for i, theta in enumerate(thetas):
+        if cancel is not None and cancel():
+            return None
+        for wi, fw in enumerate(frozen_wells):
+            r = evaluate(fw, theta, modes)
+            for m, v in r["well"].items():
+                per[(wi, None)][m][i] = v
+            for z, zm in r["zones"].items():
+                for m, v in zm.items():
+                    per[(wi, z)][m][i] = v
+            if clipped_out is not None:
+                for name, was in r["clipped"].items():
+                    if was:
+                        clipped_out[name][i] = True
+        if progress is not None and ((i + 1) % step == 0 or i + 1 == n):
+            progress(i + 1, n)
+    return per
+
+
+def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=None,
+                    excluded: Optional[list] = None) -> Optional[MCResult]:
+    """Monte Carlo over the enabled distributions, single thread.
+
+    progress(done, total) is called at most about every 1 %; cancel() is polled before each
+    realisation and a cancelled run returns None. Draws are made before the loop, so results are
+    bit-identical for equal (cfg, wells). ``excluded`` ([{"key","name","reason"}]) is recorded in
+    the result and its warnings (wells the caller could not freeze). Raises ValueError for an
+    invalid configuration or an empty well list.
+    """
+    t0 = time.perf_counter()
+    errors = validate_config(cfg)
+    if errors:
+        raise ValueError("; ".join(errors))
+    frozen_wells = list(frozen_wells)
+    if not frozen_wells:
+        raise ValueError("No wells to evaluate.")
+    draws = sample_parameters(cfg)
+    names = draws.names
+    n = draws.offsets.shape[0]
+    modes = {nm: cfg.distributions[nm].mode for nm in names}
+    thetas = [dict(zip(names, row)) for row in draws.offsets.tolist()]
+    clipped_flags = {nm: np.zeros(n, dtype=bool) for nm in names}
+
+    per = _run_batch(frozen_wells, thetas, modes, cancel, progress, clipped_flags)
+    if per is None:
+        return None
+    values = _scope_series(frozen_wells, per)
+
+    # Deterministic column: theta = 0, the same kernel (equals each well's base summary).
+    det_per = _run_batch(frozen_wells, [{}], modes)
+    det_arrays = _scope_series(frozen_wells, det_per)
+    deterministic = {k: float(v[0]) for k, v in det_arrays.items()}
+
+    # Statistics; prob_zero is the share of realisations with zero net pay in the scope.
+    stats_out = {}
+    for (scope, metric), vec in values.items():
+        stats_out[(scope, metric)] = exceedance_stats(vec, zero_mask=values[(scope, "net_pay")] == 0)
+
+    # Tornado: one parameter at its own 10th / 90th marginal percentile, the rest at the base.
+    tornado: dict = {}
+    if names:
+        q_low, q_high = TORNADO_QUANTILES
+        t_thetas, inputs = [], {}
+        for nm in names:
+            lo = float(marginal_quantile(cfg.distributions[nm], q_low))
+            hi = float(marginal_quantile(cfg.distributions[nm], q_high))
+            inputs[nm] = (lo, hi)
+            t_thetas += [{nm: lo}, {nm: hi}]
+        t_per = _run_batch(frozen_wells, t_thetas, modes, cancel)
+        if t_per is None:
+            return None
+        t_values = _scope_series(frozen_wells, t_per)
+        for (scope, metric), vec in t_values.items():
+            if metric not in TORNADO_METRICS:
+                continue
+            outputs = {nm: (float(vec[2 * j]), float(vec[2 * j + 1]), inputs[nm][0], inputs[nm][1])
+                       for j, nm in enumerate(names)}
+            tornado[(scope, metric)] = tornado_rows(deterministic[(scope, metric)], outputs)
+
+    rank_corr = {m: rank_correlations(draws.offsets, names, values[("field", m)]) for m in METRICS}
+    clipped = {nm: float(clipped_flags[nm].mean()) for nm in names}
+
+    warns: List[str] = []
+    for metric, label in (("hcpv_net_pay", "HCPV net pay"), ("net_pay", "Net pay")):
+        msg = convergence_warning(values[("field", metric)])
+        if msg:
+            warns.append(f"{label}: {msg}")
+    excluded = [dict(e) for e in (excluded or [])]
+    for e in excluded:
+        warns.append(f"Well {e.get('name', e.get('key'))} excluded: {e.get('reason', '')}")
+    warns.append(f"Not varied: {NOT_VARIED}")
+
+    return MCResult(
+        config=config_to_dict(cfg), n=int(n), seed=int(cfg.seed), sampling=cfg.sampling,
+        names=tuple(names), offsets=draws.offsets,
+        wells=[{"key": fw.key, "name": fw.name} for fw in frozen_wells], excluded=excluded,
+        zones={fw.key: list(fw.zones) for fw in frozen_wells}, values=values,
+        deterministic=deterministic, stats=stats_out, tornado=tornado, rank_corr=rank_corr,
+        clipped=clipped, warnings=warns, elapsed_s=time.perf_counter() - t0)

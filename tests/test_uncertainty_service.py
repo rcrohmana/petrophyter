@@ -383,3 +383,38 @@ def test_close_prefers_analysis_question(window, monkeypatch):
     assert asked == ["Analysis is still running. Quit anyway?"]
     monkeypatch.setattr(window.batch_runner, "is_running", lambda: False)
     monkeypatch.setattr(window.uncertainty_runner, "is_running", lambda: False)
+
+
+# ---- real kernel, end to end ----
+
+def test_runner_with_the_real_kernel(qtbot, runner):
+    """No fakes: two wells run, a well without porosity logs is excluded with its reason."""
+    from tests.golden.cases import FULL_MAPPING
+    from tests.test_perf_multiwell import _well as _log
+
+    model = AppModel()
+    for i in range(2):
+        ds = WellDataset(f"WELL:R{i}", f"R{i}")
+        ds.las_data = _log(i).iloc[:400].reset_index(drop=True)
+        ds.curve_mapping = dict(FULL_MAPPING)
+        model.project.add_well(ds)
+    bare = WellDataset("WELL:BARE", "BARE")
+    bare.las_data = _log(9).iloc[:400][["DEPTH", "GR", "RT"]].reset_index(drop=True)
+    bare.curve_mapping = {"GR": "GR", "RT": "RT"}
+    model.project.add_well(bare)
+    cfg = model.project.uncertainty
+    cfg.n = unc.N_MIN
+    for name in ("m", "rw", "sw_cutoff"):
+        lo, mid, hi = unc.SUGGESTED_RANGES[name]
+        d = cfg.distributions[name]
+        d.enabled, d.low, d.mid, d.high = True, lo, mid, hi
+
+    out = _run(qtbot, runner, model)
+    assert not out["failed"]
+    (result,) = out["completed"]
+    assert [w["key"] for w in result.wells] == ["WELL:R0", "WELL:R1"]
+    assert [e["key"] for e in result.excluded] == ["WELL:BARE"]
+    assert set(result.basis) == {"WELL:R0", "WELL:R1"}
+    assert result.config_hash == params_hash(unc.config_to_dict(cfg))
+    s = result.stats[("field", "hcpv_net_pay")]
+    assert s["n"] == unc.N_MIN and s["p90"] <= s["p50"] <= s["p10"]
