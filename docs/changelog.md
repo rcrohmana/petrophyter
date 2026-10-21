@@ -2,7 +2,7 @@
 
 # Version History
 
-## v1.10.0 (Build <build>) — Current Release
+## v1.10.0 (Build 20261021) — Current Release
 
 See the [release notes](releases/v1.10.0.md) for details. Saturation-height modelling is optional: **results
 do not change** until you enable it, and sessions that do not use it are saved as before.
@@ -24,7 +24,7 @@ do not change** until you enable it, and sessions that do not use it are saved a
 - **SHF** sheet in the Excel workbook; the new columns in CSV, Excel and LAS.
 - **Session format 2.4** when the project holds saturation-height content; it opens in v1.9.x and older
   without that data. An uncertainty setup with every distribution switched off is now saved with the session.
-- NNNN tests.
+- 1909 tests.
 
 ## v1.9.0 (Build 20261021)
 
