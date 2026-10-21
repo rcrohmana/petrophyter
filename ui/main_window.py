@@ -351,8 +351,9 @@ class MainWindow(QMainWindow):
             signal.connect(self._on_parameter_edited)
         self.model.formation_tops_loaded.connect(self._on_tops_or_core_changed)
         self.model.core_data_loaded.connect(self._on_tops_or_core_changed)
+        # The export service already words the message ("Exported to ...").
         self.export_tab.export_succeeded.connect(
-            lambda path: self.show_banner("success", f"Exported to {path}")
+            lambda message: self.show_banner("success", message)
         )
         self.summary_tab.well_activated.connect(self._on_well_selected)
         # Rock typing switch / applied definitions: only the Summary's Rock types group follows.

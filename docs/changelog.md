@@ -24,7 +24,9 @@ do not change** until you enable it, and sessions that do not use it are saved a
 - **SHF** sheet in the Excel workbook; the new columns in CSV, Excel and LAS.
 - **Session format 2.4** when the project holds saturation-height content; it opens in v1.9.x and older
   without that data. An uncertainty setup with every distribution switched off is now saved with the session.
-- 1909 tests.
+- The uncertainty setup page names the saturation-height Sw as not varied when it is used for pay.
+- Fixed: the export banner read "Exported to Exported to …".
+- 1910 tests.
 
 ## v1.9.0 (Build 20261021)
 

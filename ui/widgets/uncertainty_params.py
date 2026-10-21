@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from modules.uncertainty import (
     DEFAULT_MODES, KINDS, MODES, N_MAX, N_MIN, NOT_VARIED, PARAM_ORDER, SAMPLINGS,
-    SUGGESTED_RANGES, rw_quality_text, validate_config,
+    SUGGESTED_RANGES, not_varied_text, rw_quality_text, validate_config,
 )
 from themes.helpers import set_status
 
@@ -35,6 +35,12 @@ _RHO_TIP = "Rank correlation between the m and n draws (0 = independent)"
 _RHO_OFF_TIP = _RHO_TIP + ". Ignored while m or n is not enabled."
 INFO_TEXT = ("Applied to every well and zone as a change of the resolved value. "
              f"Not varied: {NOT_VARIED}.")
+
+
+def info_text(shf_pay: bool = False) -> str:
+    """The page note; with saturation-height Sw used for pay it also names the SHF Sw as not varied."""
+    return ("Applied to every well and zone as a change of the resolved value. "
+            f"Not varied: {not_varied_text(shf_pay)}.")
 
 
 class _Row:
@@ -185,6 +191,11 @@ class UncertaintyParamsPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_rw_quality()
+        self._refresh_info()
+
+    def _refresh_info(self):
+        shf = getattr(self.model.project, "shf", None) or {}
+        self.info_label.setText(info_text(bool(shf.get("enabled") and shf.get("use_for_pay"))))
 
     def _refresh_rw_quality(self):
         """Note beside the Rw distribution on how the last run's auto Rw was estimated."""

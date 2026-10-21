@@ -315,8 +315,9 @@ def test_restore_does_not_mark_stale(window):
 
 
 def test_export_success_goes_to_banner(window):
-    window.export_tab.show_export_success("done.csv")
-    assert "Exported to done.csv" in window.banner.message_label.text()
+    window.export_tab.show_export_success("Exported to done.csv")
+    text = window.banner.message_label.text()
+    assert "Exported to done.csv" in text and "Exported to Exported" not in text
 
 
 def test_session_restore_guard_resets_flag(window):

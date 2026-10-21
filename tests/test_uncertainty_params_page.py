@@ -52,3 +52,14 @@ def test_rw_quality_note_follows_last_result(window, page):
     window.model.project.uncertainty_result = SimpleNamespace(rw_quality={"w": ["water_leg"]})
     page.load_from_config()
     assert page.rw_quality_label.text() == "Auto Rw: from water leg (last run)"
+
+
+def test_info_names_shf_sw_only_when_used_for_pay(window, page):
+    page._refresh_info()
+    assert "SHF" not in page.info_label.text()
+    window.model.project.shf.update(enabled=True, use_for_pay=True)
+    page._refresh_info()
+    assert "SHF Sw where used for pay" in page.info_label.text()
+    window.model.project.shf["enabled"] = False
+    page._refresh_info()
+    assert "SHF" not in page.info_label.text()
