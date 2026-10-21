@@ -5,12 +5,15 @@ Used by ``generate.py`` to write golden outputs and by
 from the conftest fixtures so the cases stay in step with the rest of the suite.
 """
 
+import copy
 import io
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
 from modules.formation_tops import FormationTops
+from modules.shf import BASIS_CORE, BASIS_LOG, ShfFit
 from tests import conftest
 
 FULL_MAPPING = {"GR": "GR", "RHOB": "RHOB", "NPHI": "NPHI", "DT": "DT", "RT": "RT"}
@@ -65,6 +68,19 @@ ROCK_TYPE_DEFS = {
     "version": 1, "method": "fzi", "feature": "log10_fzi", "fit_scope": "project",
     "sets": {"*": ROCK_TYPE_SET}, "settings": ROCK_TYPE_SETTINGS,
 }
+
+
+
+def _power_fit(basis):
+    """A literal "All" power-law saturation-height fit (as Project.shf["fits"] stores it)."""
+    fit = ShfFit(rock_type="All", model="power", params={"c": 0.45, "d": -0.55}, basis=basis,
+                 n_samples=12, n_points=120, rmse=0.03, bias=0.0, r2=0.97)
+    return fit.to_dict()
+
+
+# Saturation height on the sample log: MD stands in for TVD (no TVD curve), FWL 1090 ft.
+SHF_CONTACTS = {"datum": "TVD", "kb_ft": None, "default": {"fwl": 1090.0, "fluid": "oil"},
+                "zones": {}}
 
 CASES = {
     "defaults_whole_well": {"data": "sample_log_data", "params": {}},
@@ -121,6 +137,22 @@ CASES = {
         "rock_types": ROCK_TYPE_DEFS,
         "tops": True,
     },
+    # Saturation height from a core-Pc fit, used for pay and HCPV.
+    "shf_core_pc": {
+        "data": "sample_log_data",
+        "params": {},
+        "shf": {"settings": {"enabled": True, "use_for_pay": True,
+                             "fits": {"All": _power_fit(BASIS_CORE)}},
+                "contacts": SHF_CONTACTS},
+    },
+    # A log-derived fit with use for pay requested: refused, pay stays on resistivity Sw.
+    "shf_log_derived": {
+        "data": "sample_log_data",
+        "params": {},
+        "shf": {"settings": {"enabled": True, "use_for_pay": True,
+                             "fits": {"All": _power_fit(BASIS_LOG)}},
+                "contacts": SHF_CONTACTS},
+    },
 }
 
 
@@ -153,15 +185,26 @@ def build_case(name):
             "set": defs["sets"]["*"], "zone_sets": {}, "settings": dict(defs["settings"]),
             "basis": "pooled", "core_max_dist": 2.0}
         params["rock_core"] = None
+    if spec.get("shf"):
+        # What AppModel.params_for_well hands the pipeline when saturation height is on.
+        from models.app_model import AppModel
+
+        model = AppModel()
+        model.project.shf.update(copy.deepcopy(spec["shf"]["settings"]))
+        params["shf"] = model._shf_params(
+            SimpleNamespace(shf_contacts=copy.deepcopy(spec["shf"]["contacts"])))
     return data, mapping, params, tops
 
 
 def apply_to_model(model, name, params):
     """Set a case's params on an AppModel; definitions go to ``Project.rock_types``."""
     for key, value in params.items():
-        if key in ("rock_types", "rock_core"):
+        if key in ("rock_types", "rock_core", "shf"):
             continue
         assert hasattr(model, key), key
         setattr(model, key, value)
     if CASES[name].get("rock_types"):
         model.project.rock_types = CASES[name]["rock_types"]
+    if CASES[name].get("shf"):
+        model.project.shf.update(copy.deepcopy(CASES[name]["shf"]["settings"]))
+        model._well.shf_contacts = copy.deepcopy(CASES[name]["shf"]["contacts"])

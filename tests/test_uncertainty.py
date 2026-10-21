@@ -614,3 +614,19 @@ def test_sw_hold_none_is_bit_identical_and_hold_forces_samples():
     seg.sw_hold = np.full(len(seg.positions), 1.0)
     assert U.evaluate(fw, {"rw": 0.3})["well"]["net_pay"] == 0.0
     assert U.evaluate(fw, {"rw": -0.3})["well"]["net_pay"] == 0.0
+
+
+def test_shf_pay_is_held_and_named_in_the_result():
+    on = U.freeze_well("s", "s", *build_case("shf_core_pc")[:3], build_case("shf_core_pc")[3])
+    refused = U.freeze_well("r", "r", *build_case("shf_log_derived")[:3],
+                            build_case("shf_log_derived")[3])
+    plain = U.freeze_well("p", "p", *build_case("defaults_whole_well")[:3],
+                          build_case("defaults_whole_well")[3])
+    assert on.segments[0].sw_hold is not None
+    assert np.isfinite(on.segments[0].sw_hold).any()
+    assert refused.segments[0].sw_hold is None and plain.segments[0].sw_hold is None
+    res = U.run_monte_carlo([on], cfg_for(("rw",), n=50))
+    assert res.shf_pay is True
+    assert any(U.NOT_VARIED_SHF in w for w in res.warnings)
+    assert U.run_monte_carlo([plain], cfg_for(("rw",), n=50)).shf_pay is False
+    assert U.run_monte_carlo([refused], cfg_for(("rw",), n=50)).shf_pay is False

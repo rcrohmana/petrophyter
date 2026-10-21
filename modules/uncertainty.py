@@ -724,6 +724,7 @@ class MCResult:
     basis: dict = field(default_factory=dict)
     rw_quality: dict = field(default_factory=dict)    # well key -> sorted auto-Rw qualities
     config_hash: str = ""
+    shf_pay: bool = False                 # SHF Sw held for pay in some segment
 
 
 def _scope_series(frozen_wells, per_well_zone: Dict[Tuple[int, Optional[str]], Dict[str, np.ndarray]]):
@@ -853,7 +854,8 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
         deterministic=deterministic, stats=stats_out, tornado=tornado, rank_corr=rank_corr,
         clipped=clipped, warnings=warns, elapsed_s=time.perf_counter() - t0,
         rw_quality={fw.key: sorted({sg.rw_quality for sg in fw.segments if sg.rw_quality})
-                    for fw in frozen_wells})
+                    for fw in frozen_wells},
+        shf_pay=shf_pay)
 
 
 RW_QUALITY_TEXT = {"water_leg": "from water leg", "uniform": "uniform estimate"}

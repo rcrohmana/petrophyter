@@ -23,11 +23,14 @@ from modules.las_utils import mask_nonpositive
 from modules.param_scopes import (
     GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
     ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
-    juhasz_b, normalize_zone, resolve_tvd,
+    juhasz_b, normalize_zone, resolve_tvd, tvd_mnemonic_is_subsea,
 )
 from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
 from modules.rock_typing import (
-    apply_rock_types, rock_type_rows, rock_typing_unavailable)
+    apply_rock_types, rock_type_rows, rock_types_zone_scoped, rock_typing_unavailable)
+from modules.shf_stage import (
+    apply_shf, merge_counts, new_counts, pay_refused_for, shf_count_issues, shf_summary,
+    zone_series)
 from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
 from modules.statistics_utils import (
     MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
@@ -873,7 +876,7 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
 
 
 def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=None,
-                 capture=None, positions=None):
+                 capture=None, positions=None, tvd=None):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
     ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
@@ -955,10 +958,10 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=N
     sp["rw"], sp["rsh"] = values["rw"], values["rsh"]
     sp["rw_mode"] = sp["rsh_mode"] = "manual"
     pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
-                             tctx, warnings, rsh_auto, zone)
+                             tctx, warnings, rsh_auto, zone, tvd)
     if capture is not None:
         _capture_basis(capture, zone, positions, sp, values["rw"], values["rsh"],
-                       rsh_auto, tctx, rw_quality, pay)
+                       rsh_auto, tctx, rw_quality, pay, pay.get("sw_hold"))
     resolved = {"gr_baseline": [sp["gr_min_manual"], sp["gr_max_manual"]],
                 "rw": values["rw"], "rsh": values["rsh"]}
     return calc, pay, _sources_table(sp, sources, resolved)
@@ -1092,8 +1095,17 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     return sw, phie, phit, sw_fallback
 
 
+def _shf_all_only(p) -> bool:
+    """True when one "All" saturation-height fit serves every sample.
+
+    Rock-type ids are not global when the definitions were fitted per zone, and there is no
+    rock type at all while rock typing is unavailable.
+    """
+    return rock_types_zone_scoped(p.get("rock_types")) or rock_typing_unavailable(p) is not None
+
+
 def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                       rsh_auto=False, zone=None):
+                       rsh_auto=False, zone=None, tvd=None):
     """Sw, Swirr, permeability and pay flags on ``calc``.
 
     ``rw`` is a number (at the reference temperature when the Arps correction is
@@ -1101,7 +1113,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     ``rsh_auto`` or a manual value (see :func:`_rsh_effective`). Returns the
     ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
     this calculator's samples. ``zone`` (a name, or a Series of zone labels) picks the
-    rock-type set; it is only read when rock typing is on.
+    rock-type set; it is only read when rock typing is on. ``tvd`` (TVD per sample of the
+    whole well, resolved once) is read only when saturation height is on.
     """
     sw_new, phie, phit, sw_fallback = _primary_sw(
         calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto)
@@ -1135,11 +1148,23 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     calc.get_permeability_quality_flags(perm_primary, swirr, phie)
 
     sw_for_pay = calc.results.get("SW", pd.Series([1.0] * len(data), index=data.index))
+    shf_out, sw_hold = None, None
+    if p.get("shf") and tvd is not None:
+        shf_out = apply_shf(
+            p["shf"], calc.results, tvd.reindex(data.index), zone_series(data.index, zone),
+            calc.results.get("SW"), perm_column, _shf_all_only(p))
+        calc.results["SW_SHF"] = shf_out.sw_shf
+        calc.results["HAFWL"] = shf_out.hafwl
+        calc.results["SW_SHF_RESID"] = shf_out.resid
+        if shf_out.sw_pay is not None:
+            calc.results["SW_PAY"] = sw_for_pay = shf_out.sw_pay
+            sw_hold = shf_out.sw_shf.to_numpy(dtype=float)
     pay = calc.calculate_net_pay(
         vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
     )
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
-            "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None}
+            "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None,
+            "shf": shf_out, "sw_hold": sw_hold}
 
 
 def _sample_dz(data: pd.DataFrame):
@@ -1312,6 +1337,46 @@ def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone, log=Non
     return out
 
 
+def _shf_well_summary(p, curve_mapping, results, stages, tvd_source, warnings) -> dict:
+    """``summary["shf"]``; the well-level notes go to ``warnings`` once."""
+    shf = p["shf"]
+    stages = [s for s in stages if s is not None]
+    counts = new_counts()
+    fluids, notes = {}, []
+    for s in stages:
+        merge_counts(counts, s.counts)
+        fluids.update(s.fluids)
+        notes.extend(s.issues)
+    first = stages[0] if stages else None
+    all_only = _shf_all_only(p)
+    requested = bool(shf.get("use_for_pay"))
+    refused = requested and pay_refused_for(shf, all_only)
+    for note in tvd_source.notes:
+        warnings.add("SHF_TVD_NOTE", note)
+    if tvd_source.kind == "md" and not tvd_source.notes:
+        warnings.add("SHF_TVD_NOTE", "Height computed on MD (assumed vertical).", severity="info")
+    mapped = curve_mapping.get("TVD")
+    if tvd_mnemonic_is_subsea(mapped):
+        warnings.add("SHF_TVDSS_SUSPECT",
+                     f"The mapped depth curve {mapped} looks like a subsea depth; heights above "
+                     "the free water level need TVD measured from the same reference as KB.")
+    if rock_types_zone_scoped(p.get("rock_types")):
+        warnings.add("SHF_ZONE_SCOPE_RT",
+                     "Rock types are fitted per zone; one saturation-height fit is used for all "
+                     "types.")
+    for code, text in dict.fromkeys(notes):
+        warnings.add(code, text)
+    for code, text, severity in shf_count_issues(counts, requested, refused):
+        warnings.add(code, text, severity=severity)
+    contacts = shf.get("contacts") or {}
+    return shf_summary(
+        shf, results, counts, fluids, tvd_source.label,
+        first.perm_column if first else None, first.phie_column if first else None,
+        requested, refused, all_only,
+        {"datum": contacts.get("datum") or "TVD", "kb_ft": contacts.get("kb_ft"),
+         "default": contacts.get("default"), "zones": dict(contacts.get("zones") or {})})
+
+
 def run_pipeline(
     data: pd.DataFrame,
     curve_mapping: Dict[str, str],
@@ -1408,6 +1473,13 @@ def run_pipeline(
                 "WS B from temperature uses Rw as entered (the Rw temperature correction is off)."
             )
 
+    shf_tvd = shf_tvd_source = None
+    shf_stages = []
+    if p.get("shf"):
+        shf_tvd_source = _tvd_source(data, p, curve_mapping, noun="heights")
+        shf_tvd = pd.Series(shf_tvd_source.at(data["DEPTH"].to_numpy(dtype=float)),
+                            index=data.index)
+
     # ---- Shale volume -------------------------------------------------------
     emit("Calculating VShale...", 20)
     vsh, gr_min, gr_max = _compute_vsh(calc, stats_util, data, curve_mapping, p, warnings)
@@ -1438,10 +1510,11 @@ def run_pipeline(
     if not plan:
         emit("Calculating Swirr...", 65)
         pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                                 rsh_auto, labels)
+                                 rsh_auto, labels, shf_tvd)
+        shf_stages = [pay["shf"]]
         if capture is not None:
             _capture_basis(capture, None, np.arange(len(data)), dict(p), rw, rsh, rsh_auto, tctx,
-                           rw_rsh_info.get("rw_quality"), pay)
+                           rw_rsh_info.get("rw_quality"), pay, pay["sw_hold"])
         emit("Calculating permeability...", 75)
         emit("Calculating net pay...", 85)
         summary = dict(pay["summary"])
@@ -1458,7 +1531,7 @@ def run_pipeline(
             emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
             seg_calc, seg_pay, table = _zone_curves(
                 data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings, zone,
-                capture, np.flatnonzero((labels == zone).to_numpy()),
+                capture, np.flatnonzero((labels == zone).to_numpy()), shf_tvd,
             )
             parts.append(seg_calc.results)
             pays.append(seg_pay)
@@ -1476,16 +1549,18 @@ def run_pipeline(
             )
             _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
             rest_pay = _saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
-                                          rw, rsh, tctx, warnings, rsh_auto, labels[rest])
+                                          rw, rsh, tctx, warnings, rsh_auto, labels[rest], shf_tvd)
             pays.append(rest_pay)
             if capture is not None:
                 _capture_basis(capture, None, np.flatnonzero(rest.to_numpy()), sp, rw, rsh,
-                               rsh_auto, tctx, rw_rsh_info.get("rw_quality"), rest_pay)
+                               rsh_auto, tctx, rw_rsh_info.get("rw_quality"), rest_pay,
+                               rest_pay["sw_hold"])
             parts.append(rest_calc.results)
             _merge_diagnostics(solver_raw, rest_calc.solver_diagnostics)
             flag_calcs.append(rest_calc)
         emit("Calculating net pay...", 85)
         calc.results = pd.concat(parts).reindex(data.index)
+        shf_stages = [pp["shf"] for pp in pays]
         pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
                for k in ("vsh", "phie", "sw", "swirr")}
         summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _sample_dz(data))
@@ -1571,6 +1646,10 @@ def run_pipeline(
     elif p["rock_typing_enabled"]:
         warnings.add("ROCK_TYPES_NO_DEFINITIONS",
                      "Rock typing is on but no definitions are applied; no rock types computed.")
+
+    if p.get("shf"):
+        summary["shf"] = _shf_well_summary(
+            p, curve_mapping, calc.results, shf_stages, shf_tvd_source, warnings)
 
     vsh_cutoffs = {}
     for zone in (dict.fromkeys(labels.dropna()) if labels is not None else ()):

@@ -1006,7 +1006,31 @@ class AppModel(QObject):
         flat["rock_types"] = flat["rock_core"] = None
         if self.rock_typing_enabled and self.project.rock_types:
             self._rock_typing_params(ds, flat)
+        if (self.project.shf or {}).get("enabled"):
+            flat["shf"] = self._shf_params(ds)
         return copy.deepcopy(flat)
+
+    def _shf_params(self, ds: WellDataset) -> dict:
+        """Saturation-height settings for one well; only carried while the feature is on.
+
+        The fit-time options (weighting, minimum Pc, Pc rock-type source) are not here: they
+        do not change a run, so they stay out of the stale-tracking hash. Fits are plain dicts
+        keyed by rock-type id as text (``"All"`` is the pooled fit); ``sigma_cos_res`` is
+        resolved per fluid from the reservoir system (oil: oil-water, gas: gas-water).
+        """
+        shf = self.project.shf
+        sigma = shf.get("sigma_cos") or {}
+        return {
+            "enabled": True,
+            "use_for_pay": bool(shf.get("use_for_pay")),
+            "phie_source": str(shf.get("phie_source") or "PHIE"),
+            "perm_source": str(shf.get("perm_source") or "auto"),
+            "fallback": str(shf.get("fallback") or "none"),
+            "fits": {str(k): dict(v) for k, v in (shf.get("fits") or {}).items()},
+            "fluids": dict(shf.get("fluids") or {}),
+            "sigma_cos_res": {"oil": sigma.get("oil-water"), "gas": sigma.get("gas-water")},
+            "contacts": copy.deepcopy(ds.shf_contacts or {}),
+        }
 
     def _rock_typing_params(self, ds: WellDataset, flat: dict):
         """Rock-type definitions resolved for one well, and its core labels (spec 6.2).

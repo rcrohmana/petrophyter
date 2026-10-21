@@ -1,0 +1,302 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.17984000709453826,
+ "avg_sw_pay": 0.3248484818688169,
+ "avg_vsh_pay": 0.16550152560148443,
+ "data_points": 100,
+ "gr_max": 88.41562199612135,
+ "gr_min": 42.68115511379288,
+ "gross_sand": 37.37373737373724,
+ "hcpv_gross": 4.178045359849312,
+ "hcpv_net_pay": 3.8020170385137373,
+ "hcpv_net_res": 3.8940870320562886,
+ "issues": [
+  {
+   "code": "RSH_AUTO_CLAMPED",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 38 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_MAXED",
+   "severity": "warning",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum.",
+   "zone": null
+  },
+  {
+   "code": "SHF_TVD_NOTE",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "Height computed on MD (assumed vertical).",
+   "zone": null
+  },
+  {
+   "code": "SHF_NO_PERM_PHI",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Saturation height: 5 samples have no usable permeability or porosity; their saturation-height Sw is blank.",
+   "zone": null
+  },
+  {
+   "code": "SHF_PAY_FALLBACK",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Pay Sw: saturation height, 5 samples from resistivity.",
+   "zone": null
+  }
+ ],
+ "net_pay": 31.313131313131237,
+ "net_reservoir": 37.37373737373724,
+ "ng_pay": 0.8378378378378387,
+ "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "auto",
+    "value": [
+     42.68115511379288,
+     88.41562199612135
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 50.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 5.63135375750573,
+ "rsh": 50.0,
+ "rsh_shale_samples": 30,
+ "rsh_source": "auto",
+ "rw": 0.05,
+ "rw_source": "manual",
+ "selected_formations": [],
+ "shf": {
+  "basis": "core_pc",
+  "contacts": {
+   "datum": "TVD",
+   "default": {
+    "fluid": "oil",
+    "fwl": 1090.0
+   },
+   "kb_ft": null,
+   "zones": {}
+  },
+  "counts": {
+   "pay_fallback_samples": 5,
+   "samples": 100,
+   "samples_modelled": 95,
+   "samples_no_contact": 0,
+   "samples_no_kphi": 5,
+   "samples_no_model": {},
+   "samples_no_tvd": 0,
+   "samples_pooled": {},
+   "samples_unclassified": 0,
+   "unclassified_reasons": {},
+   "water_leg_samples": 10
+  },
+  "fallback": "none",
+  "fits": {
+   "All": {
+    "basis": "core_pc",
+    "model": "power",
+    "n_samples": 12
+   }
+  },
+  "fluids": {
+   "(unzoned)": {
+    "contact": "default",
+    "delta_rho": 0.28,
+    "fluid": "oil",
+    "fluid_density": 0.75,
+    "fwl_tvd": 1090.0,
+    "water_density": 1.03
+   }
+  },
+  "pay_active": true,
+  "pay_refused": false,
+  "perm_source": "PERM_TIMUR",
+  "phie_source": "PHIE",
+  "rock_type_basis": "All",
+  "stats": {
+   "rock_types": [],
+   "well": {
+    "basis": "core_pc",
+    "bias": -0.18616639426903006,
+    "mae": 0.18925974799104828,
+    "n": 35,
+    "r2": -4.008605095020591,
+    "rmse": 0.2325375406407931
+   },
+   "zones": []
+  },
+  "tvd_source": "MD (assumed vertical)",
+  "use_for_pay": true
+ },
+ "solver_diagnostics": {
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 11,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 8,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 38,
+  "limited_to_max": 24,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 100
+ },
+ "swirr_mean": 0.3320393428612109,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": [
+  "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
+  "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum.",
+  "Saturation height: 5 samples have no usable permeability or porosity; their saturation-height Sw is blank.",
+  "Pay Sw: saturation height, 5 samples from resistivity."
+ ],
+ "zones": []
+}
