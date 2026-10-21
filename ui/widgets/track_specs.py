@@ -150,11 +150,22 @@ def curve_spec(track: str, name: str) -> Optional[CurveSpec]:
     return None
 
 
+# Residual track (Sw - Sw SHF): title and fixed x range
+SHF_RESID_TITLE = "Sw − Sw SHF"
+SHF_RESID_RANGE = (-0.5, 0.5)
+SHF_NON_METHOD_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY")
+
+
 def sw_method_columns(columns: Iterable[str]) -> List[str]:
-    """Every ``SW_*`` column present (known methods first, then any other)."""
+    """Every ``SW_*`` method column present (known methods first, then any other).
+
+    The saturation-height outputs (``SW_SHF``, ``SW_SHF_RESID``, ``SW_PAY``) are
+    not Sw methods and are left out.
+    """
     cols = list(columns)
     known = [c for c in SW_COLUMNS.values() if c in cols]
-    other = [c for c in cols if c.startswith("SW_") and c not in known]
+    other = [c for c in cols if c.startswith("SW_") and c not in known
+             and c not in SHF_NON_METHOD_COLUMNS]
     return known + other
 
 

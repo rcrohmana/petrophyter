@@ -125,6 +125,9 @@ PLOT_COLORS = {
     "SW_WS": "#00BFFF",
     "SW_DW": "#8A2BE2",
     "SW_DEFAULT": "#808080",
+    "SW_SHF": "#D2691E",
+    "SW_PAY": "#A0522D",
+    "SW_SHF_RESID": "#00796B",
     "GROSS_SAND": "#2196F3",
     "NET_RESERVOIR": "#4CAF50",
     "NET_PAY": "#FF9800",
@@ -179,4 +182,11 @@ PLOT_CHROME = {
 }
 
 # RT is drawn black by convention; unreadable on dark backgrounds.
-PLOT_COLOR_OVERRIDES = {"dark": {"RT": COLORS["dark"]["text_primary"]}}
+PLOT_COLOR_OVERRIDES = {
+    "dark": {
+        "RT": COLORS["dark"]["text_primary"],
+        "SW_SHF": "#E8A04C",
+        "SW_PAY": "#C99A7A",
+        "SW_SHF_RESID": "#4DB6AC",
+    }
+}

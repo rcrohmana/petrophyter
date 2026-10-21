@@ -103,6 +103,8 @@ def test_method_column_helpers():
     cols = ["SW", "SW_INDO", "SW_ARCHIE", "SWT_X", "SWIRR", "PERM_WR", "PERM_TIMUR", "PERM"]
     assert ts.sw_method_columns(cols) == ["SW_ARCHIE", "SW_INDO"]
     assert ts.swt_columns(cols) == ["SWT_X"]
+    shf = cols + ["SW_SHF", "SW_SHF_RESID", "SW_PAY"]
+    assert ts.sw_method_columns(shf) == ["SW_ARCHIE", "SW_INDO"]
     assert ts.perm_columns(cols) == ["PERM_TIMUR", "PERM_WR"]
 
 

@@ -155,7 +155,7 @@ class LogDisplayTab(QWidget):
         self.plot_stack.setMinimumHeight(650)  # Fixed minimum height for log
 
         # Page 0: Interactive (pyqtgraph)
-        self.interactive_log = InteractiveLogPlot(n_tracks=7)
+        self.interactive_log = InteractiveLogPlot(n_tracks=8)
         if HAS_PYQTGRAPH:
             self.interactive_log.depth_changed.connect(
                 self._on_interactive_depth_changed

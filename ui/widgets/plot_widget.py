@@ -609,7 +609,9 @@ class CompositeLogPlot(PlotWidget):
 
         # Create 6 tracks, and a seventh for the rock types when the results have them
         has_rt = "ROCK_TYPE" in filtered.columns
-        n_axes = 7 if has_rt else 6
+        has_resid = "SW_SHF_RESID" in filtered.columns
+        n_axes = 6 + int(has_rt) + int(has_resid)
+        resid_idx = n_axes - 1  # the residual track is last, after Rock Type
         axes = []
         for i in range(n_axes):
             if i == 0:
@@ -716,6 +718,26 @@ class CompositeLogPlot(PlotWidget):
                 linestyle="--",
                 label=curve.replace("SW_", ""),
             )
+        # Saturation-height Sw: its own dashed curve (not an Sw method); the pay
+        # variant, when selected, is a thin dotted line in a muted tone.
+        if "SW_SHF" in filtered.columns:
+            axes[2].plot(
+                filtered["SW_SHF"].values,
+                depth,
+                color=get_plot_color("SW_SHF"),
+                linewidth=0.9,
+                linestyle="--",
+                label="Sw SHF",
+            )
+        if "SW_PAY" in filtered.columns:
+            axes[2].plot(
+                filtered["SW_PAY"].values,
+                depth,
+                color=get_plot_color("SW_PAY"),
+                linewidth=0.7,
+                linestyle=":",
+                label="Sw SHF (pay)",
+            )
         axes[2].set_xlim(sw_spec.lo, sw_spec.hi)
         axes[2].set_title(sw_spec.title, fontsize=TITLE_SIZE)
         axes[2].set_xlabel(sw_spec.axis_label, fontsize=LABEL_SIZE)
@@ -789,6 +811,22 @@ class CompositeLogPlot(PlotWidget):
         # Track 7: Rock Type (categorical bands; hatched where weak)
         if has_rt:
             self._plot_rock_type_track(axes[6], depth, filtered, rt_margin_min, rt_count)
+
+        # Residual track: Sw - Sw SHF on a fixed range with a zero line
+        if has_resid:
+            rax = axes[resid_idx]
+            r_lo, r_hi = ts.SHF_RESID_RANGE
+            rax.plot(
+                filtered["SW_SHF_RESID"].values,
+                depth,
+                color=get_plot_color("SW_SHF_RESID"),
+                linewidth=0.8,
+                label="Sw − Sw SHF",
+            )
+            rax.axvline(0.0, color=get_plot_color("grid"), linewidth=0.8)
+            rax.set_xlim(r_lo, r_hi)
+            rax.set_title(ts.SHF_RESID_TITLE, fontsize=TITLE_SIZE)
+            rax.set_xlabel("Sw − Sw SHF (v/v)", fontsize=LABEL_SIZE)
 
         # Add formation tops overlay
         if formation_tops is not None:

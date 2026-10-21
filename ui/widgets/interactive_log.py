@@ -146,6 +146,7 @@ class InteractiveLogPlot(QWidget):
     cursor_moved = pyqtSignal(float, dict)  # (depth, {curve: value})
 
     RT_TRACK = 6  # index of the Rock Type track; never in the normalised-track list
+    RESID_TRACK = 7  # Sw - Sw SHF residual; hidden unless SW_SHF_RESID is present
 
     def __init__(self, n_tracks: int = 6, parent=None):
         super().__init__(parent)
@@ -291,7 +292,7 @@ class InteractiveLogPlot(QWidget):
 
         # Track titles
         track_titles = ["GR/Vsh", "Porosity", "Sw", "RT/Perm", "Flags", "HCPV",
-                        "Rock Type"]
+                        "Rock Type", ts.SHF_RESID_TITLE]
 
         self.plot_widgets = []
 
@@ -362,6 +363,8 @@ class InteractiveLogPlot(QWidget):
 
             if i == self.RT_TRACK:
                 plot.setVisible(False)  # until a result with ROCK_TYPE is plotted
+            if i == self.RESID_TRACK:
+                plot.setVisible(False)  # until a result with SW_SHF_RESID is plotted
             self.plot_widgets.append(plot)
 
         # Connect mouse move signal ONCE (not per track) - critical for performance
@@ -467,6 +470,26 @@ class InteractiveLogPlot(QWidget):
             self.curve_units["FZI"] = ""
         self._rt_source = (depth, source) if source is not None else None
 
+    def _plot_shf_residual(self, data: pd.DataFrame, depth):
+        """Draw the Sw - Sw SHF residual on its fixed range with a zero line."""
+        plot = self.plot_widgets[self.RESID_TRACK]
+        lo, hi = ts.SHF_RESID_RANGE
+        zero = pg.InfiniteLine(
+            pos=0.0, angle=90, movable=False,
+            pen=pg.mkPen(self._chrome["crosshair"], width=1),
+        )
+        plot.addItem(zero, ignoreBounds=True)
+        raw = data["SW_SHF_RESID"].values
+        label = "Sw − Sw SHF (v/v)"
+        pen = _curve_pen("SW_SHF_RESID")
+        self.curve_items["SW_SHF_RESID"] = plot.plot(
+            raw.astype(float), depth, pen=pen, name=label
+        )
+        plot.setXRange(lo, hi, padding=0)
+        self.curves_data["SW_SHF_RESID"] = (depth, raw)
+        self.curve_units["SW_SHF_RESID"] = "v/v"
+        self.curve_labels["SW_SHF_RESID"] = label
+
     def plot_curves(self, data: pd.DataFrame, curve_config: dict = None):
         """
         Plot curves on the tracks.
@@ -493,6 +516,11 @@ class InteractiveLogPlot(QWidget):
         has_rt = "ROCK_TYPE" in data.columns and len(self.plot_widgets) > self.RT_TRACK
         if len(self.plot_widgets) > self.RT_TRACK:
             self.plot_widgets[self.RT_TRACK].setVisible(has_rt)
+        has_resid = (
+            "SW_SHF_RESID" in data.columns and len(self.plot_widgets) > self.RESID_TRACK
+        )
+        if len(self.plot_widgets) > self.RESID_TRACK:
+            self.plot_widgets[self.RESID_TRACK].setVisible(has_resid)
 
         # Default configuration if not provided
         if curve_config is None:
@@ -558,7 +586,10 @@ class InteractiveLogPlot(QWidget):
                     curve_data = (curve_data - vmin) / (vmax - vmin)
 
                 style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
-                pen = pg.mkPen(color, width=1.5, style=style)
+                width = 1.5
+                if opts.get("dotted"):
+                    style, width = Qt.PenStyle.DotLine, 1.0
+                pen = pg.mkPen(color, width=width, style=style)
                 if dashed:
                     self._dashed.add(curve_name)
                 curve_item = plot.plot(curve_data, depth, pen=pen, name=label)
@@ -572,6 +603,13 @@ class InteractiveLogPlot(QWidget):
 
         if has_rt:
             self._plot_rock_type(data, depth)
+        if has_resid:
+            self._plot_shf_residual(data, depth)
+        if "HAFWL" in data.columns:
+            # Readout only: height above the free water level is not drawn
+            self.curves_data["HAFWL"] = (depth, data["HAFWL"].values)
+            self.curve_units["HAFWL"] = "ft"
+            self.curve_labels["HAFWL"] = "HAFWL"
 
         # Auto-range Y only on first track (others are linked)
         if self.plot_widgets:
@@ -654,6 +692,19 @@ class InteractiveLogPlot(QWidget):
                     },
                 )
             )
+        # Saturation-height Sw (only present when saturation height ran). Drawn
+        # explicitly: it is not one of the Sw methods.
+        shf_opts = {
+            "unit": "v/v", "lo": 0.0, "hi": 1.0, "scale": "linear",
+            "axis": "bottom", "axis_label": ts.TRACK_SPECS["sw"].axis_label,
+            "dashed": True,
+        }
+        if "SW_SHF" in cols:
+            track2.append(("SW_SHF", _current_curve_color("SW_SHF"), False, (0.0, 1.0),
+                           dict(shf_opts, label="Sw SHF")))
+        if "SW_PAY" in cols:
+            track2.append(("SW_PAY", _current_curve_color("SW_PAY"), False, (0.0, 1.0),
+                           dict(shf_opts, label="Sw SHF (pay)", dotted=True)))
         config[2] = track2
 
         # Track 3: Resistivity (bottom axis, log) and permeability (top axis, log)
