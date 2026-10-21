@@ -222,7 +222,7 @@ def test_newer_major_version_is_refused_and_model_untouched(tmp_path, version):
     assert model.rw == rw_before and len(model.project) == 0
 
 
-@pytest.mark.parametrize("version", ["1.0", "1.4", "2.0", "2.1", "2.2", "2.9"])
+@pytest.mark.parametrize("version", ["1.0", "1.4", "2.0", "2.1", "2.2", "2.3", "2.9"])
 def test_same_or_older_major_versions_still_load(tmp_path, version):
     path = tmp_path / "ok.json"
     path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
@@ -274,6 +274,15 @@ def test_rock_types_alone_make_the_session_2_2():
     assert session_version_for(model) == "2.2"
     model.project.clear()
     assert model.project.rock_types is None
+
+
+def test_enabled_uncertainty_alone_makes_the_session_2_3():
+    from modules.uncertainty import UncertaintyConfig
+    model = AppModel()
+    model.project.uncertainty = UncertaintyConfig(n=200)
+    assert session_version_for(model) == "2.1"      # nothing enabled
+    model.project.uncertainty.distributions["rw"].enabled = True
+    assert session_version_for(model) == "2.3"
 
 
 def test_a_21_session_loads_with_rock_typing_off(tmp_path):

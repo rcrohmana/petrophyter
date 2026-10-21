@@ -87,6 +87,7 @@ a = Analysis(
         'scipy.special',
         'scipy.cluster',
         'scipy.cluster.vq',
+        'scipy.stats.qmc',
         
         # File handling
         'openpyxl',

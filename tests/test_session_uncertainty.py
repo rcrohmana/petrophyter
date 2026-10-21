@@ -49,6 +49,18 @@ def test_session_without_uncertainty_key_loads_nothing_enabled(three_wells, tmp_
     assert fresh.project.uncertainty.enabled_names() == ()
 
 
+def test_a_17_era_21_session_loads_with_no_uncertainty(tmp_path):
+    path = tmp_path / "old21.json"
+    path.write_text(json.dumps({"_session_version": "2.1", "global_params": {"rw": 0.08},
+                                "zone_params": {}, "wells": []}))
+    svc = SessionService()
+    model = AppModel()
+    assert svc.apply_session_to_model(model, svc.load_session(str(path)))
+    assert model.rw == 0.08
+    assert model.project.uncertainty.enabled_names() == ()
+    assert model.project.uncertainty_result is None
+
+
 def test_a_22_session_loads(three_wells, tmp_path):
     model, _ = three_wells
     model.rock_typing_enabled = True

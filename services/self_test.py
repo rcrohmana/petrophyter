@@ -94,6 +94,17 @@ def step_lapack() -> str:
     return "scipy.linalg.solve, numpy.linalg.svd, scipy.optimize.curve_fit"
 
 
+def step_uncertainty() -> str:
+    """The Monte Carlo module imports and the Latin hypercube sampler (scipy.stats.qmc) runs."""
+    import modules.uncertainty  # noqa: F401
+    from scipy.stats import qmc
+
+    draw = qmc.LatinHypercube(d=2, seed=1).random(4)
+    if draw.shape != (4, 2):
+        raise RuntimeError(f"unexpected Latin hypercube shape {draw.shape}")
+    return "qmc LatinHypercube ok"
+
+
 def step_pipeline() -> str:
     from modules.pipeline import run_pipeline
 
@@ -144,6 +155,7 @@ def step_window() -> str:
 STEPS: List[Tuple[str, Callable[[], str]]] = [
     ("imports", step_imports),
     ("lapack", step_lapack),
+    ("uncertainty", step_uncertainty),
     ("pipeline", step_pipeline),
     ("main window", step_window),
 ]

@@ -54,3 +54,10 @@ def test_spec_bundles_scipy_cluster_for_rock_typing():
 
     assert "'scipy.cluster'," in source
     assert "'scipy.cluster.vq'," in source
+
+
+def test_spec_bundles_scipy_qmc_for_uncertainty():
+    # modules.uncertainty draws Latin hypercube samples with scipy.stats.qmc.
+    source = (ROOT / "petrophyter_pyqt_2.spec").read_text(encoding="utf-8")
+
+    assert "'scipy.stats.qmc'," in source
