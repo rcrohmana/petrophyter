@@ -47,7 +47,7 @@ Formation tops and core data are read by the same table reader, so the rules in 
 
 ## Capillary pressure data
 
-Laboratory capillary pressure (Pc) curves from mercury injection (MICP), porous-plate or centrifuge tests are loaded from **File > Load Pc Data…** (the active well) or **Load Pc Data (Multi-Well)…** (a file with a well column, assigned to loaded wells in the import dialog). The file rules in "Reading tops and core tables" apply: file types, delimiter, preamble lines, unit row, decimal comma, merged well cells, and the well column.
+Laboratory capillary pressure (Pc) curves from mercury injection (MICP), porous-plate or centrifuge tests are loaded from **File > Open Pc Data…** (the active well) or **Open Pc Data (Multi-Well)…** (a file with a well column, assigned to loaded wells in the import dialog). The file rules in "Reading tops and core tables" apply: file types, delimiter, preamble lines, unit row, decimal comma, merged well cells, and the well column.
 
 The file has one row per Pc point. The rows of one sample form one curve.
 

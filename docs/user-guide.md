@@ -105,7 +105,7 @@ See [Supported Data Formats](data-formats.md) for the complete column names, ali
 
 ### Opening capillary pressure data
 
-Use **File → Load Pc Data…** to load laboratory capillary pressure (Pc) curves (mercury injection, porous plate or centrifuge) for the active well, or **File → Load Pc Data (Multi-Well)…** for one file that holds the samples of several wells. Load a LAS file first. Neither entry has a keyboard shortcut. The file has one row per Pc point; the rows of one sample form one curve. Column names, units and the rows that are left out are in [Supported Data Formats](data-formats.md#capillary-pressure-data).
+Use **File → Open Pc Data…** to load laboratory capillary pressure (Pc) curves (mercury injection, porous plate or centrifuge) for the active well, or **File → Open Pc Data (Multi-Well)…** for one file that holds the samples of several wells. Load a LAS file first. Neither entry has a keyboard shortcut. The file has one row per Pc point; the rows of one sample form one curve. Column names, units and the rows that are left out are in [Supported Data Formats](data-formats.md#capillary-pressure-data).
 
 - **Pc unit.** The unit comes from the column header. When the header names none, Petrophyter asks for it; in the multi-well dialog the import stays disabled until you choose.
 - **Fluid system.** A file without a system column asks for the system of the measurement (air-brine, mercury-air or oil-brine). The system sets the interfacial tension and contact angle used for the J-function.
@@ -382,7 +382,7 @@ The **Saturation-Height** tab (after Rock Typing) turns capillary pressure data 
 
 **Workflow**
 
-1. Load Pc data (**File → Load Pc Data…**, see [Opening capillary pressure data](#opening-capillary-pressure-data)). Without it **Fit** is disabled and its tooltip says to import capillary pressure data first.
+1. Load Pc data (**File → Open Pc Data…**, see [Opening capillary pressure data](#opening-capillary-pressure-data)). Without it **Fit** is disabled and its tooltip says to import capillary pressure data first.
 2. **Confirm the fluids and tensions** in the left column: the water, oil and gas densities (g/cc) and the interfacial tension times cosine of the contact angle (dyne/cm) of each laboratory and reservoir system. The values are typical defaults, marked **Defaults, confirm** until you edit them or press **Confirm**; check them for your field. The water must be denser than the hydrocarbon.
 3. Under **Fit settings**, choose the **Model** (**Power law** or **Brooks-Corey**), the **Weighting** (each sample or each point equally), the **Minimum Pc (psi)** at or below which points are left out as closure, the **Rock type source**, the **Permeability** and **Porosity** columns used for J, and the **Fallback** for a rock type without its own curve (**None** or **Pooled curve (All)**).
 4. Press **Fit**. It fits one curve per rock type to the core Pc data of all wells, in the background with **Cancel**; nothing is changed until you apply. The J-Sw, Sw versus height and FWL profile plots, and the **Fits per rock type** table (parameters with standard errors, samples, points, RMSE, basis and status), show the proposal. A fit with too little data says so in the status column. With rock typing on, one fit is made per rock type. With rock typing off, or when the rock types are fitted per zone, there is one fit for every sample, shown as **All**, and a note says so.
@@ -513,7 +513,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 - **Percentiles not converged at N = …; increase N.** The field P90, P50 or P10 moved by more than 2 % of the P50 between the first and the second half of the realisations. Raise **N** on **Parameters → Uncertainty** (up to 5000) and run again.
 - **Saturation-height Sw is blank.** `SW_SHF` is empty where the sample has no contact (set and accept a free water level for the well or its zone), the fit is missing or not applied (press **Fit**, then **Apply fit**), the permeability or porosity chosen for J is missing, or the contact is TVDSS and no KB is typed. The notes of the run count the samples in each class. Also check that **Compute saturation-height Sw on Run** is on and that the well was run after the last change.
 - **Use SHF Sw for pay and HCPV is greyed out.** A fit in use for the well is log-derived. Fit from core Pc data and apply it, or keep the resistivity Sw for pay.
-- **Fit is greyed out on the Saturation-Height tab.** No well has Pc data. Load it with **File → Load Pc Data…**.
+- **Fit is greyed out on the Saturation-Height tab.** No well has Pc data. Load it with **File → Open Pc Data…**.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Run All Wells skips a well.** Its results are up to date. Use **Run Analysis** (`F5`) to rerun the active well anyway.
 - **In the import dialog, a file well has no match.** The name in the well column does not match the header of any loaded well. Pick the loaded well by hand in the **Match** column, check the spelling or the UWI, or load the well's LAS file first. The **Assign to N wells** button stays disabled while a file well that fits several loaded wells is unresolved; hover it to see why.

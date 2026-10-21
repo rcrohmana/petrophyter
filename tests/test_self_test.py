@@ -14,6 +14,7 @@ def test_numeric_steps_pass_in_process():
     assert self_test.step_imports()
     assert self_test.step_lapack()
     assert self_test.step_uncertainty()
+    assert self_test.step_shf()
     assert self_test.step_pipeline()
 
 

@@ -297,7 +297,7 @@ def test_pc_actions_exist_and_follow_the_loaded_wells(window, tmp_path):
     window._load_single_las(_write(tmp_path, "a.las", well="BKS-01"))
     assert window.actions_["open_pc_multi"].isEnabled()
     labels = [a.text() for a in window._menus["file"].actions()]
-    assert "Load Pc Data…" in labels and "Load Pc Data (Multi-Well)…" in labels
+    assert "Open Pc Data…" in labels and "Open Pc Data (Multi-Well)…" in labels
     assert "open_pc" in window._LOAD_ACTIONS and "open_pc_multi" in window._LOAD_ACTIONS
 
 
@@ -415,4 +415,4 @@ def test_multi_well_action_on_a_file_without_a_well_column_says_so(three_wells, 
     three_wells._import_multi_well("pc", write(tmp_path, text, "plain.csv"))
     assert not dialogs.seen
     assert "no well column" in three_wells.banner.message_label.text()
-    assert "Load Pc Data" in three_wells.banner.message_label.text()
+    assert "Open Pc Data" in three_wells.banner.message_label.text()

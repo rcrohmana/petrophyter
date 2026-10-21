@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QFileDialog
 
         file, _ = QFileDialog.getOpenFileName(
-            self, "Load Pc Data", "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
+            self, "Open Pc Data", "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
         )
         if file:
             self._on_pc_file_selected(file)
@@ -589,12 +589,12 @@ class MainWindow(QMainWindow):
         act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
         act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
-        act("open_pc", "Load Pc Data…", "database", None, self._open_pc_dialog)
+        act("open_pc", "Open Pc Data…", "database", None, self._open_pc_dialog)
         act("open_tops_multi", "Open Formation Tops (Multi-Well)…", "layers", None,
             self._open_tops_multi_dialog)
         act("open_core_multi", "Open Core Data (Multi-Well)…", "database", None,
             self._open_core_multi_dialog)
-        act("open_pc_multi", "Load Pc Data (Multi-Well)…", "database", None,
+        act("open_pc_multi", "Open Pc Data (Multi-Well)…", "database", None,
             self._open_pc_multi_dialog)
         act("merge_las", "Merge LAS Files…", "merge", None, self._open_las_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
@@ -1611,7 +1611,7 @@ class MainWindow(QMainWindow):
 
     def _open_pc_multi_dialog(self):
         """Pick a Pc file holding the curves of several wells."""
-        self._open_multi_dialog("pc", "Load Pc Data (Multi-Well)")
+        self._open_multi_dialog("pc", "Open Pc Data (Multi-Well)")
 
     def _open_multi_dialog(self, kind: str, title: str):
         from PyQt6.QtWidgets import QFileDialog
@@ -1653,7 +1653,7 @@ class MainWindow(QMainWindow):
                 self.show_banner(
                     "warning",
                     f"{name} has no well column. Use "
-                    f"{'Load Pc Data' if kind == 'pc' else 'Open ' + what}… "
+                    f"{'Open Pc Data' if kind == 'pc' else 'Open ' + what}… "
                     "to attach it to the active well.",
                 )
             else:

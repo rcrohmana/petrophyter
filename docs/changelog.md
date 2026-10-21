@@ -7,7 +7,7 @@
 See the [release notes](releases/v1.10.0.md) for details. Saturation-height modelling is optional: **results
 do not change** until you enable it, and sessions that do not use it are saved as before.
 
-- **Load Pc Data…** and **Load Pc Data (Multi-Well)…** (File menu). Capillary pressure curves with the
+- **Open Pc Data…** and **Open Pc Data (Multi-Well)…** (File menu). Capillary pressure curves with the
   Pc unit and fluid system asked for when the file lacks them; porosity and permeability completed from
   the core data; excluded rows counted by reason. Loading changes no result.
 - **Saturation-Height tab** (after Rock Typing). Confirmable fluid densities and interfacial tensions; power

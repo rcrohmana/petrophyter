@@ -105,6 +105,29 @@ def step_uncertainty() -> str:
     return "qmc LatinHypercube ok"
 
 
+def step_shf() -> str:
+    """The saturation-height stack imports, a robust Leverett J fit (scipy least_squares) runs and Sw(h) evaluates."""
+    import numpy as np
+
+    import modules.pc_handler  # noqa: F401
+    import modules.shf_stage  # noqa: F401
+    import services.shf_service  # noqa: F401
+    from modules.shf import STATUS_OK, PcCurve, fit_core_pc, leverett_j, sw_shf
+
+    pc = np.array([5.0, 10.0, 20.0, 50.0, 100.0])
+    curves = []
+    for k, phi in ((50.0, 0.18), (200.0, 0.24), (10.0, 0.14)):
+        sw = np.clip(0.25 * leverett_j(pc, k, phi, 72.0) ** -0.6, 0.0, 1.0)
+        curves.append(PcCurve(pc_psi=pc, sw=sw, k_md=k, phi=phi, sigma_cos_lab=72.0))
+    fit = fit_core_pc(curves, "All")
+    if fit.status != STATUS_OK or not fit.params:
+        raise RuntimeError(f"saturation-height fit failed: {fit.status} {fit.message}")
+    sw = sw_shf(np.array([-5.0, 20.0, 200.0]), 100.0, 0.2, fit, 0.4, 26.0)
+    if not (sw[0] == 1.0 and 0.0 < sw[2] < sw[1] <= 1.0):
+        raise RuntimeError(f"unexpected Sw from height {sw}")
+    return "Leverett J fit ok"
+
+
 def step_pipeline() -> str:
     from modules.pipeline import run_pipeline
 
@@ -156,6 +179,7 @@ STEPS: List[Tuple[str, Callable[[], str]]] = [
     ("imports", step_imports),
     ("lapack", step_lapack),
     ("uncertainty", step_uncertainty),
+    ("saturation-height", step_shf),
     ("pipeline", step_pipeline),
     ("main window", step_window),
 ]
