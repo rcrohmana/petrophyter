@@ -2,7 +2,31 @@
 
 # Version History
 
-## v1.9.0 (Build 20261021) — Current Release
+## v1.10.0 (Build <build>) — Current Release
+
+See the [release notes](releases/v1.10.0.md) for details. Saturation-height modelling is optional: **results
+do not change** until you enable it, and sessions that do not use it are saved as before.
+
+- **Load Pc Data…** and **Load Pc Data (Multi-Well)…** (File menu). Capillary pressure curves with the
+  Pc unit and fluid system asked for when the file lacks them; porosity and permeability completed from
+  the core data; excluded rows counted by reason. Loading changes no result.
+- **Saturation-Height tab** (after Rock Typing). Confirmable fluid densities and interfacial tensions; power
+  law or Brooks-Corey J-function fits per rock type (one fit for all samples when rock typing is off or
+  fitted per zone) with plots, a fits table and **Apply fit**; **Fit from logs** as a cross-check only.
+- **Contacts per well and zone.** Free water level (not the OWC), fluid and optional water density per
+  zone, TVD or TVDSS with a typed KB; **Estimate FWL** then **Accept**.
+- **Compute saturation-height Sw on Run** adds `SW_SHF`, `HAFWL` and `SW_SHF_RESID`; a misfit table
+  (bias, RMSE, MAE, R2) for the well, each zone and each rock type.
+- **Use SHF Sw for pay and HCPV** (core Pc fits only) reads `SW_PAY` for pay, N/G, average Sw and HCPV.
+  Monte Carlo holds the saturation-height Sw fixed where it is used for pay.
+- **Log display.** **Sw SHF** (dashed) and **Sw SHF (pay)** (dotted) on the Sw track, a **Sw − Sw SHF**
+  residual track, and the height above the free water level in the interactive readout.
+- **SHF** sheet in the Excel workbook; the new columns in CSV, Excel and LAS.
+- **Session format 2.4** when the project holds saturation-height content; it opens in v1.9.x and older
+  without that data. An uncertainty setup with every distribution switched off is now saved with the session.
+- NNNN tests.
+
+## v1.9.0 (Build 20261021)
 
 See the [release notes](releases/v1.9.0.md) for details. Uncertainty analysis is optional: **results do
 not change** until you enable a distribution, and sessions that do not use it are saved as before.

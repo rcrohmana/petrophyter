@@ -31,7 +31,7 @@ The main window has five areas:
 - **Menu bar.** From left to right: **File**, **Session**, **Analysis**, **Parameters**, **Corrections**, **View**, and **Help**.
 - **Main toolbar.** Four controls on the left: **Open LAS File(s)…**, **Save Session…**, **Parameters Window**, and **Run Analysis**, plus **Run All Wells** once two or more wells are loaded. On the right, a well selector appears once two or more wells are loaded, next to a well indicator that shows a status dot and a summary of the active well such as `Well name · 12,345 rows · 18 curves`, or `No data loaded`.
 - **Data Browser.** A read-only tree on the left that summarizes the loaded well. See [What the Data Browser shows](#what-the-data-browser-shows).
-- **Result tabs.** Eight tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Rock Typing**, **Summary**, **Uncertainty**, and **Export**. A notification banner appears above the tabs when there is something to report.
+- **Result tabs.** Nine tabs in the central area: **Data QC**, **Petrophysics**, **Log Display**, **Diagnostics**, **Rock Typing**, **Saturation-Height**, **Summary**, **Uncertainty**, and **Export**. A notification banner appears above the tabs when there is something to report.
 - **Status bar.** The left side shows the latest message. The right side holds the stale-results label, a progress bar, and the QC chip. See [Running the analysis](#running-the-analysis).
 
 Parameters are not part of the main window. They live in the separate [Parameters window](#the-parameters-window).
@@ -45,7 +45,8 @@ Parameters are not part of the main window. They live in the separate [Parameter
 5. Optionally, with core porosity and permeability loaded, fit rock types in the **Rock Typing** tab and run again (see [Rock Typing](#rock-typing)).
 6. Review the result tabs.
 7. Optionally, give parameters distributions on **Parameters → Uncertainty** and run **Analysis → Run Uncertainty…** to get P90/P50/P10 (see [Uncertainty (Monte Carlo)](#uncertainty-monte-carlo)).
-8. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
+8. Optionally, with capillary pressure data loaded, fit and apply saturation-height curves, set a free water level and compute `SW_SHF` (see [Saturation-height](#saturation-height)).
+9. Save the results from the **Export** tab, and save the project with **Session → Save Session…**.
 
 ## Loading data
 
@@ -101,6 +102,17 @@ Each formation is also a **zone** that can carry its own parameters (see [Parame
 Use **File → Open Core Data…** and select a `.txt`, `.csv`, `.tsv`, or `.xlsx` file containing depth and at least porosity or permeability. Load a LAS file first. Core data go to the active well; a file with a well column opens the multi-well import dialog. Core porosity given in percent is converted to a fraction, and core depths are matched to log depths. Loading core data enables the **Core Matching** page in the Parameters window, and core validation results appear in the **Diagnostics** tab. Excluded rows and warnings (for example, a TVD depth column) appear in the load banner. The **Rock Typing** tab needs porosity and permeability in the same row of the core file; core that has only one of them still feeds the core comparison but not rock typing.
 
 See [Supported Data Formats](data-formats.md) for the complete column names, aliases, and unit rules for LAS, tops, and core files.
+
+### Opening capillary pressure data
+
+Use **File → Load Pc Data…** to load laboratory capillary pressure (Pc) curves (mercury injection, porous plate or centrifuge) for the active well, or **File → Load Pc Data (Multi-Well)…** for one file that holds the samples of several wells. Load a LAS file first. Neither entry has a keyboard shortcut. The file has one row per Pc point; the rows of one sample form one curve. Column names, units and the rows that are left out are in [Supported Data Formats](data-formats.md#capillary-pressure-data).
+
+- **Pc unit.** The unit comes from the column header. When the header names none, Petrophyter asks for it; in the multi-well dialog the import stays disabled until you choose.
+- **Fluid system.** A file without a system column asks for the system of the measurement (air-brine, mercury-air or oil-brine). The system sets the interfacial tension and contact angle used for the J-function.
+- **Porosity and permeability.** Every sample needs both. When the file has none, or a cell is blank, the value is taken from the well's core data at the nearest core depth within 0.5 ft, so load core data first if the Pc file lacks them. A sample that still has neither is left out and counted in the load banner.
+- **Several wells.** A file with a well column opens the same assignment dialog as tops and core data (see [Assigning tops and core data to several wells](#assigning-tops-and-core-data-to-several-wells)), with the Pc unit and system choices added.
+
+Loading Pc data changes no log result and does not mark a well as out of date. The number of curves and points appears in the status bar.
 
 ### Assigning tops and core data to several wells
 
@@ -305,7 +317,7 @@ Data-driven parameters used in the run (GR min, GR max, Rw, Rsh), a **Calculated
 
 ### Log Display
 
-A six-track composite log with a shared depth axis, and a seventh **Rock Type** track once the results hold rock types. Controls above the log:
+A six-track composite log with a shared depth axis, a seventh **Rock Type** track once the results hold rock types, and a **Sw − Sw SHF** residual track once the results hold saturation-height Sw. Controls above the log:
 
 - **Plot Engine** (under **Advanced** at the right of the controls; its tooltip names the engine in use): **Interactive (pyqtgraph)** or **Classic (matplotlib)**. When pyqtgraph is not installed, the first item reads **Interactive (requires pyqtgraph)**, cannot be selected, and **Classic (matplotlib)** is used.
 - **Top Depth** and **Bottom Depth:** the visible depth range.
@@ -323,6 +335,8 @@ The two engines differ as follows:
 Both engines draw the same tracks on the same ranges: GR (0–150 API) with Vsh (0–1) on a second axis, porosity from 0.5 to 0 v/v, Sw from 0 to 1 with the primary Sw solid (**Sw — <model> (primary)**) and the other Sw methods dashed, resistivity on a log axis (0.2–2000 ohm·m), and permeability on a log axis (0.01–10 000 mD). A Wyllie-Rose-only run shows the Wyllie-Rose permeability.
 
 **Rock Type track.** When rock typing is on and applied, both engines add a seventh track of stepped bands, one colour per rock type. The colours come from one ordered ramp, dark for rock type 1 (lowest flow zone indicator) to light for the highest, and unassigned depths are grey. A band is faded and hatched where the rock type comes from the log rather than from core, or where the sample lies close to a boundary between two rock types (a margin below 0.05 in log10 FZI), so a solid band is a rock type measured on core. In the Interactive engine the readout under the log gives the rock type, the FZI and the source at the cursor depth. The track is absent when the run has no rock types.
+
+**Saturation-height Sw.** When the results hold `SW_SHF`, both engines draw it on the Sw track as a dashed line labelled **Sw SHF**; with SHF Sw used for pay, **Sw SHF (pay)** is drawn dotted. The **Sw − Sw SHF** track, last in the log, shows `SW − SW_SHF` between −0.5 and 0.5: positive where the resistivity Sw is higher than the capillary model. In the Interactive engine the readout under the log also gives the height above the free water level (`HAFWL`, ft) at the cursor depth. Without saturation-height results the tracks are as before.
 
 In the Interactive engine every track has axes with real values and units (for example **GR (API)** and **RT (ohm·m, log)**) and a legend. The readout under the log lists every curve at the cursor depth with its unit and wraps instead of cutting off. **Reset View** returns every track to its automatic range after you have zoomed or panned.
 
@@ -361,6 +375,29 @@ The **Rock Typing** tab turns core porosity and permeability into rock types, wh
 **Banners.** **Core data changed since this fit; refit.** appears when the core of any well differs from the core the definitions were fitted on, and **Fit settings changed since this fit; refit.** when the overburden factors differ. Petrophyter never refits by itself. The other settings (reservoir only, core labels, Lorenz, R35 column, Min PHIE) change the applied definitions at once and need no refit.
 
 **Results for the active well.** After a run, **Pay per rock type (active well)** lists samples, gross sand, net reservoir, net pay, N/G pay, average PHIE and Sw, HCPV, geometric-mean permeability, FZI and the share of core-labelled samples per rock type, with an **unassigned** row; below it, the counts of samples by source (`core`, `log`, `x_vsh`, `x_phie`, `x_perm`, `x_nan`), near-boundary and outside-range samples, and the core-versus-log agreement. A well without core shows a warning that its rock types are log-derived with the project definitions: treat those as a surrogate, because they inherit the shape of the Timur or Wyllie-Rose permeability (see the caveat in [Calculation Methods](calculation-methods.md#rock-typing-v180)).
+
+### Saturation-height
+
+The **Saturation-Height** tab (after Rock Typing) turns capillary pressure data into a second water saturation, `SW_SHF`, from the height of each sample above the free water level. It is optional: until you turn on **Compute saturation-height Sw on Run**, no column is added and results, exports and saved sessions are the same as in version 1.9.0. `SW` stays the resistivity result. The equations and their limits are in [Calculation Methods](calculation-methods.md#saturation-height-modelling-v1100).
+
+**Workflow**
+
+1. Load Pc data (**File → Load Pc Data…**, see [Opening capillary pressure data](#opening-capillary-pressure-data)). Without it **Fit** is disabled and its tooltip says to import capillary pressure data first.
+2. **Confirm the fluids and tensions** in the left column: the water, oil and gas densities (g/cc) and the interfacial tension times cosine of the contact angle (dyne/cm) of each laboratory and reservoir system. The values are typical defaults, marked **Defaults, confirm** until you edit them or press **Confirm**; check them for your field. The water must be denser than the hydrocarbon.
+3. Under **Fit settings**, choose the **Model** (**Power law** or **Brooks-Corey**), the **Weighting** (each sample or each point equally), the **Minimum Pc (psi)** at or below which points are left out as closure, the **Rock type source**, the **Permeability** and **Porosity** columns used for J, and the **Fallback** for a rock type without its own curve (**None** or **Pooled curve (All)**).
+4. Press **Fit**. It fits one curve per rock type to the core Pc data of all wells, in the background with **Cancel**; nothing is changed until you apply. The J-Sw, Sw versus height and FWL profile plots, and the **Fits per rock type** table (parameters with standard errors, samples, points, RMSE, basis and status), show the proposal. A fit with too little data says so in the status column. With rock typing on, one fit is made per rock type. With rock typing off, or when the rock types are fitted per zone, there is one fit for every sample, shown as **All**, and a note says so.
+5. Press **Apply fit**. This is the only step that writes the fits to the project; wells already run are marked out of date.
+6. Set the **Contacts (active well)**. The table has a **Default** row and one row per zone; a zone without its own value uses the default, and a sample with no contact gets no `SW_SHF`. For each row give the **FWL (ft)**, the **Fluid** (oil or gas) and optionally the **Water density (g/cc)** (blank = the project value). Enter the free water level, not the oil-water contact: the contact sits higher by the entry height of the rock, and using it as the FWL makes Sw too high in the transition zone. The **Datum** is **TVD** (on the log's TVD axis) or **TVDSS**; a TVDSS contact needs the **KB (ft)** typed in. The LAS header values appear only as a hint under the fields and are never filled in. A TVDSS contact with no KB is not used (the status reads **KB required for TVDSS**). Heights follow the mapped TVD curve, else a TVD depth index, else measured depth assumed vertical, as for [formation temperature](#formation-temperature).
+7. Optionally press **Estimate FWL**. It scans candidate contacts for the one where `SW_SHF` best matches the log `SW`, and reports it, or reports that it is not identifiable (for example when the misfit hardly changes with the contact). Nothing changes until you press **Accept**, which stores the contacts for the well and marks it out of date.
+8. Check **Compute saturation-height Sw on Run**. A line under it says what is still missing (**Fit and apply a curve to compute saturation-height Sw.**, **Set a free water level for the well below, then accept it.**, or **Run Analysis (or Run All Wells) to update the saturation-height Sw.** with a **Run All Wells** button).
+9. Run the analysis (`F5`, or **Run All Wells**).
+10. Read the **Misfit (active well, last run)** table: for the well, each zone and each rock type, the samples, bias (mean `SW − SW_SHF`), RMSE, MAE and R², with the basis. They are taken over net reservoir samples above the free water level. A large bias means the contact, the fit or the resistivity inputs need a second look. The same numbers are on the **SHF** sheet of the Excel export.
+
+**Fit from logs.** After a run, **Fit from logs** fits the curve to the log `Sw` above the contacts instead of to core Pc. It is not independent of the resistivity `Sw` (it smooths `SW` along a hydrostatic profile), so it is a cross-check only: the fits are shown as **log-derived**, and **Use SHF Sw for pay and HCPV** is disabled for any well that uses one.
+
+**Use SHF Sw for pay and HCPV.** By default `SW_SHF` is a cross-check and pay, N/G, average Sw and HCPV use `SW`. When you check **Use SHF Sw for pay and HCPV** (core Pc fits only), the pay flags, net pay, N/G, average Sw and HCPV use `SW_PAY`, the saturation-height Sw where there is one and `SW` elsewhere; the counts are listed in the run's notes. In a Monte Carlo run, the samples that use the saturation-height Sw keep it in every realisation (see [Uncertainty (Monte Carlo)](#uncertainty-monte-carlo)).
+
+**What to keep in mind.** The permeability used for J can come from the resistivity Sw (through Swirr), and the log rock types are classified from the same permeability, so the residual `SW − SW_SHF` can look smaller than the real disagreement. Core permeability is the independent choice. There is no pressure-gradient free water level and no closure correction beyond the minimum Pc.
 
 ### Summary
 
@@ -426,6 +463,8 @@ Choose the **Scope**: **Active well** or, with two or more wells, **All wells**.
 
 With a Monte Carlo result, the workbook also gets an **Uncertainty** and a **Tornado** sheet (see [Visualization and Export](visualization-and-export.md#uncertainty-in-the-exports-v190)); CSV and LAS are unchanged.
 
+With saturation-height modelling run, the results (CSV, Excel and LAS) carry `SW_SHF`, `HAFWL` and `SW_SHF_RESID`, plus `SW_PAY` when SHF Sw is used for pay, and the workbook adds an **SHF** sheet (see [Visualization and Export](visualization-and-export.md#saturation-height-in-the-exports-v1100)). Without it, nothing is added.
+
 With rock typing on, the results (CSV, and the well sheets and the combined sheet of the workbook) carry the extra columns `RQI`, `FZI`, `ROCK_TYPE`, `ROCK_TYPE_SOURCE` and `RT_MARGIN`, plus `PERM_RT` and `R35` when those are turned on. The workbook adds a **Rock Types** sheet with one row per well and rock type, an **Unassigned** row per well, and **Field total** rows when the definitions are project-wide. **Export definitions** (shown once definitions are applied) saves the rock-type definitions table to CSV. LAS writes `ROCK_TYPE`, `FZI`, `RQI`, `RT_MARGIN` and `PERM_RT` as numeric curves; the text column `ROCK_TYPE_SOURCE` is left out, like the other text columns. Without rock typing, nothing is added.
 
 A status line above the preview reads **Ready — results current**, or for example **2 wells out of date · 1 latest run failed**. Before exporting wells that are out of date or whose latest run failed, a dialog offers **Run out-of-date wells** (runs them and returns to the Export tab; it does not export), **Export last successful results** (the status is written in the file), or **Cancel**. Failed wells without earlier results are left out and named. Every export records the Petrophyter version, the run time, the status, and the parameter hash: a **Provenance** sheet in Excel, an `~OTHER` section in LAS, and a `<name>.provenance.txt` file next to a CSV. See [Data Formats](data-formats.md#exported-files). Merged data is saved as LAS with **File → Save Merged LAS…**.
@@ -439,7 +478,7 @@ A session is a JSON file that stores the project, so you can reopen it later.
 
 An asterisk at the start of the window title (`*BKS-01 — Petrophyter`) means there are unsaved changes: loaded or removed wells, tops, core data, merges, parameters, or curve mapping. Running an analysis does not count. Closing the window, loading a session, or starting a new project with unsaved changes asks **Save**, **Discard**, or **Cancel**; **Cancel**, or cancelling the Save's file dialog, keeps everything as it is.
 
-Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. The rock-type definitions and settings are saved with the session, so a loaded session keeps them. So are the Monte Carlo distributions, N, seed and sampling, but not the Monte Carlo result: run **Analysis → Run Uncertainty…** again and the seed reproduces it. See [Session Management](session-management.md) for the complete list of saved parameters.
+Sessions store paths, not the data or the results. Restored wells need a run: press **Run All Wells** to reproduce the results. A session saved by an older version (format 1.x) holds parameters only; loading it applies them to the project and the active well, and leaves the loaded wells in place. The rock-type definitions and settings are saved with the session, so a loaded session keeps them. So are the Monte Carlo distributions, N, seed and sampling, but not the Monte Carlo result: run **Analysis → Run Uncertainty…** again and the seed reproduces it. A session that holds saturation-height content (the settings, applied fits, Pc data or contacts) is saved as format 2.4; Pc files are read again from their saved paths. See [Session Management](session-management.md) for the complete list of saved parameters.
 
 ## Appearance
 
@@ -472,6 +511,9 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 - **A well is missing from the Uncertainty tab.** It could not be evaluated (no RT curve, no effective porosity, or the analysis failed). The Diagnostics list on the tab names it and gives the reason; the field row leaves it out.
 - **The Uncertainty tab shows Out of date.** A well's parameters, the distributions, N, the seed or the sampling changed since the run. Press **Analysis → Run Uncertainty…** again.
 - **Percentiles not converged at N = …; increase N.** The field P90, P50 or P10 moved by more than 2 % of the P50 between the first and the second half of the realisations. Raise **N** on **Parameters → Uncertainty** (up to 5000) and run again.
+- **Saturation-height Sw is blank.** `SW_SHF` is empty where the sample has no contact (set and accept a free water level for the well or its zone), the fit is missing or not applied (press **Fit**, then **Apply fit**), the permeability or porosity chosen for J is missing, or the contact is TVDSS and no KB is typed. The notes of the run count the samples in each class. Also check that **Compute saturation-height Sw on Run** is on and that the well was run after the last change.
+- **Use SHF Sw for pay and HCPV is greyed out.** A fit in use for the well is log-derived. Fit from core Pc data and apply it, or keep the resistivity Sw for pay.
+- **Fit is greyed out on the Saturation-Height tab.** No well has Pc data. Load it with **File → Load Pc Data…**.
 - **Core Matching is greyed out.** Load core data with **File → Open Core Data…** first.
 - **Run All Wells skips a well.** Its results are up to date. Use **Run Analysis** (`F5`) to rerun the active well anyway.
 - **In the import dialog, a file well has no match.** The name in the well column does not match the header of any loaded well. Pick the loaded well by hand in the **Match** column, check the spelling or the UWI, or load the well's LAS file first. The **Assign to N wells** button stays disabled while a file well that fits several loaded wells is unresolved; hover it to see why.

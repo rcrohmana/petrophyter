@@ -28,6 +28,16 @@ Present in both displays only when the results hold `ROCK_TYPE` (rock typing on,
 
 The **Rock Typing** tab has its own plots: the FZI histogram and probability plot, porosity-permeability with constant-FZI curves, RQI against φz, Winland R35 lines, and the Lorenz and stratigraphic modified Lorenz plots. See the [User Guide](user-guide.md#rock-typing).
 
+## Saturation-Height Sw and Residual Track *(v1.10.0)*
+
+Present in both displays only when the results hold `SW_SHF` (saturation-height modelling on, a fit and a contact set, and a run made):
+
+- **Sw track.** `SW_SHF` is drawn dashed and labelled **Sw SHF**. When SHF Sw is used for pay and HCPV, `SW_PAY` is also drawn, dotted, as **Sw SHF (pay)**. The resistivity `SW` keeps its usual line.
+- **Residual track.** A last track, after the Rock Type track, titled **Sw − Sw SHF**, shows `SW_SHF_RESID` (`SW − SW_SHF`) on a fixed range of −0.5 to 0.5 with a zero line. Positive values mean the resistivity Sw is higher than the capillary model. The track is absent without `SW_SHF_RESID`.
+- **Readout.** In the interactive display the readout under the log gives the height above the free water level (`HAFWL`, ft) at the cursor depth.
+
+The **Saturation-Height** tab has its own plots: J against Sw with the fitted curves, Sw against height, and the profile around the free water level. See the [User Guide](user-guide.md#saturation-height).
+
 ## Uncertainty Tab *(v1.9.0)*
 
 The **Uncertainty** tab (after Summary) draws the latest Monte Carlo result for the row selected in its table (the field, a well, or a zone) and the selected metric.
