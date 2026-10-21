@@ -583,3 +583,34 @@ def test_inputs_are_not_mutated():
     assert mapping == mapping0 and repr(params) == repr(params0) and repr(vars(tops)) == tops_state
     assert repr(fw.base_summary) == repr(summary0)
     assert U.config_to_dict(cfg) == cfg0
+
+
+# ---- sw_hold (SHF Sw held fixed for pay) -----------------------------------
+
+def test_not_varied_text_default_unchanged_and_shf_appended():
+    assert U.not_varied_text() == U.NOT_VARIED == "porosity, shale point, GR baseline"
+    assert U.not_varied_text(shf_pay=True) == U.NOT_VARIED + ", SHF Sw where used for pay"
+
+
+def test_sw_hold_none_is_bit_identical_and_hold_forces_samples():
+    fw = synth_frozen("h", 0.2, 0.4)
+    theta = {"rw": 0.3, "n": -0.1}
+    base = U.evaluate(fw, theta)
+    assert all(s.sw_hold is None for s in fw.segments)
+    seg = fw.segments[0]
+    hold = np.full(len(seg.positions), np.nan)
+    hold[:100] = 1.0                       # Sw = 1 -> never pay
+    seg.sw_hold = hold
+    held = U.evaluate(fw, theta)
+    seg.sw_hold = np.full(len(seg.positions), np.nan)   # all NaN = no hold
+    nan_hold = U.evaluate(fw, theta)
+    seg.sw_hold = None
+    again = U.evaluate(fw, theta)
+    for m in U.METRICS:
+        np.testing.assert_array_equal(nan_hold["well"][m], base["well"][m])
+        np.testing.assert_array_equal(again["well"][m], base["well"][m])
+    assert held["well"]["net_pay"] < base["well"]["net_pay"]
+    # fully held samples ignore the varied saturation parameters
+    seg.sw_hold = np.full(len(seg.positions), 1.0)
+    assert U.evaluate(fw, {"rw": 0.3})["well"]["net_pay"] == 0.0
+    assert U.evaluate(fw, {"rw": -0.3})["well"]["net_pay"] == 0.0

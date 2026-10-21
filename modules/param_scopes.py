@@ -543,6 +543,15 @@ def is_tvd_like(name) -> bool:
     return str(name or "").upper() in TVD_MNEMONICS
 
 
+def tvd_mnemonic_is_subsea(name) -> bool:
+    """True when a mapped TVD mnemonic looks subsea (contains ``SS``: TVDSS, TVD_SS, SSTVD).
+
+    A subsea depth is negative above the datum and offset from KB, so it must not be
+    read as a depth below the reference without a typed KB.
+    """
+    return "SS" in str(name or "").upper()
+
+
 @dataclass
 class TvdSource:
     """TVD (ft) as a function of MD (ft) for one well, with its provenance.
@@ -611,7 +620,7 @@ def header_deviation_hint(header: Optional[Dict]) -> bool:
 
 
 def resolve_tvd(data, tvd_curve=None, depth_reference=None,
-                deviation_hint: bool = False) -> TvdSource:
+                deviation_hint: bool = False, noun: str = "temperatures") -> TvdSource:
     """TVD source for a well: mapped curve, then TVD depth index, then MD (§5.1).
 
     ``data`` has the ``DEPTH`` column (MD, or TVD when ``depth_reference`` is
@@ -635,11 +644,11 @@ def resolve_tvd(data, tvd_curve=None, depth_reference=None,
         return TvdSource("index", "depth index (TVD)", notes)
     like = [c for c in data.columns if c != "DEPTH" and is_tvd_like(c)]
     if name is None and like:
-        notes.append(f"Curve {like[0]} looks like TVD but is not mapped; temperatures "
+        notes.append(f"Curve {like[0]} looks like TVD but is not mapped; {noun} "
                      "assume a vertical well. Map it in Curve Mapping.")
     elif name is None and deviation_hint:
         notes.append("The header has an inclination/deviation entry but no TVD curve is "
-                     "mapped; temperatures assume a vertical well.")
+                     f"mapped; {noun} assume a vertical well.")
     return TvdSource("md", "MD (assumed vertical)", notes)
 
 

@@ -335,6 +335,17 @@ class TemperatureContext:
     source: Dict                         # recorded in summary["temperature"]
 
 
+def _tvd_source(data: pd.DataFrame, p: Dict, curve_mapping: Optional[Dict] = None,
+                noun: str = "temperatures"):
+    """TVD source of a well (see :func:`resolve_tvd`) on the already filtered ``data``.
+
+    Resolve it once per well and reuse it; ``noun`` words the vertical-well note.
+    """
+    tvd_curve = (curve_mapping or p.get("curve_mapping") or {}).get("TVD")
+    return resolve_tvd(data, tvd_curve, p.get("depth_reference"),
+                       bool(p.get("header_deviation")), noun=noun)
+
+
 def temperature_context(data: pd.DataFrame, p: Dict,
                         curve_mapping: Optional[Dict] = None) -> Optional[TemperatureContext]:
     """Formation temperature of every sample, or None when nothing needs it.
@@ -347,9 +358,7 @@ def temperature_context(data: pd.DataFrame, p: Dict,
     """
     if not (p.get("temp_correction") or p.get("ws_b_auto")):
         return None
-    tvd_curve = (curve_mapping or p.get("curve_mapping") or {}).get("TVD")
-    tvd_source = resolve_tvd(data, tvd_curve, p.get("depth_reference"),
-                             bool(p.get("header_deviation")))
+    tvd_source = _tvd_source(data, p, curve_mapping)
     tvd = pd.Series(tvd_source.at(data["DEPTH"].to_numpy(dtype=float)), index=data.index)
     datum = float(p.get("temp_datum_depth") or 0.0)
     temp = formation_temperature(tvd, float(p["surface_temp"]), float(p["temp_gradient"]), datum)
@@ -846,9 +855,12 @@ class SegmentBasis:
     phie: np.ndarray
     phit: np.ndarray
     sw_fallback: Optional[str] = None
+    # Per-sample Sw held fixed in Monte Carlo (SHF Sw used for pay); NaN = use resistivity Sw.
+    sw_hold: Optional[np.ndarray] = None
 
 
-def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay):
+def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay,
+                   sw_hold=None):
     """Append one :class:`SegmentBasis` to ``capture`` (a list) from a saturation result."""
     capture.append(SegmentBasis(
         zone=zone, positions=np.asarray(positions, dtype=np.intp), params=sp,
@@ -856,6 +868,7 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
         rw_quality=rw_quality,
         vsh=np.array(pay["vsh"], dtype=float), phie=np.array(pay["phie"], dtype=float),
         phit=np.array(pay["phit"], dtype=float), sw_fallback=pay["sw_fallback"],
+        sw_hold=None if sw_hold is None else np.array(sw_hold, dtype=float),
     ))
 
 

@@ -107,3 +107,15 @@ def test_zone_without_shale_is_an_info_issue_with_the_zone():
 def test_no_rt_case_has_field_level_codes(summaries):
     codes = {i["code"] for i in summaries["no_rt_no_dt"]["issues"]}
     assert "SW_DEFAULTED_NO_RT" in codes
+
+
+def test_saturation_height_codes_are_listed():
+    expected = {"SHF_NO_CONTACT", "SHF_NO_MODEL", "SHF_NO_PERM_PHI", "SHF_UNCLASSIFIED",
+                "SHF_TVD_NOTE", "SHF_TVDSS_SUSPECT", "SHF_PAY_FALLBACK", "SHF_PAY_REFUSED",
+                "SHF_ZONE_SCOPE_RT"}
+    assert expected <= set(ISSUE_CODES)
+    log = IssueLog()
+    for code in expected:
+        log.add(code, code)
+    assert all(i["target"] == "diagnostics" for i in log.issues)
+    assert ISSUE_CODES["SHF_ZONE_SCOPE_RT"][0] == "info"

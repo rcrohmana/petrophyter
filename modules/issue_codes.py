@@ -60,6 +60,16 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "SWIRR_LIMITED": ("info", "params.swirr"),
     "SWIRR_MAXED": ("info", "params.swirr"),
     "SWIRR_FALLBACK": ("warning", "params.swirr"),
+    # Saturation-height model
+    "SHF_NO_CONTACT": ("warning", "diagnostics"),
+    "SHF_NO_MODEL": ("warning", "diagnostics"),
+    "SHF_NO_PERM_PHI": ("warning", "diagnostics"),
+    "SHF_UNCLASSIFIED": ("warning", "diagnostics"),
+    "SHF_TVD_NOTE": ("warning", "diagnostics"),
+    "SHF_TVDSS_SUSPECT": ("warning", "diagnostics"),
+    "SHF_PAY_FALLBACK": ("warning", "diagnostics"),
+    "SHF_PAY_REFUSED": ("warning", "diagnostics"),
+    "SHF_ZONE_SCOPE_RT": ("info", "diagnostics"),
 }
 
 

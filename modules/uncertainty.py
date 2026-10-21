@@ -78,6 +78,12 @@ CONVERGENCE_TOLERANCE = 0.02   # half-sample percentiles within 2 % of P50
 
 # Inputs held at their base value in every realisation (stated in the result header and exports).
 NOT_VARIED = "porosity, shale point, GR baseline"
+NOT_VARIED_SHF = "SHF Sw where used for pay"
+
+
+def not_varied_text(shf_pay: bool = False) -> str:
+    """The "not varied" list; with ``shf_pay`` it adds the SHF Sw held for pay."""
+    return f"{NOT_VARIED}, {NOT_VARIED_SHF}" if shf_pay else NOT_VARIED
 
 
 @dataclass
@@ -489,6 +495,7 @@ class _Segment:
     calc: PetrophysicsCalculator
     sw_base: Optional[np.ndarray] = None
     rw_quality: Optional[str] = None     # auto-Rw quality of this segment, None for a fixed Rw
+    sw_hold: Optional[np.ndarray] = None  # Sw held fixed per sample (NaN = resistivity Sw)
 
 
 @dataclass
@@ -564,7 +571,8 @@ def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> 
             rw=b.rw, rsh=b.rsh, rsh_auto=bool(b.rsh_auto), tctx=b.tctx, has_rt=bool(b.has_rt),
             data=seg_data, vsh_s=pd.Series(b.vsh, index=seg_data.index),
             vsh=np.asarray(b.vsh, dtype=float), phie=np.asarray(b.phie, dtype=float), calc=calc,
-            rw_quality=(str(b.rw_quality) if b.rw_quality else None))
+            rw_quality=(str(b.rw_quality) if b.rw_quality else None),
+            sw_hold=(None if b.sw_hold is None else np.asarray(b.sw_hold, dtype=float)))
         vsh_all[seg.positions] = seg.vsh
         phie_all[seg.positions] = seg.phie
         if seg.has_rt:
@@ -643,6 +651,8 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
             rw = apply("rw", seg.rw) if "rw" in theta else seg.rw
             rsh = apply("rsh", seg.rsh) if "rsh" in theta else seg.rsh
             sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn)
+        if seg.sw_hold is not None:
+            sw = np.where(np.isfinite(seg.sw_hold), seg.sw_hold, sw)
         pos = seg.positions
         g = seg.vsh < c_v
         r = g & (seg.phie > c_phi)
@@ -832,7 +842,8 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
     excluded = [dict(e) for e in (excluded or [])]
     for e in excluded:
         warns.append(f"Well {e.get('name', e.get('key'))} excluded: {e.get('reason', '')}")
-    warns.append(f"Not varied: {NOT_VARIED}")
+    shf_pay = any(seg.sw_hold is not None for fw in frozen_wells for seg in fw.segments)
+    warns.append(f"Not varied: {not_varied_text(shf_pay)}")
 
     return MCResult(
         config=config_to_dict(cfg), n=int(n), seed=int(cfg.seed), sampling=cfg.sampling,

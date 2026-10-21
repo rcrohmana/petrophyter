@@ -167,3 +167,9 @@ def test_only_primary_no_method_defaults_to_one():
     assert (full[0] == 1.0).all() and (fast[0] == 1.0).all()
     assert full[3] == fast[3] == SW_DEFAULTED
     assert w_full == w_fast and len(w_full) == 1
+
+
+def test_capture_sw_hold_is_none_today():
+    capture = []
+    _run(next(iter(CASES)), capture=capture)
+    assert capture and all(b.sw_hold is None for b in capture)

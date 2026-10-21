@@ -323,3 +323,22 @@ def test_rsh_note_appears_only_for_a_manual_unreferenced_rsh_with_correction_on(
     assert not group.rsh_note.isHidden() and group.get_params()["rsh_ref_temp"] is None
     group.set_rsh_manual(False)                            # auto Rsh is corrected
     assert group.rsh_note.isHidden()
+
+
+def test_tvd_source_helper_matches_temperature_context_and_words_the_note():
+    from modules.pipeline import _tvd_source
+    df = frame()
+    src = _tvd_source(df, params(), {"TVD": "TVDKB"})
+    ctx = temperature_context(df, params(), {"TVD": "TVDKB"})
+    assert src.label == ctx.source["tvd_source"] and src.kind == ctx.source["kind"]
+    temp_note = _tvd_source(df, params(), {"TVD": "None"}).notes[0]
+    assert "temperatures assume a vertical well" in temp_note
+    height_note = _tvd_source(df, params(), {"TVD": "None"}, noun="heights").notes[0]
+    assert "heights assume a vertical well" in height_note
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("TVDSS", True), ("tvd_ss", True), ("SSTVD", True), ("TVD", False),
+    ("TVDKB", False), ("TVDRKB", False), (None, False), ("", False)])
+def test_tvd_mnemonic_is_subsea(name, expected):
+    assert ps.tvd_mnemonic_is_subsea(name) is expected
