@@ -15,6 +15,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
+from modules.shf_config import merge_shf, shf_in_use
 from modules.uncertainty import UncertaintyConfig, config_from_dict, config_to_dict
 from version import APP_VERSION, version_tuple
 
@@ -139,25 +140,63 @@ def _major(version) -> Optional[int]:
         return None
 
 
-def _uncertainty_in_use(project) -> bool:
+def _uncertainty_configured(project) -> bool:
+    """True when an uncertainty distribution is enabled or the setup differs from a fresh one."""
     cfg = getattr(project, "uncertainty", None)
+    if cfg is None:
+        return False
     dists = getattr(cfg, "distributions", None) or {}
-    return any(getattr(d, "enabled", False) for d in dists.values())
+    if any(getattr(d, "enabled", False) for d in dists.values()):
+        return True
+    return config_to_dict(cfg) != config_to_dict(UncertaintyConfig())
+
+
+def _clean_contacts(raw) -> Dict:
+    """Fluid contacts read back from a session; anything malformed is dropped."""
+    if not isinstance(raw, dict):
+        return {}
+
+    def num(v):
+        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else None
+
+    def row(r):
+        if not isinstance(r, dict) or num(r.get("fwl")) is None:
+            return None
+        return {"fwl": num(r["fwl"]),
+                "fluid": r["fluid"] if r.get("fluid") in ("oil", "gas") else "oil",
+                "water_density": num(r.get("water_density"))}
+
+    out: Dict = {}
+    if raw.get("datum") in ("TVD", "TVDSS"):
+        out["datum"] = raw["datum"]
+    if "kb_ft" in raw:
+        out["kb_ft"] = num(raw["kb_ft"])
+    default = row(raw.get("default"))
+    if default:
+        out["default"] = default
+    raw_zones = raw.get("zones") if isinstance(raw.get("zones"), dict) else {}
+    zones = {str(z): r for z, v in raw_zones.items() if (r := row(v))}
+    if zones:
+        out["zones"] = zones
+    return out
 
 
 def session_version_for(project_or_model) -> str:
-    """"2.3" when an uncertainty distribution is enabled; "2.2" when rock typing is on or the
-    project holds rock types; else "2.1".
+    """The highest version among the features the project uses.
 
-    Accepts an ``AppModel`` or a ``Project``, so a session that does not use the
-    feature stays readable by the previous release.
+    "2.4" when it holds saturation-height content (Pc data, fits, contacts or SHF on); "2.3" when
+    the uncertainty setup is configured (a distribution enabled, or any setting changed); "2.2"
+    when rock typing is on or the project holds rock types; else "2.1".
+
+    Accepts an ``AppModel`` or a ``Project``, so a session that does not use a feature stays
+    readable by the previous release.
     """
     project = getattr(project_or_model, "project", project_or_model)
-    in_use = (bool(getattr(project_or_model, "rock_typing_enabled", False))
-              or bool(getattr(project, "rock_types", None)))
-    if _uncertainty_in_use(project):
-        return "2.3"
-    return "2.2" if in_use else "2.1"
+    rock = (bool(getattr(project_or_model, "rock_typing_enabled", False))
+            or bool(getattr(project, "rock_types", None)))
+    ladder = ((shf_in_use(project), "2.4"), (_uncertainty_configured(project), "2.3"),
+              (rock, "2.2"))
+    return max((v for on, v in ladder if on), key=version_tuple, default="2.1")
 
 
 def session_app_version(data) -> Optional[str]:
@@ -534,7 +573,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.3"
+    SESSION_VERSION = "2.4"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
@@ -661,6 +700,7 @@ class SessionService(QObject):
                     except Exception:
                         model.project.uncertainty = UncertaintyConfig()
                     model.project.uncertainty_result = None
+                    model.project.shf = merge_shf(session_data.get("shf"))
                 return True
 
             self._upgrade_legacy(session_data)
@@ -1019,6 +1059,7 @@ class SessionService(QObject):
         if "overrides" in entry:
             ds.overrides = copy.deepcopy(entry["overrides"] or {})
         ds.zone_overrides = copy.deepcopy(entry.get("zone_overrides") or {})
+        ds.shf_contacts = _clean_contacts(entry.get("shf_contacts"))
 
         if entry.get("tops_path"):
             path = entry["tops_path"]
@@ -1113,6 +1154,8 @@ class SessionService(QObject):
                 "tops_import": getattr(ds, "tops_import", None),
                 "core_import": getattr(ds, "core_import", None),
                 "core_depth_unit": getattr(ds, "core_depth_unit", None),
+                **({"shf_contacts": copy.deepcopy(ds.shf_contacts)}
+                   if getattr(ds, "shf_contacts", None) else {}),
                 **hashes,
             })
         data = {
@@ -1129,7 +1172,9 @@ class SessionService(QObject):
         if rock_types:
             # Written only when the project holds rock types, so a 2.1 file stays as before.
             data["rock_types"] = rock_types
-        if project is not None and _uncertainty_in_use(project):
-            # Written only when a distribution is enabled; results are never saved.
+        if project is not None and _uncertainty_configured(project):
+            # Written once the setup is configured (enabled or changed); results are never saved.
             data["uncertainty"] = config_to_dict(project.uncertainty)
+        if project is not None and shf_in_use(project):
+            data["shf"] = copy.deepcopy(project.shf)
         return _json_safe(data)

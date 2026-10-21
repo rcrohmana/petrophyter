@@ -15,6 +15,7 @@ from typing import Dict, Iterator, List, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from modules.las_utils import normalize_well_name, well_key
+from modules.shf_config import shf_defaults
 from modules.uncertainty import UncertaintyConfig
 
 
@@ -67,6 +68,12 @@ class WellDataset:
         # SHA-256 of the tops / core file, taken when it was read (H3).
         self.tops_sha256 = None
         self.core_sha256 = None
+        # Saturation-height fluid contacts (an input, kept out of DERIVED_FIELDS):
+        # {"datum": "TVD" | "TVDSS", "kb_ft": float | None,
+        #  "default": row, "zones": {ZONE: row}} with
+        # row = {"fwl": float (ft), "fluid": "oil" | "gas",
+        #        "water_density": float | None (g/cc; None = project water density)}.
+        self.shf_contacts: Dict = {}
         self.curve_mapping: Dict[str, str] = default_curve_mapping()
         self.analysis_mode = "Whole Well"
         self.selected_formations: List[str] = []
@@ -160,6 +167,7 @@ class Project(QObject):
     active_well_changed = pyqtSignal(str)
     well_updated = pyqtSignal(str)
     tops_changed = pyqtSignal(list)   # keys of wells whose formation tops were replaced
+    pc_changed = pyqtSignal(list)     # keys of wells whose Pc data were replaced
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -173,6 +181,8 @@ class Project(QObject):
         # Monte Carlo uncertainty: the saved setup, and the latest run (never saved).
         self.uncertainty = UncertaintyConfig()
         self.uncertainty_result = None
+        # Saturation-height settings and stored fits (modules.shf_config).
+        self.shf = shf_defaults()
 
     # ---- access ----
     def __len__(self) -> int:
@@ -279,5 +289,6 @@ class Project(QObject):
         self.rock_types = None
         self.uncertainty = UncertaintyConfig()
         self.uncertainty_result = None
+        self.shf = shf_defaults()
         self.wells_changed.emit()
         self.active_well_changed.emit("")

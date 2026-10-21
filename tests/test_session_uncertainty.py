@@ -82,11 +82,50 @@ def test_rock_typing_plus_uncertainty_is_2_3(three_wells, tmp_path):
     assert "rock_types" in saved and "uncertainty" in saved
 
 
-def test_configured_but_nothing_enabled_keeps_2_1(three_wells, tmp_path):
+def _configured_off():
+    cfg = UncertaintyConfig(n=500, seed=99, sampling="random")
+    cfg.distributions["rw"].low, cfg.distributions["rw"].high = -0.3, 0.1
+    cfg.correlations[("m", "n")] = -0.4
+    return cfg
+
+
+def test_configured_but_nothing_enabled_round_trips_as_2_3(three_wells, tmp_path):
     model, _ = three_wells
-    model.project.uncertainty = UncertaintyConfig(n=500)
+    cfg = _configured_off()
+    model.project.uncertainty = cfg
+    assert cfg.enabled_names() == ()
+    path, saved = _save(model, tmp_path)
+    assert saved["_session_version"] == "2.3" and "uncertainty" in saved
+    fresh, notes, _ = _restore(path)
+    assert notes == []
+    assert fresh.project.uncertainty == cfg
+    assert fresh.project.uncertainty.enabled_names() == ()
+
+
+def test_each_changed_field_counts_as_configured(three_wells):
+    model, _ = three_wells
+    for change in (lambda c: setattr(c, "n", 301), lambda c: setattr(c, "seed", 1),
+                   lambda c: setattr(c, "sampling", "random"),
+                   lambda c: c.correlations.update({("m", "n"): 0.3}),
+                   lambda c: setattr(c.distributions["rw"], "high", 0.9)):
+        model.project.uncertainty = UncertaintyConfig()
+        change(model.project.uncertainty)
+        assert session_version_for(model) == "2.3"
+
+
+def test_default_setup_with_nothing_enabled_writes_no_key_and_2_1(three_wells, tmp_path):
+    model, _ = three_wells
+    model.project.uncertainty = UncertaintyConfig()
     _, saved = _save(model, tmp_path)
     assert saved["_session_version"] == "2.1" and "uncertainty" not in saved
+
+
+def test_enabled_distribution_still_writes_2_3(three_wells, tmp_path):
+    model, _ = three_wells
+    model.project.uncertainty = UncertaintyConfig()
+    model.project.uncertainty.distributions["rw"].enabled = True
+    _, saved = _save(model, tmp_path)
+    assert saved["_session_version"] == "2.3" and "uncertainty" in saved
 
 
 def test_malformed_uncertainty_falls_back_to_defaults(tmp_path):
