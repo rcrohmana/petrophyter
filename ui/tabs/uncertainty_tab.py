@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.uncertainty import NOT_VARIED
+from modules.uncertainty import NOT_VARIED, format_offset, rw_quality_text
 from services.uncertainty_service import result_is_stale
 from themes.colors import get_plot_color
 from themes.helpers import set_status
@@ -223,8 +223,20 @@ class UncertaintyTab(QWidget):
         return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------ running
+    def set_run_gate(self, reason: str):
+        """The main window's reason Run is unavailable ("" when it is available)."""
+        self._run_gate = reason or ""
+        self._apply_run_state()
+
+    def _apply_run_state(self):
+        running = getattr(self, "_running", False)
+        gate = getattr(self, "_run_gate", "")
+        self.run_button.setEnabled(not running and not gate)
+        self.run_button.setToolTip(gate)
+
     def set_running(self, running: bool):
-        self.run_button.setEnabled(not running)
+        self._running = bool(running)
+        self._apply_run_state()
         self.cancel_button.setEnabled(bool(running))
         if not running:
             self.progress_label.setText("")
@@ -328,9 +340,12 @@ class UncertaintyTab(QWidget):
     def _render_header(self):
         r = self._result
         sampling = str(getattr(r, "sampling", "") or "")
-        self.header_label.setText(
-            f"Seed {r.seed}  |  N {r.n}  |  Sampling {sampling}  |  "
-            f"{float(r.elapsed_s):.1f} s")
+        text = (f"Seed {r.seed}  |  N {r.n}  |  Sampling {sampling}  |  "
+                f"{float(r.elapsed_s):.1f} s")
+        rw_text = rw_quality_text(r)
+        if rw_text:
+            text += f"  |  {rw_text}"
+        self.header_label.setText(text)
 
     def _render_diagnostics(self):
         r = self._result
@@ -431,8 +446,15 @@ class UncertaintyTab(QWidget):
         ax.barh(ypos, hi - lo, left=lo, color=get_plot_color("NET_PAY"), alpha=0.8)
         ax.axvline(float(entries[0]["base"]), color=get_plot_color("RT"), lw=1.2)
         ax.set_yticks(ypos)
-        ax.set_yticklabels([f"{e['name']} ({_num(e['low_input'])} / {_num(e['high_input'])})"
-                            for e in entries], fontsize=8)
+        dists = (getattr(r, "config", None) or {}).get("distributions", {})
+
+        def _offsets(e):
+            mode = (dists.get(e["name"]) or {}).get("mode")
+            return (format_offset(e["name"], mode, e["low_input"]),
+                    format_offset(e["name"], mode, e["high_input"]))
+
+        ax.set_yticklabels([f"{e['name']} ({_offsets(e)[0]} / {_offsets(e)[1]})" for e in entries],
+                           fontsize=8)
         ax.invert_yaxis()
         ax.set_xlabel(self.metric_combo.currentText())
         self.plot_tornado.refresh()
@@ -440,7 +462,7 @@ class UncertaintyTab(QWidget):
         rows = []
         for e in entries:
             rho = rank.get(e["name"])
-            rows.append([e["name"], _num(e["low_input"]), _num(e["high_input"]),
+            rows.append([e["name"], *_offsets(e),
                          float(e["at_low_input"]), float(e["at_high_input"]),
                          float(e["swing"]), float(rho) if rho is not None else float("nan")])
         self.tornado_view.model().set_dataframe(pd.DataFrame(rows, columns=list(TORNADO_COLUMNS)))

@@ -984,6 +984,12 @@ def test_excel_uncertainty_fresh_flag_and_tornado_rows(tmp_path, model):
     rw = field[field["Parameter"] == "rw"].iloc[0]
     assert rw["Rank correlation (field)"] == pytest.approx(0.5) and rw["Mode"] == "relative"
     assert tor[tor["Scope"] != "Field"]["Rank correlation (field)"].isna().all()
+    # numeric offsets stay numeric; the text columns carry the mode and unit
+    assert pd.api.types.is_numeric_dtype(tor["Low input"])
+    from modules import uncertainty as U
+    lo, hi = expected_rw = [e for e in expected if e["name"] == "rw"][0]["low_input"],         [e for e in expected if e["name"] == "rw"][0]["high_input"]
+    assert rw["Low input (text)"] == U.format_offset("rw", "relative", lo)
+    assert rw["Low input (text)"].endswith(" %") and rw["High input (text)"].endswith(" %")
 
 
 def test_well_named_uncertainty_does_not_collide(tmp_path, model):

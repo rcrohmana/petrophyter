@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 
 from modules.uncertainty import (
     DEFAULT_MODES, KINDS, MODES, N_MAX, N_MIN, NOT_VARIED, PARAM_ORDER, SAMPLINGS,
-    SUGGESTED_RANGES, validate_config,
+    SUGGESTED_RANGES, rw_quality_text, validate_config,
 )
 from themes.helpers import set_status
 
@@ -31,6 +31,8 @@ _USES = {"triangular": ("low", "mid", "high"), "normal": ("mid", "sd"),
          "uniform": ("low", "high")}
 _FIELDS = ("low", "mid", "high", "sd")
 RHO_PAIR = ("m", "n")
+_RHO_TIP = "Rank correlation between the m and n draws (0 = independent)"
+_RHO_OFF_TIP = _RHO_TIP + ". Ignored while m or n is not enabled."
 INFO_TEXT = ("Applied to every well and zone as a change of the resolved value. "
              f"Not varied: {NOT_VARIED}.")
 
@@ -146,7 +148,7 @@ class UncertaintyParamsPage(QWidget):
         self.rho_spin.setSingleStep(0.05)
         self.rho_spin.setDecimals(2)
         self.rho_spin.setKeyboardTracking(False)
-        self.rho_spin.setToolTip("Rank correlation between the m and n draws (0 = independent)")
+        self.rho_spin.setToolTip(_RHO_TIP)
         opts = QGridLayout()
         opts.setHorizontalSpacing(8)
         opts.addWidget(QLabel("N"), 0, 0)
@@ -168,6 +170,9 @@ class UncertaintyParamsPage(QWidget):
         self.info_label.setWordWrap(True)
         set_status(self.info_label, "muted")
         layout.addWidget(self.info_label)
+        self.rw_quality_label = QLabel("")
+        self.rw_quality_label.setWordWrap(True)
+        layout.addWidget(self.rw_quality_label)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
@@ -176,6 +181,26 @@ class UncertaintyParamsPage(QWidget):
     @property
     def config(self):
         return self.model.project.uncertainty
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_rw_quality()
+
+    def _refresh_rw_quality(self):
+        """Note beside the Rw distribution on how the last run's auto Rw was estimated."""
+        result = getattr(self.model.project, "uncertainty_result", None)
+        text = rw_quality_text(result)
+        if text:
+            text = f"{text} (last run)"
+        elif result is None:
+            text = "Auto Rw quality is shown here after a run."
+        self.rw_quality_label.setText(text)    # a run with a fixed Rw has nothing to show
+        set_status(self.rw_quality_label, "muted")
+
+    def _refresh_rho_enabled(self):
+        both = all(self._rows[n].enable.isChecked() for n in RHO_PAIR)
+        self.rho_spin.setEnabled(both)
+        self.rho_spin.setToolTip(_RHO_TIP if both else _RHO_OFF_TIP)
 
     # ---- model -> widgets ----
     def load_from_config(self):
@@ -204,6 +229,7 @@ class UncertaintyParamsPage(QWidget):
         finally:
             self._loading = False
         self._refresh_status()
+        self._refresh_rw_quality()
 
     # ---- widgets -> model ----
     def _write_row(self, name):
@@ -276,6 +302,7 @@ class UncertaintyParamsPage(QWidget):
         self._changed()
 
     def _refresh_status(self):
+        self._refresh_rho_enabled()
         # Nothing enabled is the normal starting state, not an error (the menu tooltip says it).
         errors = validate_config(self.config) if self.config.enabled_names() else []
         self.status_label.setText("\n".join(errors))

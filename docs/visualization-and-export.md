@@ -33,7 +33,7 @@ The **Rock Typing** tab has its own plots: the FZI histogram and probability plo
 The **Uncertainty** tab (after Summary) draws the latest Monte Carlo result for the row selected in its table (the field, a well, or a zone) and the selected metric.
 
 - **Histogram and exceedance.** A histogram of the realisations (30 bins) with vertical lines at P90, P50 and P10 and a dashed line at the deterministic value. A second axis on the right shows the exceedance curve: the percent of realisations at or above each value. P90 is the low case, exceeded with 90 % probability.
-- **Tornado.** For HCPV net pay and Net pay: one horizontal bar per enabled parameter, running between the outputs with that parameter at the 10th and at the 90th percentile of its own distribution (the other parameters at their base values), sorted by swing, with a vertical line at the deterministic value. Each label shows the low and high input. A table below lists the inputs, the outputs, the swing and the rank correlation with the field metric.
+- **Tornado.** For HCPV net pay and Net pay: one horizontal bar per enabled parameter, running between the outputs with that parameter at the 10th and at the 90th percentile of its own distribution (the other parameters at their base values), sorted by swing, with a vertical line at the deterministic value. Each label shows the low and high input as a signed change: a percentage for a relative parameter (for example -15 % / +15 %), or a signed amount with its unit for an additive one (ohm.m for Rw and Rsh, v/v for the cutoffs). A table below lists the inputs, the outputs, the swing and the rank correlation with the field metric.
 
 The plots follow the light and dark themes. See the [User Guide](user-guide.md#uncertainty-monte-carlo) for how to set up and read an analysis.
 
@@ -56,7 +56,7 @@ Merged data can also be downloaded as LAS (`.las`).
 The Excel workbook gets two more sheets when a Monte Carlo result exists; without one, the workbook is as before. A result that is out of date is exported as it is, with the stale flag set in the header. CSV and LAS exports are unchanged.
 
 - **Uncertainty sheet.** A header block gives the seed, N, sampling, the exceedance convention (*P90 = low case, exceeded with 90% probability*), the parameters that are not varied (porosity, shale point, GR baseline), and whether the result is out of date. The table has one row for each metric of the field, each well, and each well and zone, with the columns Scope, Metric, P90, P50, P10, Mean, Std, Min, Max, N valid, P(zero) and Deterministic.
-- **Tornado sheet.** One row for each parameter, with its mode, the low and high input, the output at each, the swing and the rank correlation with the field metric.
+- **Tornado sheet.** One row for each parameter, with its mode, the low and high input (numeric offsets, plus a text column for each that adds the percent sign or unit), the output at each, the swing and the rank correlation with the field metric.
 
 A well named *Uncertainty* or *Tornado* gets a numbered sheet name such as *Uncertainty (2)*, so it never collides with these sheets.
 

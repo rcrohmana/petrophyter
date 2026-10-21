@@ -323,6 +323,7 @@ class MainWindow(QMainWindow):
         self.params_window.revert_applied.connect(self._on_params_reverted)
         self.params_window.uncertainty_config_changed.connect(self._refresh_uncertainty_actions)
         self.uncertainty_runner.started.connect(self._refresh_uncertainty_actions)
+        self.uncertainty_runner.started.connect(self._on_uncertainty_started)
         self.uncertainty_runner.finished.connect(self._refresh_uncertainty_actions)
         self.model.parameters_changed.connect(self._on_parameters_updated)
         self.model.scoped_params_changed.connect(self._on_scoped_params_changed)
@@ -1132,6 +1133,7 @@ class MainWindow(QMainWindow):
         self._bulk_loading = False
         self._load_current = None
         self._set_busy(None)
+        self._refresh_uncertainty_actions()
         self._set_progress(0, "")
         added = self._load_added
         notes = list(dict.fromkeys(self._load_notes))
@@ -1257,11 +1259,14 @@ class MainWindow(QMainWindow):
             tip = "Monte Carlo is running"
         elif self.batch_runner.is_running():
             tip = "Wait for the analysis to finish"
+        elif not any(UncertaintyRunner._has_rt_data(self.model, ds) for ds in self.model.project.wells):
+            tip = "Load a well with data and a resistivity (RT) curve"
         else:
             tip = ""
         run = self.actions_["run_uncertainty"]
         run.setEnabled(not tip)
         run.setToolTip(tip or "Run the Monte Carlo uncertainty analysis")
+        self.uncertainty_tab.set_run_gate(tip)
         self.actions_["stop_uncertainty"].setEnabled(mc_running)
 
     def _refresh_run_action(self):
@@ -1707,9 +1712,16 @@ class MainWindow(QMainWindow):
         self._set_progress(0, "")
         self.uncertainty_result_changed.emit()
 
+    def _on_uncertainty_started(self, wells: int, _n: int = 0):
+        self._uncertainty_wells = int(wells)
+
     def _on_uncertainty_progress(self, done: int, total: int):
         pct = int(100 * done / total) if total else 0
-        self._set_progress(max(1, min(99, pct)), f"Monte Carlo {done}/{total}")
+        wells = getattr(self, "_uncertainty_wells", 0)
+        label = f"Monte Carlo {done}/{total}"
+        if wells:
+            label += f" · {wells} well{'s' if wells != 1 else ''}"
+        self._set_progress(max(1, min(99, pct)), label)
 
     def _on_uncertainty_completed(self, result):
         self.model.project.uncertainty_result = result

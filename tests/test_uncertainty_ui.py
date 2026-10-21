@@ -189,7 +189,7 @@ def test_tornado_sorted_and_labels(model, tab):
     assert widths == sorted(widths, reverse=True) and len(widths) == 3
     assert ax.yaxis_inverted()
     labels = [t.get_text() for t in ax.get_yticklabels()]
-    assert labels[0].startswith("m (1.8 / 2.2)")
+    assert labels[0].startswith("m (+1.8 / +2.2)")
     m = tab.tornado_view.model()
     assert [m.index(r, 0).data() for r in range(3)] == ["m", "n", "Rw"]
     assert float(m.index(0, 6).data()) == pytest.approx(-0.8, abs=1e-3)
@@ -302,7 +302,15 @@ def test_tab_order_and_no_emoji(window):
     assert window.tab_widget.widget(texts.index("Uncertainty")) is window.uncertainty_tab
 
 
+def _ready(window):
+    """A well with RT and one enabled distribution: Run is available."""
+    window.model.project.add_well(_well("WELL:A"))
+    window.model.project.uncertainty.distributions["rw"].enabled = True
+    window._refresh_uncertainty_actions()
+
+
 def test_window_buttons_call_run_and_cancel(window, monkeypatch):
+    _ready(window)
     calls = []
     monkeypatch.setattr(window, "run_uncertainty", lambda: calls.append("run"))
     monkeypatch.setattr(window, "cancel_uncertainty", lambda: calls.append("cancel"))
@@ -313,6 +321,7 @@ def test_window_buttons_call_run_and_cancel(window, monkeypatch):
 
 
 def test_window_runner_signals_toggle_buttons(window):
+    _ready(window)
     tab = window.uncertainty_tab
     window.uncertainty_runner.started.emit(2, 100)
     assert tab.cancel_button.isEnabled() and not tab.run_button.isEnabled()
@@ -345,3 +354,43 @@ def test_config_edit_on_parameters_page_marks_tab_out_of_date(window):
     page = window.params_window.uncertainty_page
     page.n_spin.setValue(page.n_spin.value() + 50)
     assert not window.uncertainty_tab.stale_chip.isHidden()
+
+
+def test_run_gating_names_failing_condition(window):
+    run, tab = window.actions_["run_uncertainty"], window.uncertainty_tab
+    window.model.project.uncertainty.distributions["rw"].enabled = True
+    window._refresh_uncertainty_actions()
+    assert not run.isEnabled() and "RT" in run.toolTip()
+    assert not tab.run_button.isEnabled() and tab.run_button.toolTip() == run.toolTip()
+    window.model.project.add_well(_well("WELL:A"))     # wells_changed refreshes
+    assert run.isEnabled() and tab.run_button.isEnabled()
+    window.model.project.remove_well("WELL:A")
+    assert not run.isEnabled() and not tab.run_button.isEnabled()
+
+
+def test_progress_text_names_wells(window):
+    seen = []
+    window._set_progress = lambda pct, text: seen.append(text)
+    window._on_uncertainty_started(3, 300)
+    window._on_uncertainty_progress(230, 300)
+    window._on_uncertainty_started(1, 300)
+    window._on_uncertainty_progress(5, 300)
+    assert seen == ["Monte Carlo 230/300 · 3 wells", "Monte Carlo 5/300 · 1 well"]
+
+
+def test_tornado_labels_show_mode_and_unit(model, tab):
+    result = _fake_result(model)
+    result.config = {"distributions": {"Rw": {"mode": "relative"}, "m": {"mode": "additive"}}}
+    model.project.uncertainty_result = result
+    tab.update_display()
+    tab.show()
+    labels = [t.get_text() for t in tab.plot_tornado.figure.axes[0].get_yticklabels()]
+    m = tab.tornado_view.model()
+    assert {m.index(r, 0).data(): (m.index(r, 1).data(), m.index(r, 2).data())
+            for r in range(3)}["Rw"] == ("+4 %", "+6 %")
+    assert any("Rw (+4 % / +6 %)" in t for t in labels), labels
+    assert any(t.startswith("m (+1.8 / +2.2)") for t in labels), labels
+    from modules.uncertainty import format_offset
+    assert format_offset("rw", "relative", -0.15) == "-15 %"
+    assert format_offset("rw", "additive", 0.5) == "+0.5 ohm.m"
+    assert format_offset("sw_cutoff", None, -0.05) == "-0.05 v/v"

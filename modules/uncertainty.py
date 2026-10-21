@@ -118,6 +118,19 @@ class UncertaintyConfig:
 # Validation
 # ---------------------------------------------------------------------------------------------
 
+def _active_correlations(cfg: UncertaintyConfig, names: Tuple[str, ...]) -> dict:
+    """Correlations whose two parameters are both enabled; the others are ignored."""
+    out = {}
+    for key, rho in cfg.correlations.items():
+        try:
+            a, b = key
+        except (TypeError, ValueError):
+            continue
+        if a in names and b in names and a != b:
+            out[(a, b)] = rho
+    return out
+
+
 def _copula_matrix(cfg: UncertaintyConfig, names: Tuple[str, ...]) -> np.ndarray:
     """Gaussian-copula correlation matrix for the requested Spearman rhos.
 
@@ -127,10 +140,9 @@ def _copula_matrix(cfg: UncertaintyConfig, names: Tuple[str, ...]) -> np.ndarray
     idx = {n: i for i, n in enumerate(names)}
     k = len(names)
     r = np.eye(k)
-    for (a, b), rho in cfg.correlations.items():
-        if a in idx and b in idx and a != b:
-            g = 2.0 * math.sin(math.pi * float(rho) / 6.0)
-            r[idx[a], idx[b]] = r[idx[b], idx[a]] = g
+    for (a, b), rho in _active_correlations(cfg, names).items():
+        g = 2.0 * math.sin(math.pi * float(rho) / 6.0)
+        r[idx[a], idx[b]] = r[idx[b], idx[a]] = g
     return r
 
 
@@ -182,13 +194,15 @@ def validate_config(cfg: UncertaintyConfig) -> List[str]:
             errors.append(f"Invalid correlation key {key!r}.")
             corr_ok = False
             continue
-        if a not in names or b not in names or a == b:
-            errors.append(f"Correlation {a}-{b}: both parameters must be enabled and different.")
+        if a not in names or b not in names:
+            continue    # a correlation with a disabled parameter is ignored, not an error
+        if a == b:
+            errors.append(f"Correlation {a}-{b}: the two parameters must be different.")
             corr_ok = False
         elif not (isinstance(rho, (int, float)) and abs(rho) < 1):
             errors.append(f"Correlation {a}-{b}: |rho| must be below 1.")
             corr_ok = False
-    if corr_ok and cfg.correlations and names:
+    if corr_ok and names and _active_correlations(cfg, names):
         if not _is_pd(_copula_matrix(cfg, names)):
             errors.append("Correlation matrix is not positive definite.")
     return errors
@@ -251,7 +265,7 @@ def sample_parameters(cfg: UncertaintyConfig, n: Optional[int] = None,
         u = rng.random((n, k))
     eps = 1e-12
     u = np.clip(u, eps, 1.0 - eps)
-    if cfg.correlations:
+    if _active_correlations(cfg, names):
         r = _copula_matrix(cfg, names)
         try:
             chol = np.linalg.cholesky(r)
@@ -474,6 +488,7 @@ class _Segment:
     phie: np.ndarray
     calc: PetrophysicsCalculator
     sw_base: Optional[np.ndarray] = None
+    rw_quality: Optional[str] = None     # auto-Rw quality of this segment, None for a fixed Rw
 
 
 @dataclass
@@ -548,7 +563,8 @@ def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> 
             positions=np.asarray(b.positions, dtype=np.intp), params=dict(b.params),
             rw=b.rw, rsh=b.rsh, rsh_auto=bool(b.rsh_auto), tctx=b.tctx, has_rt=bool(b.has_rt),
             data=seg_data, vsh_s=pd.Series(b.vsh, index=seg_data.index),
-            vsh=np.asarray(b.vsh, dtype=float), phie=np.asarray(b.phie, dtype=float), calc=calc)
+            vsh=np.asarray(b.vsh, dtype=float), phie=np.asarray(b.phie, dtype=float), calc=calc,
+            rw_quality=(str(b.rw_quality) if b.rw_quality else None))
         vsh_all[seg.positions] = seg.vsh
         phie_all[seg.positions] = seg.phie
         if seg.has_rt:
@@ -696,6 +712,7 @@ class MCResult:
     warnings: list
     elapsed_s: float
     basis: dict = field(default_factory=dict)
+    rw_quality: dict = field(default_factory=dict)    # well key -> sorted auto-Rw qualities
     config_hash: str = ""
 
 
@@ -823,4 +840,40 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
         wells=[{"key": fw.key, "name": fw.name} for fw in frozen_wells], excluded=excluded,
         zones={fw.key: list(fw.zones) for fw in frozen_wells}, values=values,
         deterministic=deterministic, stats=stats_out, tornado=tornado, rank_corr=rank_corr,
-        clipped=clipped, warnings=warns, elapsed_s=time.perf_counter() - t0)
+        clipped=clipped, warnings=warns, elapsed_s=time.perf_counter() - t0,
+        rw_quality={fw.key: sorted({sg.rw_quality for sg in fw.segments if sg.rw_quality})
+                    for fw in frozen_wells})
+
+
+_RW_QUALITY_TEXT = {"water_leg": "from water leg", "uniform": "uniform estimate"}
+
+
+def rw_quality_text(result) -> str:
+    """One line on how the auto Rw was estimated across the wells, "" when none was auto."""
+    qmap = getattr(result, "rw_quality", None) or {}
+    found = {q for qs in qmap.values() for q in (qs or ())}
+    ordered = [q for q in _RW_QUALITY_TEXT if q in found] + sorted(found - set(_RW_QUALITY_TEXT))
+    if not ordered:
+        return ""
+    return "Auto Rw: " + ", ".join(_RW_QUALITY_TEXT.get(q, str(q)) for q in ordered)
+
+
+# Unit shown after an additive offset; relative offsets are shown as a percentage.
+PARAM_UNITS: Dict[str, str] = {
+    "a": "", "m": "", "n": "", "rw": "ohm.m", "rsh": "ohm.m",
+    "vsh_cutoff": "v/v", "phi_cutoff": "v/v", "sw_cutoff": "v/v",
+}
+
+
+def format_offset(name: str, mode: Optional[str], value) -> str:
+    """Signed, human-readable perturbation: "-15 %" for relative, "+0.05 v/v" for additive."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if not np.isfinite(v):
+        return ""
+    mode = mode or DEFAULT_MODES.get(name, "additive")
+    if mode == "relative":
+        return f"{100.0 * v:+.3g} %"
+    return f"{v:+.3g} {PARAM_UNITS.get(name, '')}".rstrip()

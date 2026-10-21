@@ -40,8 +40,8 @@ def test_validate_ok_and_errors():
     assert U.validate_config(cfg)
     cfg = make_cfg(kind="normal"); cfg.distributions["a"].sd = -1
     assert U.validate_config(cfg)
-    cfg = make_cfg(); cfg.correlations[("a", "n")] = 0.3   # n not enabled
-    assert U.validate_config(cfg)
+    cfg = make_cfg(); cfg.correlations[("a", "n")] = 0.3   # n not enabled: ignored, not an error
+    assert not U.validate_config(cfg)
     cfg = make_cfg(); cfg.correlations[("a", "m")] = 1.0
     assert U.validate_config(cfg)
 
@@ -52,6 +52,30 @@ def test_non_pd_refused():
     assert any("positive definite" in e for e in U.validate_config(cfg))
     with pytest.raises(ValueError, match="positive definite"):
         U.sample_parameters(cfg)
+
+
+def test_correlation_with_disabled_parameter_is_ignored():
+    ref = U.sample_parameters(make_cfg(names=("a", "m", "rw")))
+    cfg = make_cfg(names=("a", "m", "rw"))
+    cfg.correlations = {("m", "n"): 0.7, ("a", "n"): -0.4}
+    assert U.validate_config(cfg) == []
+    got = U.sample_parameters(cfg)
+    np.testing.assert_array_equal(got.offsets, ref.offsets)      # identical draws, no copula
+    # An enabled pair next to a dropped one still correlates.
+    cfg.correlations[("a", "m")] = 0.6
+    off = U.sample_parameters(cfg).offsets
+    assert abs(stats.spearmanr(off[:, 0], off[:, 1])[0] - 0.6) < 0.1
+    # A non-positive-definite matrix among enabled parameters is still refused.
+    cfg.correlations = {("a", "m"): 0.9, ("m", "rw"): 0.9, ("a", "rw"): -0.9, ("m", "n"): 0.2}
+    assert any("positive definite" in e for e in U.validate_config(cfg))
+
+
+def test_rw_quality_text():
+    from types import SimpleNamespace as NS
+    assert U.rw_quality_text(NS()) == ""
+    assert U.rw_quality_text(NS(rw_quality={"w1": [], "w2": []})) == ""
+    assert U.rw_quality_text(NS(rw_quality={"w1": ["water_leg"]})) == "Auto Rw: from water leg"
+    assert U.rw_quality_text(NS(rw_quality={"w1": ["uniform"], "w2": ["water_leg"]})) ==         "Auto Rw: from water leg, uniform estimate"
 
 
 def test_seed_reproducible_and_different():
@@ -357,6 +381,15 @@ def test_synth_well_basics():
     fw = synth_frozen("a", 0.25, 0.4)
     det = U.evaluate(fw, {})["well"]
     assert det["net_pay"] == pytest.approx(fw.dz.sum()) and 0.35 < det["avg_sw_pay"] < 0.45
+
+
+def test_run_monte_carlo_carries_rw_quality():
+    a, b = synth_frozen("a", 0.25, 0.5), synth_frozen("b", 0.12, 0.3, seed=1)
+    assert all(sg.rw_quality is None for sg in a.segments)    # fixed Rw: nothing to report
+    b.segments[0].rw_quality = "uniform"
+    res = U.run_monte_carlo([a, b], cfg_for(("rw",), n=50))
+    assert res.rw_quality == {"a": [], "b": ["uniform"]}
+    assert U.rw_quality_text(res) == "Auto Rw: uniform estimate"
 
 
 def test_run_monte_carlo_seed_reproducible_and_different():

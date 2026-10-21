@@ -768,7 +768,8 @@ def default_file_stem(ds, prefix: str = "petrophyter_results") -> str:
 UNCERTAINTY_COLUMNS = ["Scope", "Well", "Zone", "Metric", "P90", "P50", "P10", "Mean", "Std",
                        "Min", "Max", "N valid", "P(zero)", "Deterministic"]
 TORNADO_COLUMNS = ["Scope", "Well", "Zone", "Metric", "Parameter", "Mode", "Low input",
-                   "High input", "Output at low", "Output at high", "Swing",
+                   "High input", "Low input (text)", "High input (text)", "Output at low",
+                   "Output at high", "Swing",
                    "Rank correlation (field)"]
 P90_CONVENTION = "P90 = low case, exceeded with 90% probability"
 
@@ -822,7 +823,7 @@ def tornado_frame(result) -> pd.DataFrame:
 
     The rank correlation is the field-level one, so it is filled on field rows only.
     """
-    from modules.uncertainty import METRIC_LABELS
+    from modules.uncertainty import METRIC_LABELS, format_offset
 
     nan = float("nan")
     dists = (result.config or {}).get("distributions", {})
@@ -834,10 +835,13 @@ def tornado_frame(result) -> pd.DataFrame:
             rank = (result.rank_corr or {}).get(metric, {}) if scope == "field" else {}
             for e in sorted(entries, key=lambda e: -float(e["swing"])):
                 rho = rank.get(e["name"])
+                mode = (dists.get(e["name"]) or {}).get("mode", "")
                 rows.append([
                     kind, well, zone, METRIC_LABELS.get(metric, metric), e["name"],
-                    (dists.get(e["name"]) or {}).get("mode", ""),
-                    e["low_input"], e["high_input"], e["at_low_input"], e["at_high_input"],
+                    mode, e["low_input"], e["high_input"],
+                    format_offset(e["name"], mode, e["low_input"]),
+                    format_offset(e["name"], mode, e["high_input"]),
+                    e["at_low_input"], e["at_high_input"],
                     e["swing"], float(rho) if rho is not None else nan])
     return pd.DataFrame(rows, columns=TORNADO_COLUMNS)
 

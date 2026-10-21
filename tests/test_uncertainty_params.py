@@ -88,6 +88,13 @@ def test_config_to_widgets_after_session_load(window, page):
     d = new.distributions["rsh"]
     d.enabled, d.kind, d.mode, d.low, d.mid, d.high = True, "uniform", "relative", -0.1, 0.0, 0.3
     new.correlations[("m", "n")] = 0.4
+    import pandas as pd
+    from models.project import WellDataset
+    ds = WellDataset("WELL:A", "A")
+    ds.las_data = pd.DataFrame({"DEPTH": [100.0, 101.0], "RT": [10.0, 20.0]})
+    ds.curve_mapping = {"RT": "RT"}
+    window.model.project.add_well(ds)
+    window.model.dirty = False
     window.model.project.uncertainty = new
     window._refresh_uncertainty_page()
     row = page._rows["rsh"]
@@ -173,6 +180,12 @@ def test_edits_mark_dirty_but_not_stale(window, page, monkeypatch):
 
 
 def test_menu_gating_and_tooltips(window, page, monkeypatch):
+    import pandas as pd
+    from models.project import WellDataset
+    ds = WellDataset("WELL:A", "A")
+    ds.las_data = pd.DataFrame({"DEPTH": [100.0, 101.0], "RT": [10.0, 20.0]})
+    ds.curve_mapping = {"RT": "RT"}
+    window.model.project.add_well(ds)
     run, stop = window.actions_["run_uncertainty"], window.actions_["stop_uncertainty"]
     assert run.text() == "Run Uncertainty…" and run.shortcut().isEmpty()
     window.model.project.uncertainty = UncertaintyConfig()
