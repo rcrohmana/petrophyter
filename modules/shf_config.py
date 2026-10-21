@@ -8,7 +8,9 @@ import copy
 import math
 from typing import Any, Dict
 
-# Reservoir fluid densities (g/cc) and sigma*cos(theta) magnitudes (dyne/cm) by system.
+from modules.shf import DEFAULT_FLUIDS, SIGMA_COS_DEFAULTS
+
+# Fluid densities (g/cc) and sigma*cos(theta) (dyne/cm) by system come from modules.shf.
 SHF_DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "use_for_pay": False,
@@ -18,14 +20,8 @@ SHF_DEFAULTS: Dict[str, Any] = {
     "rock_type_source": "auto",
     "weight_by": "sample",
     "min_pc_psi": 0.0,
-    "fluids": {"water": 1.03, "oil": 0.75, "gas": 0.25},
-    "sigma_cos": {
-        "air_brine": 72.0,
-        "hg_air": 367.7,
-        "oil_brine": 41.6,
-        "oil_water": 26.0,
-        "gas_water": 50.0,
-    },
+    "fluids": dict(DEFAULT_FLUIDS),
+    "sigma_cos": dict(SIGMA_COS_DEFAULTS),
     "fits": {},
 }
 

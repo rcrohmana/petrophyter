@@ -1009,3 +1009,60 @@ def rock_type_rows(results, vsh, phie, sw, dz, labels, rt, info=None, perm_col="
             "coefficient": float(coefficient) if np.isfinite(coefficient) else None,
             "units": smlp_units(smlp(depth[pick], phie_a[pick], perm[pick], dz_a[pick]))}
     return out
+
+
+# ---------------------------------------------------------------------------
+# Rock type of loose (phi, k) pairs, e.g. Pc samples
+# ---------------------------------------------------------------------------
+def rock_types_zone_scoped(rt) -> bool:
+    """True when the definitions were fitted per zone, so rock-type ids are not global."""
+    return bool(rt) and rt.get("fit_scope") == "zone"
+
+
+def classify_pairs(phi, k, rt, zone=None) -> Tuple[np.ndarray, np.ndarray]:
+    """Rock type of (porosity, permeability) pairs with the project definitions.
+
+    ``phi`` is a fraction and ``k`` is mD (core-plug values as measured); ``rt`` is the
+    resolved ``rock_types`` dict (``method``, ``set``, ``zone_sets``, ``settings``). The
+    ``ob_phi_factor`` / ``ob_k_factor`` overburden factors are applied exactly as in
+    :func:`build_core_table`, and the feature is log10 FZI (log10 R35 for the r35 method)
+    classified by :func:`classify`. ``zone`` is one zone name or one label per pair; the zone's
+    set is used where ``zone_sets`` has one, else the well's ``set``.
+
+    Returns ``(labels, reasons)``: the rock type (``0`` = unassigned) and, per pair, ``"ok"`` or
+    the first failing reason of ``phi_out_of_range``, ``perm_not_positive``, ``no_perm``,
+    ``no_porosity`` (the same priority as :func:`build_core_table`). With zone-scoped
+    definitions (:func:`rock_types_zone_scoped`) the ids are not comparable across zones.
+    """
+    phi, k = np.atleast_1d(_arr(phi)), np.atleast_1d(_arr(k))
+    if phi.shape != k.shape:
+        raise ValueError("phi and k must have the same length")
+    n = len(phi)
+    s = _settings((rt or {}).get("settings"))
+    status = np.full(n, STATUS_OK, dtype=object)
+    with np.errstate(invalid="ignore"):
+        bad = {
+            "phi_out_of_range": np.isfinite(phi) & ((phi <= s["core_phi_min"]) | (phi > s["core_phi_max"])),
+            "perm_not_positive": np.isfinite(k) & (k <= 0),
+            "no_perm": ~np.isfinite(k),
+            "no_porosity": ~np.isfinite(phi),
+        }
+    for reason in ("phi_out_of_range", "perm_not_positive", "no_perm", "no_porosity"):
+        status[bad[reason]] = reason
+    phi_used, k_used = phi * float(s["ob_phi_factor"]), k * float(s["ob_k_factor"])
+    ok = status == STATUS_OK
+    feature = np.full(n, np.nan)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        if (rt or {}).get("method") == "r35":
+            feature[ok] = np.log10(winland_r35(k_used[ok], phi_used[ok]))
+        else:
+            feature[ok] = np.log10(fzi(k_used[ok], phi_used[ok]))
+    status[ok & ~np.isfinite(feature)] = "phi_out_of_range"      # a factor pushed phi to >= 1
+    labels = np.zeros(n, dtype=int)
+    if not _definition_sets(rt):
+        return labels, status
+    for mask, rset in _zone_groups(zone, pd.RangeIndex(n), rt):
+        sel = mask & (status == STATUS_OK)
+        if sel.any():
+            labels[sel] = classify(feature[sel], rset)[0]
+    return labels, status
