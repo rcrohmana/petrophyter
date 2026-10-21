@@ -356,6 +356,43 @@ def attach_core(well, path: str, depth_unit: str = "Auto") -> List[str]:
     return []
 
 
+def attach_pc(well, path: str, record: Optional[dict] = None) -> List[str]:
+    """Read a Pc file without a stored multi-well import for ``well``; returns notes.
+
+    ``record`` is the single-well record kept by the loader (``pc_unit``, ``system``,
+    ``depth_unit``, ``columns``, ``sheet``, ``porosity_scale``). A file with a well column
+    contributes only the rows that match ``well``. Porosity and permeability the file
+    lacks are taken from the well's core data (restored before Pc).
+    """
+    from modules.pc_handler import PcDataHandler
+    from modules.well_matching import assign_to_wells
+
+    record = record or {}
+    handler = PcDataHandler()
+    scale = record.get("porosity_scale")
+    ok = handler.read_pc_file(
+        path, depth_unit=record.get("depth_unit") or "Auto", sheet=record.get("sheet") or 0,
+        columns=dict(record.get("columns") or {}) or None, pc_unit=record.get("pc_unit"),
+        system=record.get("system"), porosity_scale=scale if scale in ("percent", "fraction") else None)
+    if not ok:
+        return [f"Pc file could not be parsed: {os.path.basename(path)}"]
+    if handler.pc_unit is None or handler.system_needed:
+        return [f"Pc unit or fluid system of {os.path.basename(path)} is not known; "
+                "load the file again."]
+    if handler.well_names():
+        matches, _ = assign_to_wells(
+            handler.split_by_well(), [(well.key, well.well_info)], handler.well_kind)
+        if well.key not in matches:
+            return [f"{os.path.basename(path)} has no Pc data for well {well.display_name}"]
+        handler = matches[well.key]
+    handler.complete_from_core(getattr(well, "core_data", None))
+    well.pc_data = handler
+    well.pc_path = path
+    well.pc_import = record or None
+    well.pc_sha256 = fingerprint_file(path)[0]
+    return []
+
+
 def _log_bounds(well):
     """``(top, bottom)`` of the well's DEPTH column in feet, or None."""
     try:
@@ -390,17 +427,19 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
 
     try:
         scales = {}
-        if kind == "core" and record.get("porosity_scale") and record.get("file_well"):
+        if kind in ("core", "pc") and record.get("porosity_scale") and record.get("file_well"):
             scales = {record["file_well"]: record["porosity_scale"]}
         options = ImportOptions(
             kind=kind, depth_unit=record.get("depth_unit"), fill_down=bool(record.get("fill_down")),
             last_bottom=record.get("last_bottom") or "log_bottom",
             sheet=record.get("sheet") or 0, columns=dict(record.get("columns") or {}) or None,
             porosity_scales=scales,
-            tvd_confirmed=bool(record.get("tvd_confirmed")))
+            tvd_confirmed=bool(record.get("tvd_confirmed")),
+            pc_unit=record.get("pc_unit") if kind == "pc" else None,
+            system=record.get("system") if kind == "pc" else None)
         cache_key = (os.path.normcase(os.path.abspath(path)), kind, str(options.sheet),
                      options.fill_down, json.dumps(options.columns, sort_keys=True),
-                     json.dumps(scales, sort_keys=True))
+                     json.dumps(scales, sort_keys=True), options.pc_unit, options.system)
         parsed = cache.get(cache_key) if cache is not None else None
         if parsed is None:
             parsed = parse_import_file(path, options)
@@ -430,6 +469,9 @@ def replay_import(well, kind: str, path: str, record: dict, cache: Optional[dict
     if kind == "tops":
         well.formation_tops, well.tops_path, well.tops_import = part, path, stored
         well.tops_sha256 = fingerprint_file(path)[0]
+    elif kind == "pc":
+        well.pc_data, well.pc_path, well.pc_import = part, path, stored
+        well.pc_sha256 = fingerprint_file(path)[0]
     else:
         well.core_data, well.core_path, well.core_import = part, path, stored
         well.core_depth_unit = plan.effective_unit
@@ -477,6 +519,24 @@ def _restore_core(ds, path: str, record: Optional[dict], depth_unit: str, cache:
     if record:
         notes.append("the stored import no longer matches the core file; matched by well name instead.")
     return changed + notes + attach_core(ds, path, depth_unit)
+
+
+def _restore_pc(ds, path: str, record: Optional[dict], cache: dict,
+                stored_sha=None) -> List[str]:
+    """Restore a well's Pc data: replay the stored import, else read the file by well name.
+
+    A missing file is handled by the caller (its note says the fits are kept).
+    """
+    changed = _changed_since_save(path, stored_sha)
+    refused: List[str] = []
+    if record and record.get("spellings") and replay_import(ds, "pc", path, record, cache, refused):
+        return changed
+    if refused:
+        return changed + refused
+    notes = []
+    if record and record.get("spellings"):
+        notes.append("the stored import no longer matches the Pc file; matched by well name instead.")
+    return changed + notes + attach_pc(ds, path, record)
 
 
 def _entry_fingerprints(entry) -> List[Optional[str]]:
@@ -550,7 +610,8 @@ def relocate_missing_sources(session_data: Dict, prompt: Callable[[str], Optiona
                     if new:
                         sources[index] = new
                         replaced += 1
-        for path_key, sha_key in (("tops_path", "tops_sha256"), ("core_path", "core_sha256")):
+        for path_key, sha_key in (("tops_path", "tops_sha256"), ("core_path", "core_sha256"),
+                                  ("pc_path", "pc_sha256")):
             path = entry.get(path_key)
             if path and entry.get(sha_key) and not os.path.isfile(str(path)):
                 new = locate(str(path))
@@ -1076,6 +1137,16 @@ class SessionService(QObject):
                     parse_cache, entry.get("core_sha256")))
             else:
                 notes.append(f"{label}: core file not found ({os.path.basename(path)}).")
+        if entry.get("pc_path"):
+            path = entry["pc_path"]
+            if os.path.isfile(path):
+                notes.extend(f"{label}: {n}" for n in _restore_pc(
+                    ds, path, entry.get("pc_import"), parse_cache, entry.get("pc_sha256")))
+            else:
+                ds.pc_path, ds.pc_import = path, entry.get("pc_import")
+                ds.pc_sha256 = entry.get("pc_sha256")
+                notes.append(f"{label}: Pc file not found; fits kept, plots without points "
+                             f"({os.path.basename(path)}).")
         ds.calculated = False
         return ds
 
@@ -1138,6 +1209,8 @@ class SessionService(QObject):
                 hashes["tops_sha256"] = ds.tops_sha256
             if getattr(ds, "core_sha256", None):
                 hashes["core_sha256"] = ds.core_sha256
+            if getattr(ds, "pc_sha256", None):
+                hashes["pc_sha256"] = ds.pc_sha256
             wells.append({
                 "key": ds.key,
                 "display_name": ds.display_name,
@@ -1156,6 +1229,8 @@ class SessionService(QObject):
                 "core_depth_unit": getattr(ds, "core_depth_unit", None),
                 **({"shf_contacts": copy.deepcopy(ds.shf_contacts)}
                    if getattr(ds, "shf_contacts", None) else {}),
+                **({"pc_path": ds.pc_path, "pc_import": getattr(ds, "pc_import", None)}
+                   if getattr(ds, "pc_path", None) else {}),
                 **hashes,
             })
         data = {

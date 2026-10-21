@@ -69,6 +69,7 @@ from .tabs.export_tab import ExportTab
 
 from modules.formation_tops import FormationTops, extend_last_bottom
 from modules.core_handler import CoreDataHandler
+from modules.pc_handler import PC_UNIT_LABELS, SYSTEM_LABELS, PcDataHandler
 from modules.well_import import ImportOptions, build_parts, import_record, parse_import_file, well_refs
 from .widgets.well_import_dialog import MultiWellImportDialog
 
@@ -339,8 +340,10 @@ class MainWindow(QMainWindow):
             self.model.formation_tops_loaded,
             self.model.project.wells_changed,
             self.model.project.tops_changed,
+            getattr(self.model.project, "pc_changed", None),
         ):
-            signal.connect(self._on_content_changed)
+            if signal is not None:
+                signal.connect(self._on_content_changed)
         for signal in (self.model.parameters_changed, self.model.scoped_params_changed):
             signal.connect(self._on_parameter_edited)
         self.model.formation_tops_loaded.connect(self._on_tops_or_core_changed)
@@ -458,6 +461,16 @@ class MainWindow(QMainWindow):
         if file:
             self._on_core_file_selected(file)
 
+    def _open_pc_dialog(self):
+        """Open capillary pressure data file dialog."""
+        from PyQt6.QtWidgets import QFileDialog
+
+        file, _ = QFileDialog.getOpenFileName(
+            self, "Load Pc Data", "", "Tables (*.txt *.csv *.tsv *.xlsx);;All Files (*)"
+        )
+        if file:
+            self._on_pc_file_selected(file)
+
     def closeEvent(self, event):
         if not self._confirm_discard("close"):
             event.ignore()
@@ -565,10 +578,13 @@ class MainWindow(QMainWindow):
         act("open_las", "Open LAS File(s)…", "folder-open", "Ctrl+O", self._open_las_dialog)
         act("open_tops", "Open Formation Tops…", "layers", None, self._open_tops_dialog)
         act("open_core", "Open Core Data…", "database", None, self._open_core_dialog)
+        act("open_pc", "Load Pc Data…", "database", None, self._open_pc_dialog)
         act("open_tops_multi", "Open Formation Tops (Multi-Well)…", "layers", None,
             self._open_tops_multi_dialog)
         act("open_core_multi", "Open Core Data (Multi-Well)…", "database", None,
             self._open_core_multi_dialog)
+        act("open_pc_multi", "Load Pc Data (Multi-Well)…", "database", None,
+            self._open_pc_multi_dialog)
         act("merge_las", "Merge LAS Files…", "merge", None, self._open_las_dialog)
         act("save_merged", "Save Merged LAS…", "download", None, self._on_download_merged)
         act("exit", "Exit", "log-out", None, self.close)
@@ -597,6 +613,7 @@ class MainWindow(QMainWindow):
         self.actions_["page_core"].setEnabled(False)
         self.actions_["open_tops_multi"].setEnabled(False)
         self.actions_["open_core_multi"].setEnabled(False)
+        self.actions_["open_pc_multi"].setEnabled(False)
         group = QActionGroup(self)
         group.addAction(self.actions_["theme_light"])
         group.addAction(self.actions_["theme_dark"])
@@ -615,8 +632,9 @@ class MainWindow(QMainWindow):
         self._menus = {}
         file_menu = bar.addMenu("&File")
         self._menus["file"] = file_menu
-        for key in ("new_project", None, "open_las", "open_tops", "open_core",
-                    "open_tops_multi", "open_core_multi", "merge_las", None, "save_merged", None, "exit"):
+        for key in ("new_project", None, "open_las", "open_tops", "open_core", "open_pc",
+                    "open_tops_multi", "open_core_multi", "open_pc_multi", "merge_las", None,
+                    "save_merged", None, "exit"):
             file_menu.addSeparator() if key is None else file_menu.addAction(self.actions_[key])
         session = bar.addMenu("&Session")
         session.addAction(self.actions_["save_session"])
@@ -883,8 +901,8 @@ class MainWindow(QMainWindow):
 
     # Actions that could replace the data under a running worker, per busy kind.
     _LOAD_ACTIONS = (
-        "open_las", "open_tops", "open_core", "open_tops_multi", "open_core_multi",
-        "merge_las", "run_analysis", "run_all",
+        "open_las", "open_tops", "open_core", "open_pc", "open_tops_multi", "open_core_multi",
+        "open_pc_multi", "merge_las", "run_analysis", "run_all",
     )
     _BUSY_ACTIONS = {
         "load": ("new_project", "load_session") + _LOAD_ACTIONS,
@@ -924,7 +942,7 @@ class MainWindow(QMainWindow):
     def _refresh_action_states(self):
         """Normal gating of the data and run actions; busy actions stay disabled."""
         busy = set(self._BUSY_ACTIONS.get(self._busy, ()))
-        for key in ("new_project", "open_las", "open_tops", "open_core",
+        for key in ("new_project", "open_las", "open_tops", "open_core", "open_pc",
                     "load_session", "save_session", "save_session_as", "merge_las"):
             if key not in busy:
                 self.actions_[key].setEnabled(True)
@@ -1477,6 +1495,96 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load core data:\n{str(e)}")
 
+    def _on_pc_file_selected(self, file_path: str):
+        """Handle a capillary pressure file.
+
+        Pc data belong to the active well, unless the file has a well column: then the
+        multi-well dialog decides which loaded well gets which samples. A pressure unit or
+        fluid system the file does not state is asked for.
+        """
+        if not self._require_active_well("Pc data"):
+            return
+        try:
+            self._sync_model_from_ui()
+            unit = self.model.core_depth_unit
+            handler = PcDataHandler()
+            with open(file_path, "rb") as f:
+                ok = handler.read_pc_from_buffer(f)
+            if ok and handler.well_col:
+                self._import_multi_well("pc", file_path)
+                return
+            if ok and handler.depth_col and not handler.depth_unit_detected \
+                    and unit in ("M", "FT"):
+                handler = PcDataHandler()
+                with open(file_path, "rb") as f:
+                    ok = handler.read_pc_from_buffer(f, depth_unit=unit)
+            if not ok:
+                QMessageBox.warning(
+                    self, "Warning",
+                    _failure_message("Failed to parse capillary pressure data file",
+                                     handler.last_error))
+                return
+            pc_unit, system = handler.pc_unit, None
+            if pc_unit is None:
+                pc_unit = self._ask_choice(
+                    "Pc unit", "Pressure unit of the Pc column:", PC_UNIT_LABELS)
+                if pc_unit is None:
+                    return
+            if handler.system_needed:
+                system = self._ask_choice(
+                    "Fluid system", "Fluid system of the measurement:", SYSTEM_LABELS)
+                if system is None:
+                    return
+            if pc_unit != handler.pc_unit or system:
+                handler = PcDataHandler()
+                with open(file_path, "rb") as f:
+                    handler.read_pc_from_buffer(
+                        f, depth_unit=unit if unit in ("M", "FT") else "Auto",
+                        pc_unit=pc_unit, system=system)
+            active = self.model.active_well
+            handler.complete_from_core(active.core_data)
+            if not handler.curves():
+                QMessageBox.warning(
+                    self, "Warning",
+                    "No Pc sample has porosity and permeability, in the file or in the "
+                    "core data of this well.")
+                return
+            active.pc_data = handler
+            active.pc_path = file_path
+            active.pc_import = {
+                "path": file_path, "pc_unit": handler.pc_unit, "system": system,
+                "depth_unit": handler.depth_unit if handler.depth_col else None,
+                "columns": dict(handler.columns_detected),
+                "sheet": getattr(handler.table_read, "sheet", None),
+                "porosity_scale": handler.porosity_scale,
+            }
+            active.pc_sha256 = fingerprint_file(file_path)[0]
+            self._emit_pc_changed([active.key])
+            self.statusBar.showMessage(
+                f"Loaded {len(handler.curves())} Pc curves ({handler.n_points()} points)")
+            self._show_load_notes(handler)
+        except Exception as e:
+            logger.exception("Failed to load Pc data %s", file_path)
+            QMessageBox.critical(self, "Error", f"Failed to load Pc data:\n{str(e)}")
+
+    def _ask_choice(self, title: str, label: str, options: dict):
+        """Ask for one of ``options`` ({value: text}); None when cancelled."""
+        from PyQt6.QtWidgets import QInputDialog
+
+        texts = list(options.values())
+        text, ok = QInputDialog.getItem(self, title, label, texts, 0, False)
+        if not ok:
+            return None
+        return next(k for k, v in options.items() if v == text)
+
+    def _emit_pc_changed(self, keys: list):
+        """Tell the project the Pc data of ``keys`` changed (once per import)."""
+        signal = getattr(self.model.project, "pc_changed", None)
+        if signal is not None:
+            signal.emit(list(keys))
+        else:
+            self.model.mark_dirty()
+
     # ---- multi-well import (one file, many wells) ----
 
     def _open_tops_multi_dialog(self):
@@ -1486,6 +1594,10 @@ class MainWindow(QMainWindow):
     def _open_core_multi_dialog(self):
         """Pick a core file holding the samples of several wells."""
         self._open_multi_dialog("core", "Open Core Data (Multi-Well)")
+
+    def _open_pc_multi_dialog(self):
+        """Pick a Pc file holding the curves of several wells."""
+        self._open_multi_dialog("pc", "Load Pc Data (Multi-Well)")
 
     def _open_multi_dialog(self, kind: str, title: str):
         from PyQt6.QtWidgets import QFileDialog
@@ -1500,12 +1612,12 @@ class MainWindow(QMainWindow):
         if self._busy:
             return  # _set_busy(None) refreshes
         enabled = len(self.model.project) > 0
-        for key in ("open_tops_multi", "open_core_multi"):
+        for key in ("open_tops_multi", "open_core_multi", "open_pc_multi"):
             self.actions_[key].setEnabled(enabled)
 
     def _import_multi_well(self, kind: str, file_path: str):
         """Show the import dialog for a tops / core file with a well column; apply on OK."""
-        what = "Formation tops" if kind == "tops" else "Core data"
+        what = {"tops": "Formation tops", "pc": "Pc data"}.get(kind, "Core data")
         if len(self.model.project) == 0:
             self.show_banner("warning", f"Load a LAS file first. {what} are assigned to loaded wells.")
             return
@@ -1526,7 +1638,9 @@ class MainWindow(QMainWindow):
             if str(exc) == "no well column":
                 self.show_banner(
                     "warning",
-                    f"{name} has no well column. Use Open {what}… to attach it to the active well.",
+                    f"{name} has no well column. Use "
+                    f"{'Load Pc Data' if kind == 'pc' else 'Open ' + what}… "
+                    "to attach it to the active well.",
                 )
             else:
                 logger.error("Failed to read %s: %s", file_path, exc)
@@ -1580,6 +1694,10 @@ class MainWindow(QMainWindow):
                 else:
                     ds.formation_tops = part
                 details.extend(self._tops_scope_notes(ds, part, row))
+            elif kind == "pc":
+                # Pc data never touch model.core_data and do not affect a run.
+                ds.pc_data, ds.pc_path, ds.pc_import = part, plan.path, record
+                ds.pc_sha256 = fingerprint_file(plan.path)[0]
             else:
                 ds.core_path, ds.core_import = plan.path, record
                 ds.core_sha256 = fingerprint_file(plan.path)[0]
@@ -1592,22 +1710,27 @@ class MainWindow(QMainWindow):
             if row.coverage_note:
                 details.append(row.coverage_note)
             details.extend(f"{ds.display_name}: {n}" for n in row.notes)
-        for key in changed:
-            project.well_updated.emit(key)
-        if changed:
-            # Core for a non-active well emits only well_updated.
-            self.model.mark_dirty()
-        if kind == "tops":
-            project.tops_changed.emit(list(changed))
-        self._recompute_stale(changed)
-        if active_key in changed:
-            self._refresh_active_well_ui()
+        if kind == "pc":
+            if changed:
+                self._emit_pc_changed(changed)
         else:
-            self._refresh_core_actions()
+            for key in changed:
+                project.well_updated.emit(key)
+            if changed:
+                # Core for a non-active well emits only well_updated.
+                self.model.mark_dirty()
+            if kind == "tops":
+                project.tops_changed.emit(list(changed))
+            self._recompute_stale(changed)
+            if active_key in changed:
+                self._refresh_active_well_ui()
+            else:
+                self._refresh_core_actions()
 
         kept = sum(1 for r in plan.rows if r.action == "keep" and r.target_key)
         skipped = len(plan.rows) - len(changed) - kept
-        head = f"{'Formation tops' if kind == 'tops' else 'Core data'} assigned to " \
+        noun = {"tops": "Formation tops", "pc": "Pc data"}.get(kind, "Core data")
+        head = f"{noun} assigned to " \
                f"{len(changed)} well{'' if len(changed) == 1 else 's'}"
         extra = ([f"{kept} kept existing"] if kept else []) + \
                 ([f"{skipped} skipped"] if skipped else [])

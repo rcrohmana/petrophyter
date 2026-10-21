@@ -17,7 +17,7 @@ def window(qtbot):
 
 
 def test_menu_bar_actions_exist(window):
-    for key in ("new_project", "open_las", "open_tops", "open_core", "save_session",
+    for key in ("new_project", "open_las", "open_tops", "open_core", "open_pc", "save_session",
                 "load_session", "run_analysis", "toggle_browser", "theme_light",
                 "theme_dark", "about"):
         assert key in window.actions_, key

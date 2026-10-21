@@ -89,7 +89,11 @@ def shf_in_use(project) -> bool:
     shf = getattr(project, "shf", None) or {}
     if shf.get("enabled") or shf.get("fits"):
         return True
-    for ds in project:
+    try:
+        wells = list(project)
+    except TypeError:          # not a Project (a bare model in older callers)
+        return False
+    for ds in wells:
         if _non_empty(getattr(ds, "pc_data", None)) or _non_empty(getattr(ds, "shf_contacts", None)):
             return True
     return False

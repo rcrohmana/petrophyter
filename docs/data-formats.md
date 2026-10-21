@@ -45,6 +45,32 @@ Formation tops and core data are read by the same table reader, so the rules in 
 - Without a well column, the samples belong to the active well. With one, they are assigned to loaded wells in the multi-well import dialog.
 - **Core for rock typing** *(v1.8.0)*. The Rock Typing tab uses a core row only when it has a depth, a porosity and a permeability in the same row, so give both properties on one line of the file rather than in two separate tables. A row missing either value, a permeability of zero or below, or a porosity of 0.01 or below or above 0.50 is left out and counted by reason in the tab. Core is used as measured: overburden and Klinkenberg corrections are not applied. If your values are not at reservoir stress, enter the overburden factors in the Rock Typing tab; see [Calculation Methods](calculation-methods.md#rock-typing-v180). Core with a TVD depth column enters the fit but is not used to label the logs.
 
+## Capillary pressure data
+
+Laboratory capillary pressure (Pc) curves from mercury injection (MICP), porous-plate or centrifuge tests are loaded from **File > Load Pc Data…** (the active well) or **Load Pc Data (Multi-Well)…** (a file with a well column, assigned to loaded wells in the import dialog). The file rules in "Reading tops and core tables" apply: file types, delimiter, preamble lines, unit row, decimal comma, merged well cells, and the well column.
+
+The file has one row per Pc point. The rows of one sample form one curve.
+
+| Column | Accepted names | Required | Notes |
+|---|---|---|---|
+| Sample | `sample`, `sample id`, `plug`, `id`, `no` | Yes, or Depth | Groups points into curves. Without it, rows with the same depth, porosity and permeability form a curve. |
+| Well | the same names as tops and core | No | Without it the samples go to the active well. |
+| Depth | `depth`, `md`, `depth (m)`, `depth (ft)` | No | Measured depth, converted to feet like core depth. A name with `tvd` or `tvdss` raises the same warning as for core, and the import dialog asks you to confirm. |
+| Porosity | `phi`, `por`, `porosity`, `porosity (%)` | See below | Fraction or percent, decided per well from the median, as for core. |
+| Permeability | `k`, `perm`, `permeability (md)`, `kair`, `klink` | See below | mD. |
+| Pc | `pc`, `pressure`, `capillary pressure`, `pc (psi)`, `pc (kpa)`, `pc (mpa)`, `pc (bar)`, `pc (atm)` | Yes | Stored in psi. The unit comes from the header; if the header names none, choose it in the import dialog (the import stays disabled until you do). |
+| Saturation | `sw`, `s_w`, `brine saturation`; or `shg`, `s_hg`, `hg saturation`, `snw` | Yes | Stored as Sw. A mercury (non-wetting) column is converted with Sw = 1 − S_Hg. Percent or fraction is decided per well from the median. |
+| System | `system`, `fluid system` | No | `air-brine`, `hg-air` (also `mercury`, `micp`) or `oil-brine` (also `oil-water`). Rows without a system use the one chosen in the import dialog, which is required while any row lacks one. |
+| Rock type | `rock type`, `rt`, `facies` | No | Your own label for the sample. |
+| Interfacial tension, contact angle | `sigma`, `theta` | No | Per-row override of the system defaults, in dyne/cm and degrees. |
+
+Porosity and permeability are needed for every sample. When the column is missing or a cell is blank, the value is taken from the well's core data at the nearest core depth within 0.5 ft. A sample that still has no porosity or permeability is excluded with all its rows and the reason "no porosity / permeability".
+
+- **Null and non-physical values.** Null values such as −999.25 are excluded and counted with the reason in the load notes, the same way as for core.
+- **Rows that are left out.** A row with a missing or non-numeric Pc or saturation, a Pc of zero or below, a saturation outside 0 to 1 after the percent or fraction conversion, an unknown system, or a blank well cell (when a well column exists) is excluded with its file line number and reason. The load banner and the import dialog show the totals.
+- Pc data are inputs only: loading them does not change any log result and does not mark a well as needing a new run.
+- In a session, the Pc file path, its import settings and its hash are saved with the well. If the file is missing when the session is opened, the saved fits are kept and the plots show no points.
+
 ## Formation Tops
 
 - Required: a formation name and a top depth.
@@ -62,7 +88,7 @@ Formation tops and core data are read by the same table reader, so the rules in 
 
 To keep a mistyped unit or step from exhausting memory *(v1.7.1)*:
 
-- A LAS, tops or core file larger than 500 MB is refused.
+- A LAS, tops, core or Pc file larger than 500 MB is refused.
 - A merge is refused before it starts when its depth grid would have more than 2 000 000 points or need about 1 GB of memory; the message gives the depth range and step to check.
 - The merge step is limited to 0.1–1.0 ft and the gap limit to 1–50 ft, the ranges of the merge dialog. A session holding a value outside them is loaded with the nearest allowed value and a note.
 

@@ -65,9 +65,15 @@ class WellDataset:
         self.core_depth_unit = None
         self.tops_import = None
         self.core_import = None
-        # SHA-256 of the tops / core file, taken when it was read (H3).
+        # Capillary pressure data (a PcDataHandler), its file and import record. Inputs,
+        # not derived: replacing the logs does not clear them.
+        self.pc_data = None
+        self.pc_path = None
+        self.pc_import = None
+        # SHA-256 of the tops / core / Pc file, taken when it was read (H3).
         self.tops_sha256 = None
         self.core_sha256 = None
+        self.pc_sha256 = None
         # Saturation-height fluid contacts (an input, kept out of DERIVED_FIELDS):
         # {"datum": "TVD" | "TVDSS", "kb_ft": float | None,
         #  "default": row, "zones": {ZONE: row}} with

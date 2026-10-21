@@ -1,4 +1,4 @@
-"""Multi-well import dialog: assign a tops or core file with a well column to loaded wells.
+"""Multi-well import dialog: assign a tops, core or Pc file with a well column to loaded wells.
 
 The dialog only edits an :class:`~modules.well_import.ImportPlan`; it never touches the
 model. The caller reads ``dialog.plan`` after ``exec()`` and applies it.
@@ -22,7 +22,12 @@ _ROLES = {
     "tops": [("well", "Well"), ("name", "Formation"), ("top", "Top"), ("bottom", "Bottom")],
     "core": [("well", "Well"), ("depth", "Depth"), ("porosity", "Porosity"),
              ("permeability", "Permeability"), ("grain_density", "Grain density")],
+    "pc": [("well", "Well"), ("sample", "Sample"), ("depth", "Depth"), ("pc", "Pc"),
+           ("sw", "Sw"), ("porosity", "Porosity"), ("permeability", "Permeability")],
 }
+_PC_UNITS = (("psi", "psi"), ("kpa", "kPa"), ("mpa", "MPa"), ("bar", "bar"), ("atm", "atm"))
+_SYSTEMS = (("air-brine", "Air-brine"), ("hg-air", "Hg-air (MICP)"), ("oil-brine", "Oil-brine"))
+_TITLES = {"tops": "formation tops", "core": "core data", "pc": "capillary pressure data"}
 _DELIMITERS = {"\t": "tab", ",": "comma", ";": "semicolon", "|": "pipe"}
 _ENCODINGS = {"utf-8-sig": "UTF-8", "utf-8": "UTF-8", "cp1252": "Windows-1252"}
 _ACTION_TEXT = {"assign": "Assign", "keep": "Keep existing", "replace": "Replace"}
@@ -40,10 +45,10 @@ def _plural(n: int, word: str) -> str:
 
 
 class MultiWellImportDialog(QDialog):
-    """Preview and mapping of one multi-well tops or core file.
+    """Preview and mapping of one multi-well tops, core or Pc file.
 
     Args:
-        kind: ``"tops"`` or ``"core"``.
+        kind: ``"tops"``, ``"core"`` or ``"pc"``.
         path: the file.
         wells: ``WellRef`` snapshots of the loaded wells (``well_refs(project, kind)``).
         parsed: the file already parsed with ``options`` (parsed here when omitted).
@@ -72,8 +77,7 @@ class MultiWellImportDialog(QDialog):
         self._scale_combos: List[QComboBox] = []
         self._has_error = False
 
-        label = "formation tops" if kind == "tops" else "core data"
-        self.setWindowTitle(f"Assign {label}")
+        self.setWindowTitle(f"Assign {_TITLES[kind]}")
         self.setModal(True)
         self.resize(1180, 680)
 
@@ -203,6 +207,28 @@ class MultiWellImportDialog(QDialog):
         self.tvd_check.setObjectName("tvd_check")
         self.tvd_check.clicked.connect(self._on_tvd_changed)
         row.addWidget(self.tvd_check)
+
+        self.pc_unit_label = QLabel("Pc unit")
+        self.pc_unit_combo = QComboBox()
+        self.pc_unit_combo.setObjectName("pc_unit_combo")
+        self.pc_unit_combo.addItem(_CHOOSE, None)
+        for value, text in _PC_UNITS:
+            self.pc_unit_combo.addItem(text, value)
+        self.pc_unit_combo.setToolTip("Pressure unit of the Pc column")
+        self.pc_unit_combo.activated.connect(self._on_pc_unit_changed)
+        self.system_label = QLabel("System")
+        self.system_combo = QComboBox()
+        self.system_combo.setObjectName("system_combo")
+        self.system_combo.addItem(_CHOOSE, None)
+        for value, text in _SYSTEMS:
+            self.system_combo.addItem(text, value)
+        self.system_combo.setToolTip(
+            "Fluid system of the measurement, used for rows whose own system cell is blank")
+        self.system_combo.activated.connect(self._on_system_changed)
+        for widget in (self.pc_unit_label, self.pc_unit_combo,
+                       self.system_label, self.system_combo):
+            widget.setVisible(self.kind == "pc")
+            row.addWidget(widget)
         row.addStretch(1)
         return row
 
@@ -283,20 +309,31 @@ class MultiWellImportDialog(QDialog):
             index = self.sheet_combo.findData(wanted) if isinstance(wanted, str) else int(wanted)
             self.sheet_combo.setCurrentIndex(max(index, 0))
             self.sheet_combo.blockSignals(False)
-        tvd = self.kind in ("core", "tops") and bool(getattr(self.parsed, "depth_is_tvd", False))
+        tvd = self.kind in ("core", "tops", "pc") and bool(
+            getattr(self.parsed, "depth_is_tvd", False))
         self.tvd_check.setVisible(tvd)
         self.tvd_check.blockSignals(True)
         self.tvd_check.setChecked(bool(self.options.tvd_confirmed))
         self.tvd_check.blockSignals(False)
         if tvd:
             self.tvd_check.setToolTip(getattr(self.parsed, "tvd_warning", "") or "")
+        if self.kind == "pc":
+            self.pc_unit_combo.blockSignals(True)
+            self.pc_unit_combo.setCurrentIndex(
+                max(self.pc_unit_combo.findData(self.parsed.pc_unit), 0))
+            self.pc_unit_combo.blockSignals(False)
+            self.system_combo.blockSignals(True)
+            self.system_combo.setCurrentIndex(
+                max(self.system_combo.findData(self.options.system), 0))
+            self.system_combo.blockSignals(False)
 
     def _populate(self):
         """Rebuild the whole table (after a new plan)."""
         self._sync_controls()
         plan = self.plan
-        titles = ["File well", "Rows", "Depth range (ft)", "Match", "How", "Existing", "Action"]
-        if self.kind == "core":
+        titles = ["File well", "Curves" if self.kind == "pc" else "Rows", "Depth range (ft)",
+                  "Match", "How", "Existing", "Action"]
+        if self.kind in ("core", "pc"):
             titles.append("Porosity")
         titles.append("Notes")
         self._col = {t: i for i, t in enumerate(titles)}
@@ -310,11 +347,13 @@ class MultiWellImportDialog(QDialog):
         header.setSectionResizeMode(self._col["Notes"], QHeaderView.ResizeMode.Stretch)
         self._match_combos, self._action_combos, self._scale_combos = [], [], []
         for i, row in enumerate(plan.rows):
-            for title in ("File well", "Rows", "Depth range (ft)", "How", "Existing", "Notes"):
+            count_title = "Curves" if self.kind == "pc" else "Rows"
+            for title in ("File well", count_title, "Depth range (ft)", "How", "Existing",
+                          "Notes"):
                 self.table.setItem(i, self._col[title], QTableWidgetItem())
             self.table.item(i, self._col["File well"]).setText(row.file_well)
             self.table.item(i, self._col["File well"]).setToolTip(", ".join(row.spellings))
-            self.table.item(i, self._col["Rows"]).setText(str(row.rows))
+            self.table.item(i, self._col[count_title]).setText(str(row.rows))
 
             match = QComboBox()
             match.addItem(_SKIP, None)
@@ -329,7 +368,7 @@ class MultiWellImportDialog(QDialog):
             self.table.setCellWidget(i, self._col["Action"], action)
             self._action_combos.append(action)
 
-            if self.kind == "core":
+            if self.kind in ("core", "pc"):
                 scale = QComboBox()
                 scale.addItem("Percent", "percent")
                 scale.addItem("Fraction", "fraction")
@@ -358,8 +397,10 @@ class MultiWellImportDialog(QDialog):
         plan = self.plan
         for i, row in enumerate(plan.rows):
             rng = row.depth_range
+            no_depth = self.kind == "pc" and getattr(self.parsed, "depth_col", None) is None
             self.table.item(i, self._col["Depth range (ft)"]).setText(
-                f"{rng[0]:,.1f} - {rng[1]:,.1f}" if rng else "unit needed")
+                f"{rng[0]:,.1f} - {rng[1]:,.1f}" if rng
+                else "no depth" if no_depth else "unit needed")
             self.table.item(i, self._col["How"]).setText(_HOW_TEXT.get(row.match_how, "—"))
             self.table.item(i, self._col["Existing"]).setText(
                 row.existing if row.target_key else "")
@@ -388,7 +429,7 @@ class MultiWellImportDialog(QDialog):
             action.setCurrentIndex(max(action.findData(row.action), 0))
             action.blockSignals(False)
 
-            if self.kind == "core":
+            if self.kind in ("core", "pc"):
                 scale = self._scale_combos[i]
                 scale.blockSignals(True)
                 index = scale.findData(row.porosity_scale)
@@ -511,6 +552,14 @@ class MultiWellImportDialog(QDialog):
     def _on_tvd_changed(self, checked: bool):
         self.options.tvd_confirmed = bool(checked)
         self._refresh_state()
+
+    def _on_pc_unit_changed(self, *_):
+        self._apply(replace(self.options, pc_unit=self.pc_unit_combo.currentData()),
+                    reparse=True)
+
+    def _on_system_changed(self, *_):
+        self._apply(replace(self.options, system=self.system_combo.currentData()),
+                    reparse=True)
 
     def _on_scale_changed(self, row_index: int):
         row = self.plan.rows[row_index]

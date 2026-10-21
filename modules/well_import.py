@@ -43,14 +43,16 @@ _O2O_NOTE = "Also assigned to the same well by "
 @dataclass
 class ImportOptions:
     """What the user chose in the dialog (and what a replayed import record says)."""
-    kind: str                           # "tops" | "core"
+    kind: str                           # "tops" | "core" | "pc"
     depth_unit: Optional[str] = None    # None = use detection; "M" / "FT" = user choice
     fill_down: Optional[bool] = None    # None = default (parsed.fill_down_applicable)
     last_bottom: str = "log_bottom"     # or "next_top"
     sheet: Union[int, str] = 0
     columns: Optional[dict] = None      # explicit column override, by original header name
     porosity_scales: dict = field(default_factory=dict)  # {file well: "percent" | "fraction"}
-    tvd_confirmed: bool = False         # core TVD depth column acknowledged
+    tvd_confirmed: bool = False         # core / Pc TVD depth column acknowledged
+    pc_unit: Optional[str] = None       # Pc: "psi" | "kpa" | "mpa" | "bar" | "atm" (None = detection)
+    system: Optional[str] = None        # Pc: "air-brine" | "hg-air" | "oil-brine" for rows without one
 
 
 @dataclass
@@ -65,6 +67,7 @@ class WellRef:
     existing_path: Optional[str] = None
     zones_with_params: list = field(default_factory=list)   # normalised zone names
     selected_formations: list = field(default_factory=list)
+    core: object = None                     # Pc import: the well's core data (completes porosity / perm)
 
 
 @dataclass
@@ -73,7 +76,7 @@ class ImportRow:
     file_well: str                          # first spelling
     spellings: List[str]
     group_key: str
-    part: object                            # FormationTops / CoreDataHandler, not unit-converted
+    part: object                            # FormationTops / CoreDataHandler / PcDataHandler, not unit-converted
     rows: int = 0
     excluded: list = field(default_factory=list)      # [(line, reason)]
     depth_range: Optional[Tuple[float, float]] = None  # ft under the effective unit
@@ -86,7 +89,7 @@ class ImportRow:
     coverage: Optional[float] = None        # fraction of the part inside the target's logs
     coverage_note: Optional[str] = None
     unit_fit: Optional[str] = None          # "M" / "FT" when only one reading fits the logs
-    porosity_scale: Optional[str] = None    # core: "percent" | "fraction"
+    porosity_scale: Optional[str] = None    # core / Pc: "percent" | "fraction"
     zone_impact: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
@@ -122,7 +125,7 @@ class ImportPlan:
         return {k: v for k, v in by_target.items() if len(v) > 1}
 
     def _tvd_noun(self) -> str:
-        return "core" if self.kind == "core" else "tops"
+        return {"core": "core", "pc": "Pc"}.get(self.kind, "tops")
 
     def blockers(self) -> List[str]:
         """Reasons the OK button must stay disabled (empty = the plan can be applied)."""
@@ -136,9 +139,14 @@ class ImportPlan:
         for key, rows in self._conflicts().items():
             names = " and ".join(r.file_well for r in rows)
             out.append(f"{names} are assigned to the same well ({self._display(key)})")
-        if self.kind in ("core", "tops") and getattr(self.parsed, "depth_is_tvd", False) \
+        if self.kind in ("core", "tops", "pc") and getattr(self.parsed, "depth_is_tvd", False) \
                 and not self.options.tvd_confirmed:
             out.append(f"Confirm that TVD {self._tvd_noun()} depths may be used")
+        if self.kind == "pc":
+            if getattr(self.parsed, "pc_unit", None) is None:
+                out.append("Choose the Pc unit")
+            if getattr(self.parsed, "system_needed", False):
+                out.append("Choose the fluid system")
         if not out and self.changes() == 0:
             out.append("No well would receive data")
         return out
@@ -248,7 +256,7 @@ def _raw_items(part) -> List[Tuple[float, float]]:
     depths = part.data[part.depth_col].to_numpy(dtype=float)
     if getattr(part, "converted_to_feet", False):
         depths = depths / M_TO_FT      # the core reader already converted a detected M
-    return [(float(d), float(d)) for d in depths]
+    return [(float(d), float(d)) for d in depths if d == d]    # a Pc sample may have no depth
 
 
 def _range(items, factor: Optional[float]) -> Optional[Tuple[float, float]]:
@@ -274,6 +282,10 @@ def _unit_fit(items, log_top: float, log_bottom: float) -> Optional[str]:
     return "M" if cov_m else "FT"
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def _same_path(a: Optional[str], b: Optional[str]) -> bool:
     if not a or not b:
         return False
@@ -292,7 +304,7 @@ def _default_action(ref: Optional[WellRef], path: str) -> str:
 def _existing_text(ref: WellRef, kind: str) -> str:
     if not ref.existing_count:
         return "none"
-    noun = "formations" if kind == "tops" else "samples"
+    noun = {"tops": "formations", "pc": "Pc curves"}.get(kind, "samples")
     text = f"{ref.existing_count} {noun}"
     if ref.existing_path:
         text += f" ({os.path.basename(ref.existing_path)})"
@@ -346,6 +358,13 @@ def _parse_once(path: str, options: ImportOptions, fill_down: bool):
         ok = parsed.read_core_file(path, fill_down=fill_down, sheet=options.sheet,
                                    porosity_scale=options.porosity_scales or None,
                                    columns=options.columns)
+    elif options.kind == "pc":
+        from modules.pc_handler import PcDataHandler
+        parsed = PcDataHandler()
+        ok = parsed.read_pc_file(path, fill_down=fill_down, sheet=options.sheet,
+                                 porosity_scale=options.porosity_scales or None,
+                                 columns=options.columns, pc_unit=options.pc_unit,
+                                 system=options.system)
     else:
         raise ValueError(f"Unknown import kind {options.kind!r}")
     if not ok:
@@ -431,10 +450,22 @@ def build_import_plan(parsed, path: str, wells: List[WellRef],
         spellings = list(part.spellings) or [file_well]
         row = ImportRow(file_well=file_well, spellings=spellings,
                         group_key=group_key(file_well, kind), part=part)
-        row.rows = len(part.formations) if options.kind == "tops" else len(part.data)
+        if options.kind == "tops":
+            row.rows = len(part.formations)
+        elif options.kind == "pc":
+            row.rows = len(part.curves())
+        else:
+            row.rows = len(part.data)
         row.excluded = by_key.get(row.group_key, [])
         row.notes = _row_notes(row, parsed, kind)
-        if options.kind == "core":
+        if options.kind == "pc":
+            row.notes.insert(0, f"{_plural(part.n_points(), 'point')} on "
+                                f"{_plural(row.rows, 'curve')}")
+            lacking = part.incomplete_samples()
+            if lacking:
+                row.notes.append(f"{_plural(len(lacking), 'sample')} without porosity or "
+                                 "permeability; taken from the well's core data when assigned")
+        if options.kind in ("core", "pc"):
             _apply_porosity_override(row, options, kind)
             row.porosity_scale = part.porosity_scale
 
@@ -468,7 +499,7 @@ def _plan_notes(parsed, plan: ImportPlan) -> List[str]:
         notes.append(f"{len(plan.no_well_rows)} row(s) without a well (excluded)")
     if getattr(parsed, "tvd_warning", None):
         notes.append(parsed.tvd_warning)
-    if plan.kind == "core":
+    if plan.kind in ("core", "pc"):
         if parsed.porosity_warning:
             notes.append(parsed.porosity_warning)
     return notes
@@ -497,6 +528,12 @@ def _build_part(plan: ImportPlan, row: ImportRow, target: WellRef):
         part.convert_to_feet()
         if plan.options.last_bottom == "log_bottom" and target.log_bottom is not None:
             extend_last_bottom(part, target.log_bottom)
+    elif plan.kind == "pc":
+        _core_depths_to_feet(part, plan.effective_unit)
+        part.complete_from_core(target.core)
+        if not part.curves():
+            raise ValueError("no Pc sample has porosity and permeability "
+                             "(none in the file, none in the well's core data)")
     else:
         _core_depths_to_feet(part, plan.effective_unit)
     return part
@@ -515,9 +552,14 @@ def build_parts(plan: ImportPlan, wells: List[WellRef]) -> Dict[str, object]:
     """
     if plan.effective_unit is None:
         raise ValueError("Choose the depth unit (M or FT)")
-    if plan.kind in ("core", "tops") and getattr(plan.parsed, "depth_is_tvd", False) \
+    if plan.kind in ("core", "tops", "pc") and getattr(plan.parsed, "depth_is_tvd", False) \
             and not plan.options.tvd_confirmed:
         raise ValueError(f"Confirm that TVD {plan._tvd_noun()} depths may be used")
+    if plan.kind == "pc":
+        if getattr(plan.parsed, "pc_unit", None) is None:
+            raise ValueError("Choose the Pc unit")
+        if getattr(plan.parsed, "system_needed", False):
+            raise ValueError("Choose the fluid system")
     if plan._conflicts():
         raise ValueError("Two file wells are assigned to the same well")
     refs = {w.key: w for w in wells}
@@ -549,8 +591,11 @@ def import_record(plan: ImportPlan, row: ImportRow) -> dict:
         "last_bottom": plan.options.last_bottom,
         "tvd_confirmed": bool(plan.options.tvd_confirmed),
     }
-    if plan.kind == "core":
+    if plan.kind in ("core", "pc"):
         record["porosity_scale"] = row.porosity_scale
+    if plan.kind == "pc":
+        record["pc_unit"] = plan.parsed.pc_unit
+        record["system"] = plan.options.system
     return record
 
 
@@ -569,6 +614,9 @@ def _existing_of(ds, kind: str) -> Tuple[int, Optional[str]]:
     if kind == "tops":
         tops = ds.formation_tops
         return (len(tops.formations) if tops is not None else 0), ds.tops_path
+    if kind == "pc":
+        pc = ds.pc_data
+        return (len(pc.curves()) if pc is not None else 0), ds.pc_path
     core = ds.core_data
     data = getattr(core, "data", None)
     return (len(data) if data is not None else 0), ds.core_path
@@ -587,7 +635,7 @@ def _zones_with_params(project, ds) -> List[str]:
 def well_refs(project, kind: str = "tops") -> List[WellRef]:
     """Snapshots of the loaded wells for :func:`build_import_plan`.
 
-    ``kind`` (``"tops"`` or ``"core"``) selects which attached data fills
+    ``kind`` (``"tops"``, ``"core"`` or ``"pc"``) selects which attached data fills
     ``existing_count`` / ``existing_path``.
     """
     refs = []
@@ -598,5 +646,6 @@ def well_refs(project, kind: str = "tops") -> List[WellRef]:
             key=ds.key, display_name=ds.display_name, well_info=ds.well_info,
             log_top=top, log_bottom=bottom, existing_count=count, existing_path=path,
             zones_with_params=_zones_with_params(project, ds),
-            selected_formations=list(ds.selected_formations)))
+            selected_formations=list(ds.selected_formations),
+            core=ds.core_data if kind == "pc" else None))
     return refs
