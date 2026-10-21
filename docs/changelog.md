@@ -2,7 +2,28 @@
 
 # Version History
 
-## v1.8.0 (Build 20261013) — Current Release
+## v1.9.0 (Build 20261021) — Current Release
+
+See the [release notes](releases/v1.9.0.md) for details. Uncertainty analysis is optional: **results do
+not change** until you enable a distribution, and sessions that do not use it are saved as before.
+
+- **Uncertainty tab** (after Summary). Monte Carlo P90, P50 and P10 of HCPV net pay, HCPV net
+  reservoir, net pay and the pay averages for the field, each well and each zone; histogram with an
+  exceedance curve; tornado for HCPV net pay and net pay with signed inputs and rank correlations;
+  clipped draws, zero-pay probability, excluded wells and a convergence warning; an out-of-date chip.
+- **Parameters → Uncertainty.** Triangular, normal or uniform distributions for a, m, n, Rw, Rsh and
+  the cutoffs, as relative or additive offsets of every well's and zone's resolved value; Suggested
+  ranges; N (default 300), seed, Latin hypercube or random sampling; a rank correlation between m
+  and n; the auto-Rw quality of the last run.
+- **Analysis → Run Uncertainty… / Stop Monte Carlo.** Runs in the background with progress; needs an
+  enabled distribution and a well with RT; cancelled by New Project and Load Session; quitting asks.
+- **Uncertainty** and **Tornado** sheets in the Excel workbook when a result exists.
+- **Session format 2.3** when a distribution is enabled; the result itself is not saved.
+- Simandoux with n other than 2 is solved for all samples at once: identical results, about 30 times
+  faster.
+- 1704 tests.
+
+## v1.8.0 (Build 20261013)
 
 See the [release notes](releases/v1.8.0.md) for details. Rock typing is optional: **results do not change**
 until you turn it on, and sessions that do not use it are still saved as format 2.1.
