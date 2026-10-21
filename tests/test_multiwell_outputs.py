@@ -1021,3 +1021,91 @@ def test_export_tab_passes_result_and_stale_flag(export_tab, model, tmp_path, mo
     model.project.uncertainty_result = result
     export_tab._on_export_excel()
     assert seen["u"]["result"] is result and seen["u"]["stale"] is True
+
+
+# ---- saturation height: SHF sheet and result columns ----
+from services.export_service import SHF_COLUMNS, SHF_SHEET  # noqa: E402
+from tests.test_shf_pipeline import shf_p  # noqa: E402
+
+
+def _shf_well(key, name, use_for_pay=False):
+    data = fixture_frame("sample_log_data")
+    ds = WellDataset(key, name)
+    ds.identity = {"well_name": name, "uwi": f"UWI-{name}"}
+    ds.las_data = data
+    ds.curve_mapping = dict(FULL_MAPPING)
+    ds.formation_tops = make_tops()
+    ds.results, ds.summary = run_pipeline(
+        data, FULL_MAPPING, {"shf": shf_p(use_for_pay=use_for_pay)},
+        formation_tops=ds.formation_tops)
+    ds.calculated = True
+    return ds
+
+
+@pytest.fixture
+def shf_model():
+    m = AppModel()
+    m.project.add_well(_shf_well("W:A", "Alpha", use_for_pay=True))
+    m.project.add_well(_shf_well("W:B", "Beta"), activate=False)
+    m.project.set_active("W:A")
+    return m
+
+
+def test_shf_sheet_only_with_shf_content(tmp_path, model, shf_model):
+    off = tmp_path / "off.xlsx"
+    assert ExportService().export_excel_wells(model.project.wells, str(off))
+    assert SHF_SHEET not in pd.ExcelFile(off).sheet_names
+
+    on = tmp_path / "on.xlsx"
+    assert ExportService().export_excel_wells(shf_model.project.wells, str(on))
+    book = pd.ExcelFile(on)
+    assert SHF_SHEET in book.sheet_names
+    sheet = book.parse(SHF_SHEET)
+    assert list(sheet.columns) == SHF_COLUMNS
+    assert set(sheet["Well"]) == {"Alpha", "Beta"}
+    alpha = sheet[sheet["Well"] == "Alpha"]
+    assert alpha.iloc[0]["Zone"] == "All zones" and alpha.iloc[0]["Rock type"] == "All"
+    assert (alpha["SHF Sw for pay"] == "used").all()
+    assert (sheet[sheet["Well"] == "Beta"]["SHF Sw for pay"] == "not used").all()
+    assert (sheet["Basis"] == "core Pc").all()
+    assert (sheet["Perm source"].astype(str) != "").all()
+    zone_rows = alpha[alpha["Zone"] != "All zones"]
+    assert len(zone_rows) and (zone_rows["FWL (TVD)"] == 1090.0).all()
+    assert (zone_rows["Fluid"] == "oil").all()
+    assert zone_rows["Delta rho"].tolist() == pytest.approx([0.28] * len(zone_rows))
+    # the other sheets keep their columns
+    assert list(book.parse("Summary").columns) == WELL_COLUMNS
+    # result columns reach the well sheet
+    assert {"SW_SHF", "HAFWL", "SW_SHF_RESID", "SW_PAY"} <= set(book.parse("Alpha").columns)
+
+
+def test_shf_result_columns_in_csv_and_las(tmp_path, shf_model):
+    csv = tmp_path / "all.csv"
+    assert ExportService().export_csv_wells(shf_model.project.wells, str(csv))
+    assert {"SW_SHF", "HAFWL", "SW_SHF_RESID", "SW_PAY"} <= set(pd.read_csv(csv).columns)
+    ds = shf_model.project.active
+    las = tmp_path / "a.las"
+    assert ExportService().export_las(ds.results, {"well_name": "Alpha"}, str(las))
+    text = las.read_text(encoding="utf-8")
+    assert all(name in text for name in ("SW_SHF", "HAFWL", "SW_SHF_RESID", "SW_PAY"))
+
+
+def test_a_well_named_shf_gets_a_unique_sheet(tmp_path, shf_model):
+    shf_model.project.get("W:B").display_name = SHF_SHEET
+    path = tmp_path / "clash.xlsx"
+    assert ExportService().export_excel_wells(shf_model.project.wells, str(path))
+    names = pd.ExcelFile(path).sheet_names
+    assert len(names) == len({n.lower() for n in names})
+    assert SHF_SHEET in names
+
+
+def test_single_well_excel_gets_the_shf_sheet_only_with_shf(tmp_path, model, shf_model):
+    svc = ExportService()
+    for m, expected in ((model, False), (shf_model, True)):
+        ds = m.project.active
+        path = tmp_path / f"single_{expected}.xlsx"
+        assert svc.export_excel(ds.results, ds.summary, str(path), {"Well": "Alpha"})
+        book = pd.ExcelFile(path)
+        assert (SHF_SHEET in book.sheet_names) is expected
+        if expected:
+            assert set(book.parse(SHF_SHEET)["Well"]) == {"Alpha"}

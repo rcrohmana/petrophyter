@@ -190,6 +190,7 @@ PROVENANCE_SHEET = "Provenance"
 ROCKTYPES_SHEET = "Rock Types"
 UNCERTAINTY_SHEET = "Uncertainty"
 TORNADO_SHEET = "Tornado"
+SHF_SHEET = "SHF"
 FIELD_TOTAL_LABEL = "Field total"
 
 WELL_COLUMNS = [
@@ -684,6 +685,63 @@ def rock_types_frame(wells) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=ROCKTYPE_COLUMNS)
 
 
+SHF_COLUMNS = [
+    "Well", "Zone", "Rock type", "n", "Bias", "RMSE", "MAE", "R2", "Basis",
+    "FWL (TVD)", "Fluid", "Water density", "Delta rho", "Perm source", "PHIE source",
+    "SHF Sw for pay",
+]
+
+
+SHF_BASIS_LABELS = {"core_pc": "core Pc", "log": "log-derived", "mixed": "mixed"}
+
+
+def shf_pay_label(shf: dict) -> str:
+    if shf.get("pay_refused"):
+        return "refused (log-derived fit)"
+    return "used" if shf.get("pay_active") else "not used"
+
+
+def well_shf_rows(shf: dict, well: str) -> list:
+    """SHF sheet rows of one well: the well, then each zone, then each rock type.
+
+    Misfit statistics are ``SW - SW_SHF`` over net reservoir above the contact. The
+    contact, fluid and densities are those used in the run for the zone (blank for the
+    well and rock-type rows).
+    """
+    fluids = shf.get("fluids") or {}
+    stats = shf.get("stats") or {}
+    common = [shf.get("perm_source") or "", shf.get("phie_source") or "", shf_pay_label(shf)]
+
+    def row(zone, rock, st, contact=None):
+        c = contact or {}
+        return [well, zone, rock, st.get("n", 0), _num(st.get("bias")), _num(st.get("rmse")),
+                _num(st.get("mae")), _num(st.get("r2")),
+                SHF_BASIS_LABELS.get(st.get("basis"), st.get("basis") or ""),
+                _num(c.get("fwl_tvd")), c.get("fluid") or "", _num(c.get("water_density")),
+                _num(c.get("delta_rho"))] + common
+
+    rows = [row("All zones", "All", stats.get("well") or {})]
+    for z in stats.get("zones") or []:
+        rows.append(row(z.get("zone", ""), "All", z, fluids.get(z.get("zone"))))
+    for r in stats.get("rock_types") or []:
+        rows.append(row("All zones", str(r.get("rock_type", "")), r))
+    return rows
+
+
+def shf_frame(wells) -> pd.DataFrame:
+    rows = []
+    for ds in wells_with_shf(wells):
+        rows.extend(well_shf_rows(ds.summary["shf"], well_label(ds)))
+    return pd.DataFrame(rows, columns=SHF_COLUMNS)
+
+
+def wells_with_shf(wells) -> list:
+    """Wells whose current results carry ``summary["shf"]``."""
+    return [ds for ds in wells
+            if ds.summary and ds.calculated and ds.status != "error"
+            and ds.summary.get("shf")]
+
+
 DEFINITION_COLUMNS = [
     "Set", "Rock type", "Samples", "log10 FZI centre", "FZI", "Lower boundary",
     "Upper boundary", "k RMSE log10", "Method", "Fit scope", "Edited", "Basis",
@@ -862,9 +920,11 @@ def _export_wells_excel(wells, file_path, depth_range=None, uncertainty=None):
         raise ValueError("no well has results to export")
     names = unique_names([well_label(ds) for ds in ready], 31,
                          reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET,
-                                   ROCKTYPES_SHEET, UNCERTAINTY_SHEET, TORNADO_SHEET))
+                                   ROCKTYPES_SHEET, UNCERTAINTY_SHEET, TORNADO_SHEET,
+                                   SHF_SHEET))
     zones = zones_frame(ready)
     rock_types = rock_types_frame(ready)
+    shf = shf_frame(ready)
     provenance = pd.DataFrame(
         [provenance_block(ds, depth_range) for ds in wells_with_results(wells)])
     with _atomic_target(file_path, ".xlsx") as temporary_path:
@@ -874,6 +934,8 @@ def _export_wells_excel(wells, file_path, depth_range=None, uncertainty=None):
                 _write_excel_sheet(writer, zones, ZONES_SHEET)
             if len(rock_types):
                 _write_excel_sheet(writer, rock_types, ROCKTYPES_SHEET)
+            if len(shf):
+                _write_excel_sheet(writer, shf, SHF_SHEET)
             if uncertainty is not None and uncertainty.get("result") is not None:
                 _write_uncertainty_sheets(writer, uncertainty)
             _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
@@ -933,6 +995,10 @@ class ExportService(QObject):
                                                    (provenance or {}).get("Well", ""))
                         _write_excel_sheet(writer, pd.DataFrame(rows, columns=ROCKTYPE_COLUMNS),
                                            ROCKTYPES_SHEET)
+                    if summary.get("shf"):
+                        rows = well_shf_rows(summary["shf"], (provenance or {}).get("Well", ""))
+                        _write_excel_sheet(writer, pd.DataFrame(rows, columns=SHF_COLUMNS),
+                                           SHF_SHEET)
                     if provenance:
                         _write_excel_sheet(writer, _provenance_frame(provenance),
                                            PROVENANCE_SHEET)

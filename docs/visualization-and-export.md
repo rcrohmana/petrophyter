@@ -68,3 +68,16 @@ Added only when rock typing is on and applied; without it, the files are as befo
 - **Rock Types sheet.** The Excel workbook gains a **Rock Types** sheet with one row per well and rock type: samples, gross sand, net reservoir, net pay, N/G pay, average PHIE and Sw in pay, HCPV, geometric-mean permeability, FZI and the share of core-labelled samples, then an **Unassigned** row per well and, for a project-wide fit, **Field total** rows (thickness and HCPV summed, Sw weighted by pore thickness).
 - **LAS.** `ROCK_TYPE`, `FZI`, `RQI`, `RT_MARGIN` and `PERM_RT` are written as numeric curves. The text column `ROCK_TYPE_SOURCE` is not written, as for other text columns.
 
+### Saturation height in the exports *(v1.10.0)*
+
+When saturation-height modelling has run, the results table of CSV, Excel (each well sheet, and the combined table of an all-wells export) and LAS gains `SW_SHF` (Sw from the saturation-height model), `HAFWL` (height above the free water level, ft, negative in the water leg) and `SW_SHF_RESID` (`SW - SW_SHF`), plus `SW_PAY` when SHF Sw is used for pay and HCPV. Without saturation-height content the exports are exactly as before.
+
+The Excel workbook gets an **SHF** sheet, in the all-wells workbook for every well that has saturation-height results and in a single-well workbook for that well. It has one row for the well, then one row for each zone and one for each rock type, with the columns:
+
+- **Well**, **Zone** and **Rock type**: the well row reads *All zones* and *All*; a zone row names the zone and a rock-type row the rock type.
+- **n**, **Bias**, **RMSE**, **MAE** and **R2**: the misfit of `SW` against `SW_SHF` (bias is the mean of `SW - SW_SHF`) over net reservoir samples above the free water level, and **Basis**: *core Pc*, *log-derived* or *mixed*.
+- **FWL (TVD)**, **Fluid**, **Water density** and **Delta rho**: the contact, hydrocarbon and densities used in the zone (blank on the well and rock-type rows).
+- **Perm source** and **PHIE source**: the columns J was computed from.
+- **SHF Sw for pay**: *used*, *not used* or *refused (log-derived fit)*.
+
+A well named *SHF* gets a numbered sheet name such as *SHF (2)*. The *Rock Types*, *Uncertainty* and *Tornado* sheets and the Summary and Zones columns are unchanged. With SHF Sw used for pay, the Uncertainty sheet header lists "SHF Sw where used for pay" among the parameters that are not varied.

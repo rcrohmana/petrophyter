@@ -98,6 +98,8 @@ everywhere reproduces the PHIT of v1.7.1 and older.
 `SW`, the curve that pay, HCPV, Swirr and permeability read, is the **effective** water saturation of the
 primary model for every model *(v1.7.2)*.
 
+With saturation-height modelling on, `SW_SHF` is a second saturation from the height above the free water level; it can optionally replace `SW` for pay and HCPV. See [Saturation-height modelling](#saturation-height-modelling-v1100).
+
 ### Valid samples and bounds *(v1.7.2)*
 
 One rule for all five models:
@@ -312,6 +314,8 @@ well, so in a log that changes from 0.1524 ft to 0.5 ft the coarse section count
 
 **Per rock type** *(v1.8.0)*. With rock typing on, the same flags, thickness and weights are summed per rock type (and per zone and rock type), so gross sand, net reservoir, net pay and HCPV per rock type plus the unassigned samples add up to the well totals. See [Rock Typing](#rock-typing-v180).
 
+**Saturation-height Sw** *(v1.10.0)*. When **Use SHF Sw for pay and HCPV** is on, the Sw cutoff and the averages read `SW_PAY` (the saturation-height Sw where it exists, else `SW`) instead of `SW`. See [Saturation-height modelling](#saturation-height-modelling-v1100).
+
 Configurable slider cutoffs are:
 
 - Vsh: 0–100%
@@ -341,6 +345,102 @@ For an `ok` zone, the limiting cutoff is the one with the lowest pass fraction a
 - **Cumulative HCPV:** Running total
 - Display modes: Net Pay, Net Reservoir, Gross, and Fraction Only
 - Visibility can be toggled with a checkbox.
+
+## Saturation-height modelling *(v1.10.0)*
+
+Saturation-height modelling gives a second water saturation, `SW_SHF`, from the height of each sample above the free water level and the sample's porosity and permeability. It is off by default; with it off, a run is exactly as in 1.9.0. `SW` stays the resistivity result in every case.
+
+### Capillary pressure and the J-function
+
+For each laboratory sample the capillary pressure `Pc` (psi) is turned into the Leverett J-function (Leverett 1941), which brings samples of one rock type onto one curve:
+
+```
+J = 0.2166 × Pc × sqrt(k / φ) / (σ cosθ)
+```
+
+with `k` in mD, `φ` as a fraction and `σ cosθ` in dyne/cm. The constant 0.2166 comes from the unit conversions (1 psi = 68 947.57 dyne/cm², 1 mD = 9.869233 × 10⁻¹² cm²). For a mercury-injection point the water saturation is `Sw = 1 − S_Hg`.
+
+**Laboratory to reservoir conditions.** `Pc_res = Pc_lab × (σ cosθ)_res / (σ cosθ)_lab`. Because J uses the `σ cosθ` of the system it was measured in, J is the same from the laboratory or the reservoir pressure. The default values (dyne/cm, magnitudes) can be edited on the Saturation-Height tab:
+
+| System | σ cosθ | Basis |
+|---|---|---|
+| Air-brine (laboratory) | 72 | 72 dyne/cm at 0° |
+| Mercury-air (laboratory) | 367.7 | \|480 cos 140°\| |
+| Oil-brine (laboratory) | 41.6 | 48 dyne/cm at 30° |
+| Oil-water (reservoir) | 26 | 30 dyne/cm at 30° |
+| Gas-water (reservoir) | 50 | 50 dyne/cm at 0° |
+
+The system of each Pc file is chosen when the file is imported; J is computed with that system's `σ cosθ`, so no reservoir conversion enters the fit itself.
+
+**Pressure and height.** `Pc_res = 0.433527 × Δρ × h` and `h = Pc_res / (0.433527 × Δρ)`, with `h` in feet above the free water level and `Δρ = ρ_water − ρ_hydrocarbon` in g/cc (0.433527 psi/ft per g/cc, the 62.428 lb/ft³ of fresh water divided by 144). On the logs the J-function at height `h` is `J = 0.2166 × 0.433527 × Δρ × h × sqrt(k / φ) / (σ cosθ)_res`. The water density can differ from zone to zone (it is set with each contact, 0.95 to 1.25 g/cc, blank = the project value); the project densities default to water 1.03, oil 0.75 and gas 0.25 g/cc, placeholders to confirm for your field. The water must be denser than the hydrocarbon.
+
+### Fit forms
+
+`Sw` is fitted as a function of J, for one rock type at a time, by a bounded robust least squares on the Sw residuals (soft-L1 loss, scale 0.05) from several starting points. The power law is the usual industry form; Brooks-Corey (Brooks and Corey 1964) has an entry J and a residual water saturation.
+
+| Form | Equation | Parameters (bounds) |
+|---|---|---|
+| Power law | `Sw = min(1, c × J^d)` | `c` (0.001 to 10), `d` (-6 to -0.05) |
+| Brooks-Corey | `Se = (J_d / J)^λ` for `J > J_d`, otherwise 1; `Sw = Swi + (1 - Swi) × Se` | `J_d` (0.001 to 20), `λ` (0.1 to 6), `Swi` (0 to 0.6) |
+
+`Sw` is 1 where J is 0 or below and is limited to the range 0 to 1. A fit needs at least 3 samples and 8 points (power law) or 5 samples and 15 points (Brooks-Corey); with less, the tab reports "insufficient data" and the fit has no parameters. Points at or below the minimum Pc you set (closure), points with `Sw` outside 0 to 1, and samples without a positive porosity and permeability are left out. By default each sample has equal weight (a point weighs 1 / the number of points of its sample), so a long mercury-injection curve does not outweigh a short porous-plate one; weighting every point equally is an option.
+
+### Core Pc fits and log-derived fits
+
+| | Core Pc | Log-derived |
+|---|---|---|
+| Data | Laboratory Pc curves of the selected wells | Log `SW` against height, in a well with a known contact |
+| J from | Laboratory Pc, porosity, permeability and `σ cosθ` | Height, log permeability and porosity, reservoir `σ cosθ` and `Δρ` |
+| Independent of the resistivity Sw | Yes: a real cross-check | No: it is fitted to `SW` |
+| Shown as | `core Pc` | `log-derived` |
+
+A log-derived fit smooths and interpolates the resistivity Sw along a hydrostatic profile. Its residual measures how well `SW` follows height, not whether `SW` is right. **Log-derived fits are a cross-check only and are never used for pay**: when any fit in use for a well is log-derived, the option to use SHF Sw for pay and HCPV is refused for that well and a diagnostics note says so. Fits are stored per project and shown with their basis (`core_pc`, `log` or `mixed` in the summary).
+
+### Free water level, OWC and height
+
+The contact to enter is the **free water level** (FWL, where `Pc = 0`), not the oil-water or gas-water contact. The OWC sits higher than the FWL by the entry height of the rock; taking the OWC read from the logs as the FWL makes the transition-zone `Sw` too high.
+
+Each well has a default contact and optionally one per zone (a zone without its own contact uses the default; a sample with neither has no `SW_SHF`). A contact has a depth, a fluid (oil or gas, which sets the density and the reservoir `σ cosθ`) and an optional water density. The height of a sample is `HAFWL = FWL (TVD) − TVD`, in feet, positive above the FWL.
+
+- **TVD source.** Heights use the mapped TVD curve, else a TVD depth index, else measured depth assumed vertical, exactly as for temperature. The source used is named in the summary and in the notes of the run; for a deviated well measured depth gives a wrong height, so map a TVD curve.
+- **TVD or TVDSS.** A contact is entered either on the log's TVD axis or as TVDSS. A TVDSS contact is converted with the kelly bushing elevation (`FWL (TVD) = FWL (TVDSS) + KB`). The KB must be typed in; the LAS header values are shown only as a hint and are never filled in automatically. A TVDSS contact with no KB is not used, and its samples count as having no contact. If the mapped depth curve looks like a subsea depth, the run warns, because the heights are then off by the KB.
+- **Estimate FWL.** For a well with fitted curves, **Estimate FWL** scans candidate contacts (a 1 ft grid, 600 ft either side of the deepest sample with `SW` below 0.5, then refined) and picks the one whose `SW_SHF` best matches the log `SW` (a root-mean-square misfit over net reservoir samples, samples that differ by more than 0.35 counting half). The result is reported as not identifiable, and cannot be accepted, when the minimum is at the edge of the search, when the misfit hardly changes with the contact (a range below 10 % of its mean), when there are fewer than 10 usable samples or when there is no hydrocarbon-bearing sample. Nothing is changed until you accept it.
+
+### Rock types
+
+With rock typing on, a fit is made and applied per rock type. A Pc sample takes its rock type from the file's rock-type column, else from the rock-type definitions applied to its laboratory porosity and permeability, else it is `All`. On the logs a sample uses the fit of its `ROCK_TYPE`. A sample with no rock type, or with a rock type that has no fit, has no `SW_SHF`, unless the pooled fallback is on, which gives such a sample the `All` fit.
+
+Rock-type numbers do not mean the same thing in two zones when the rock-type definitions are fitted per zone. In that case, and whenever rock typing is off, one `All` fit is used for every sample and a note says so.
+
+### Circularity
+
+- **Permeability.** The permeability used for J is chosen on the tab: automatic (the primary permeability, then `PERM_RT`, `PERM_WR`, `PERM_TIMUR`) or one of those columns. `PERM_WR` and `PERM_TIMUR` come from the irreducible water saturation and so from the resistivity Sw. `SW_SHF` computed with them is not independent of `SW`, and `SW_SHF_RESID` is then smaller than the real disagreement.
+- **Log rock types.** The `ROCK_TYPE` of the logs is classified from one of those permeabilities, so a fit applied by log rock type inherits the same dependence (core-labelled samples override within the core distance).
+- **Porosity.** J and `SW_SHF` use the porosity column chosen on the tab (default `PHIE`), and `SW` is the effective water saturation on the same basis. Pc data on a total-porosity basis should not be compared with the Waxman-Smits or Dual-Water total saturations.
+
+### Outputs
+
+| Column | Meaning |
+|---|---|
+| `SW_SHF` | Water saturation from the saturation-height model (fraction). 1 below the free water level; blank where it cannot be computed |
+| `HAFWL` | Height above the free water level, ft (negative in the water leg) |
+| `SW_SHF_RESID` | `SW − SW_SHF`: positive where the resistivity Sw is higher than the capillary model |
+| `SW_PAY` | The saturation actually used for pay and HCPV: `SW_SHF` where it exists, else `SW`. Only present when SHF Sw is used for pay |
+
+Permeability is floored at 0.001 mD and porosity at 0.01 before J is computed. Every sample lands in exactly one of these classes, and the counts are listed as notes: no contact, no TVD, no usable permeability or porosity, no rock type, no fit for its rock type (or pooled), water leg, modelled.
+
+The summary gains an **SHF** block: the basis of the fits, the TVD, permeability and porosity sources, the contact and densities used for each zone, the counts, and the misfit of `SW` against `SW_SHF` for the well, each zone and each rock type: number of samples, bias (mean `SW − SW_SHF`), RMSE, MAE and R². These are taken over net reservoir samples above the free water level, so they compare between zones and wells. They are written to the SHF sheet of the Excel export.
+
+**Pay and HCPV.** By default `SW_SHF` is a cross-check and pay, N/G, average Sw and HCPV use `SW`. With **Use SHF Sw for pay and HCPV** (core Pc fits only), the pay flags, net pay, N/G, average Sw in pay and HCPV use `SW_PAY`. Samples without a finite `SW_SHF` fall back to the resistivity Sw and are counted ("Pay Sw: saturation height, N samples from resistivity"). A water-leg sample has `SW_SHF` = 1. Irreducible water saturation and permeability are not recomputed from `SW_SHF`. Thickness and weights follow the rules of [Net Pay Analysis](#net-pay-analysis-v10).
+
+**Monte Carlo.** In an [uncertainty](#uncertainty-monte-carlo-v190) run with SHF Sw used for pay, the samples that have a finite `SW_SHF` keep it in every realisation; the contact and the fit parameters are not varied. The other samples use the varied resistivity Sw, as `SW_PAY` does. The Uncertainty tab and sheet list "SHF Sw where used for pay" among the parameters that are not varied. With SHF Sw not used for pay, the Monte Carlo result is unchanged.
+
+References:
+
+- Leverett, M.C. (1941), *Capillary behavior in porous solids*, *Transactions of the AIME* 142.
+- Brooks, R.H., Corey, A.T. (1964), *Hydraulic properties of porous media*, Colorado State University Hydrology Paper 3.
+- Amyx, J.W., Bass, D.M., Whiting, R.L. (1960), *Petroleum Reservoir Engineering: Physical Properties*, McGraw-Hill.
+- Purcell, W.R. (1949), *Capillary pressures: their measurement using mercury and the calculation of permeability therefrom*, *Transactions of the AIME* 186.
 
 ## Uncertainty (Monte Carlo) *(v1.9.0)*
 
