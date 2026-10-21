@@ -924,7 +924,8 @@ class ResistivityParamsGroup(QWidget):
             parts.append(f"{int(shale_samples)} shale samples for Rsh")
         text = "; ".join(parts)
         if text and quality:
-            text += f" (Rw quality: {quality})"
+            from modules.uncertainty import RW_QUALITY_TEXT
+            text += f" (Rw {RW_QUALITY_TEXT.get(quality, quality)})"
         self.counts_label.setText(text)
         self.counts_label.setVisible(bool(text))
         set_status(self.counts_label, "muted" if text else None)

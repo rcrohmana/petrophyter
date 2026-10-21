@@ -845,17 +845,17 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
                     for fw in frozen_wells})
 
 
-_RW_QUALITY_TEXT = {"water_leg": "from water leg", "uniform": "uniform estimate"}
+RW_QUALITY_TEXT = {"water_leg": "from water leg", "uniform": "uniform estimate"}
 
 
 def rw_quality_text(result) -> str:
     """One line on how the auto Rw was estimated across the wells, "" when none was auto."""
     qmap = getattr(result, "rw_quality", None) or {}
     found = {q for qs in qmap.values() for q in (qs or ())}
-    ordered = [q for q in _RW_QUALITY_TEXT if q in found] + sorted(found - set(_RW_QUALITY_TEXT))
+    ordered = [q for q in RW_QUALITY_TEXT if q in found] + sorted(found - set(RW_QUALITY_TEXT))
     if not ordered:
         return ""
-    return "Auto Rw: " + ", ".join(_RW_QUALITY_TEXT.get(q, str(q)) for q in ordered)
+    return "Auto Rw: " + ", ".join(RW_QUALITY_TEXT.get(q, str(q)) for q in ordered)
 
 
 # Unit shown after an additive offset; relative offsets are shown as a percentage.
