@@ -63,6 +63,7 @@ from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
 from .tabs.diagnostics_tab import DiagnosticsTab
 from .tabs.rock_typing_tab import RockTypingTab
+from .tabs.shf_tab import ShfTab
 from .tabs.summary_tab import SummaryTab
 from .tabs.uncertainty_tab import UncertaintyTab
 from .tabs.export_tab import ExportTab
@@ -248,6 +249,7 @@ class MainWindow(QMainWindow):
         self.log_tab = LogDisplayTab(self.model)
         self.diag_tab = DiagnosticsTab(self.model)
         self.rock_tab = RockTypingTab(self.model)
+        self.shf_tab = ShfTab(self.model)
         self.summary_tab = SummaryTab(self.model)
         self.uncertainty_tab = UncertaintyTab(self.model)
         self.export_tab = ExportTab(self.model)
@@ -257,13 +259,14 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.log_tab, "Log Display")
         self.tab_widget.addTab(self.diag_tab, "Diagnostics")
         self.tab_widget.addTab(self.rock_tab, "Rock Typing")
+        self.tab_widget.addTab(self.shf_tab, "Saturation-Height")
         self.tab_widget.addTab(self.summary_tab, "Summary")
         self.tab_widget.addTab(self.uncertainty_tab, "Uncertainty")
         self.tab_widget.addTab(self.export_tab, "Export")
         # Plot tabs redraw only while visible; the others are marked dirty
         # and catch up when they become current.
         self._lazy_tabs = (self.qc_tab, self.petro_tab, self.log_tab, self.diag_tab,
-                           self.rock_tab)
+                           self.rock_tab, self.shf_tab)
         self._dirty_tabs = set()
         self.tab_widget.currentChanged.connect(self._refresh_current_tab)
 
@@ -355,6 +358,9 @@ class MainWindow(QMainWindow):
         # Rock typing switch / applied definitions: only the Summary's Rock types group follows.
         self.model.parameters_changed.connect(self.summary_tab.refresh_rock_types)
         self.rock_tab.run_all_requested.connect(self._on_run_all)
+        # Saturation height: Apply fit, Accept and the settings re-check the wells' stale flags.
+        self.shf_tab.run_all_requested.connect(self._on_run_all)
+        self.shf_tab.stale_requested.connect(lambda keys: self._recompute_stale(keys or None))
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -420,6 +426,11 @@ class MainWindow(QMainWindow):
         self._rock_timer.timeout.connect(self._refresh_current_tab)
         for signal in (self.model.core_data_loaded, self.model.project.wells_changed):
             signal.connect(self._mark_rock_tab_dirty)
+        # Pc data, the wells and the results reach the Saturation-Height tab when it is visible.
+        for signal in (getattr(self.model.project, "pc_changed", None),
+                       self.model.project.wells_changed):
+            if signal is not None:
+                signal.connect(self._mark_shf_tab_dirty)
 
     def _on_about_triggered(self):
         """Show the About dialog."""
@@ -979,6 +990,7 @@ class MainWindow(QMainWindow):
             getattr(self, "log_tab", None),
             getattr(self, "diag_tab", None),
             getattr(self, "rock_tab", None),
+            getattr(self, "shf_tab", None),
             getattr(self, "summary_tab", None),
             getattr(self, "uncertainty_tab", None),
             getattr(self, "export_tab", None),
@@ -1292,6 +1304,7 @@ class MainWindow(QMainWindow):
         self.actions_["stop_analysis"].setEnabled(self.batch_runner.is_running())
         self._refresh_uncertainty_actions()
         self.rock_tab.set_batch_running(self.batch_runner.is_running())
+        self.shf_tab.set_batch_running(self.batch_runner.is_running())
         if self._busy:
             return  # _set_busy(None) refreshes
         project = self.model.project
@@ -1381,6 +1394,7 @@ class MainWindow(QMainWindow):
         self.log_tab.reset_ui()
         self.diag_tab.reset_ui()
         self.rock_tab.reset_ui()
+        self.shf_tab.reset_ui()
         self.summary_tab.reset_ui()
         self.export_tab.reset_ui()
 
@@ -2109,6 +2123,11 @@ class MainWindow(QMainWindow):
     def _mark_rock_tab_dirty(self, *_):
         """Core or wells changed: the Rock Typing tab catches up once, when visible."""
         self._dirty_tabs.add(self.rock_tab)
+        self._rock_timer.start()
+
+    def _mark_shf_tab_dirty(self, *_):
+        """Pc data or wells changed: the Saturation-Height tab catches up once, when visible."""
+        self._dirty_tabs.add(self.shf_tab)
         self._rock_timer.start()
 
     def _refresh_current_tab(self, *_):
