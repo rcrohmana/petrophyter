@@ -590,6 +590,8 @@ def test_every_menu_action_has_icon(window):
     for top in window.menuBar().actions():
         for action in _walk_menu_actions(top.menu()):
             seen.append(action.text())
+            if action is window.actions_["lrlc_guard"]:
+                continue  # a checkable setting: its check mark is the indicator
             assert not action.icon().isNull(), action.text()
     assert "Theme" in seen and "Exit" in seen
 

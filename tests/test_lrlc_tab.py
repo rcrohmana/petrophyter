@@ -275,7 +275,7 @@ def test_browser_action_opens_the_workbench_on_the_zone(window, qtbot):
     _well(window)
     window._on_browser_action("lrlc_zone:UPPER")
     assert window.tab_widget.currentWidget() is window.lrlc_tab
-    assert window.lrlc_tab.panels.currentIndex() == 0
+    assert window.lrlc_tab.panels.currentIndex() == 1
     assert window.lrlc_tab._pending_zone == "UPPER"          # LRLC off: remembered
     assert window.lrlc_tab.stack.currentIndex() == 0
     window.lrlc_tab.enable_button.click()                    # applied after Enable

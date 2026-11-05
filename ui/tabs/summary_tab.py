@@ -39,6 +39,8 @@ ZONE_TABLE_COLUMNS = [
     "Zone", "Top", "Bottom", "Gross", "Net", "N/G", "Avg PHIE", "Avg Sw",
     "HCPV", "a", "m", "n", "Rw", "Cutoffs (Vsh/Phi/Sw)",
 ]
+# Shown only when the zones carry a baseline (the Rt corrections are active).
+ZONE_BASE_COLUMNS = ["Net (base)", "Avg Sw (base)", "HCPV (base)"]
 WELL_TABLE_COLUMNS = WELL_COLUMNS + ["Issues"]
 ROCK_TABLE_COLUMNS = [
     "Rock type", "Samples", "Gross", "Net", "Net pay", "N/G", "Avg PHIE", "Avg Sw", "HCPV",
@@ -370,6 +372,8 @@ class SummaryTab(QWidget):
         if not zones:
             self.zones_model.set_table(pd.DataFrame(columns=ZONE_TABLE_COLUMNS))
             return
+        with_base = any("net_pay_base" in z for z in zones)
+        table_columns = ZONE_TABLE_COLUMNS + (ZONE_BASE_COLUMNS if with_base else [])
         rows, tooltips, bold_cells, row_states = [], {}, set(), {}
         diagnostics = summary.get("zone_diagnostics") or {}
         for r, zone in enumerate(zones):
@@ -386,7 +390,10 @@ class SummaryTab(QWidget):
                 _fmt(_entry_value(params, "a"), 2), _fmt(_entry_value(params, "m"), 2),
                 _fmt(_entry_value(params, "n"), 2), _fmt(_entry_value(params, "rw"), 4),
                 cutoffs,
-            ])
+            ] + ([
+                _fmt(zone.get("net_pay_base")), _fmt(zone.get("avg_sw_pay_base"), 1, True),
+                _fmt(zone.get("hcpv_net_pay_base"), 4),
+            ] if with_base else []))
             columns = {"a": 9, "m": 10, "n": 11, "rw": 12}
             for name, c in columns.items():
                 self._annotate(params, name, r, c, tooltips, bold_cells)
@@ -404,7 +411,7 @@ class SummaryTab(QWidget):
                 for c in (0, 3, 4):
                     tooltips[(r, c)] = note[1]
         self.zones_model.set_table(
-            pd.DataFrame(rows, columns=ZONE_TABLE_COLUMNS), tooltips, bold_cells=bold_cells,
+            pd.DataFrame(rows, columns=table_columns), tooltips, bold_cells=bold_cells,
             row_states=row_states)
         _fit_table(self.zones_table, len(rows))
 
