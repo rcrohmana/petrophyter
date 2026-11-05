@@ -1489,7 +1489,7 @@ class PetrophysicsCalculator:
             phit: Total porosity series
             rw: Formation water resistivity (ohm.m)
             a, m, n: Archie parameters
-            qv: Qv parameter (meq/ml)
+            qv: Qv parameter (meq/ml), a scalar or one value per row
             B: B parameter (mho cm^2/meq)
             phie: Effective porosity series for the effective Sw
 
@@ -1510,6 +1510,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("B", B, allow_nan=False)
         if np.ndim(B):
             B = self._per_sample(B, "B")      # e.g. B from temperature, one value per row
+        if np.ndim(qv):
+            qv = self._per_sample(qv, "qv")   # one value per row, like B
 
         if phit is None:
             phit = self.results.get("PHIT", self.results.get("PHIE", self._make_series(0.15)))
@@ -1535,6 +1537,7 @@ class PetrophysicsCalculator:
                 ct = 1.0 / rt_arr[solve]
                 cw_v = cw[solve] if np.ndim(cw) else cw
                 b_v = B[solve] if np.ndim(B) else B
+                qv_v = qv[solve] if np.ndim(qv) else qv
 
                 # Function to solve: f(Sw) = Model_Ct - Actual_Ct = 0
                 # Model_Ct = (1/F*) * (Cw * Sw^n + B*Qv * Sw^(n-1))
@@ -1542,7 +1545,7 @@ class PetrophysicsCalculator:
                     # Guard against small Sw
                     sw = np.maximum(sw, 1e-6)
                     term1 = cw_v * np.power(sw, n)
-                    term2 = (b_v * qv) * np.power(sw, n - 1)
+                    term2 = (b_v * qv_v) * np.power(sw, n - 1)
                     return (1.0 / f_star) * (term1 + term2) - ct
 
                 f_lo = ws_func(np.full(f_star.shape, 0.001))

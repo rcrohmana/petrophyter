@@ -836,6 +836,18 @@ def _swirr_method_label(method, n_fallback, warnings):
     return method
 
 
+@dataclass(frozen=True)
+class SandBasis:
+    """Sand-fraction porosity and shale volume the Sw models read (one value per segment row).
+
+    Already merged with the bulk values by the caller where a sample has no sand value.
+    """
+
+    phie: np.ndarray
+    phit: np.ndarray
+    vsh: np.ndarray
+
+
 @dataclass
 class SegmentBasis:
     """What the saturation stage used for one segment (``run_pipeline(capture=[])``).
@@ -867,6 +879,9 @@ class SegmentBasis:
     # LRLC Rt chain: the frozen RT_SW (None when no step ran) and its replay record.
     rt_sw: Optional[np.ndarray] = None
     chain_replay: Optional[object] = None
+    # LRLC: per-sample Qv for Waxman-Smits and the sand basis for the Sw models (None: bulk).
+    qv_values: Optional[np.ndarray] = None
+    sand_basis: Optional["SandBasis"] = None
 
 
 def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay,
@@ -881,6 +896,8 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
         sw_hold=None if sw_hold is None else np.array(sw_hold, dtype=float),
         rt_sw=None if pay.get("rt_sw") is None else np.array(pay["rt_sw"], dtype=float),
         chain_replay=pay.get("chain_replay"),
+        qv_values=None if pay.get("qv_values") is None else np.array(pay["qv_values"], dtype=float),
+        sand_basis=pay.get("sand_basis"),
     ))
 
 
@@ -1054,7 +1071,8 @@ def _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data):
 
 
 def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                rsh_auto=False, only_primary=False, rt_values=None):
+                rsh_auto=False, only_primary=False, rt_values=None, qv_values=None,
+                basis=None):
     """Effective Rw / Rsh / WS B, PHIE / PHIT, the Sw methods and the ``SW`` column.
 
     Returns ``(sw, phie, phit, sw_fallback)``. ``sw`` is the ``SW`` Series (also stored
@@ -1062,6 +1080,10 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     ``sw_fallback`` is None when the primary method supplied ``SW``, else the column
     used instead, or :data:`SW_DEFAULTED`. With ``only_primary`` only the method that
     ends up as ``SW`` is computed; ``SW`` is the same as the full path's.
+
+    ``qv_values`` (an array aligned to the rows) replaces ``p["ws_qv"]`` for Waxman-Smits only.
+    ``basis`` (a :class:`SandBasis`) replaces the porosity and shale volume the Sw models read;
+    the returned ``phie`` / ``phit`` stay the bulk ones.
     """
     sw = None
     sw_fallback = None
@@ -1079,6 +1101,14 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     if phit is None:
         phit = pd.Series(np.nan, index=data.index)
 
+    # What the Sw models read; the bulk phie / phit / vsh are returned and used for pay.
+    m_phie, m_phit, m_vsh = phie, phit, vsh
+    if basis is not None:
+        m_phie = pd.Series(np.asarray(basis.phie, dtype=float), index=data.index)
+        m_phit = pd.Series(np.asarray(basis.phit, dtype=float), index=data.index)
+        m_vsh = pd.Series(np.asarray(basis.vsh, dtype=float), index=data.index)
+    ws_qv = p["ws_qv"] if qv_values is None else np.asarray(qv_values, dtype=float)
+
     if has_rt:
         selected = p["sw_methods"]
         primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
@@ -1091,20 +1121,20 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
                 wanted = [name for name in SW_COLUMN_MAP if name in selected][:1]
             selected = wanted
         if "Archie" in selected:
-            calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n, rt=rt_values)
+            calc.calculate_sw_archie(rt_curve, m_phie, rw_eff, a, m, n, rt=rt_values)
         if "Indonesian" in selected:
-            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+            calc.calculate_sw_indonesian(rt_curve, m_phie, m_vsh, rw_eff, rsh_eff, a, m, n,
                                          rt=rt_values)
         if "Simandoux" in selected:
-            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+            calc.calculate_sw_simandoux(rt_curve, m_phie, m_vsh, rw_eff, rsh_eff, a, m, n,
                                         rt=rt_values)
         if "Waxman-Smits" in selected:
             # Total-porosity models: solved on PHIT, returned as effective Sw on PHIE.
-            calc.calculate_sw_waxman_smits(rt_curve, phit, rw_eff, a, m, n, p["ws_qv"], ws_b,
-                                           phie=phie, rt=rt_values)
+            calc.calculate_sw_waxman_smits(rt_curve, m_phit, rw_eff, a, m, n, ws_qv, ws_b,
+                                           phie=m_phie, rt=rt_values)
         if "Dual-Water" in selected:
-            calc.calculate_sw_dual_water(rt_curve, phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
-                                         phie=phie, rt=rt_values)
+            calc.calculate_sw_dual_water(rt_curve, m_phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
+                                         phie=m_phie, rt=rt_values)
 
         if primary_col in calc.results.columns:
             calc.results["SW"] = calc.results[primary_col]
@@ -1293,7 +1323,8 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
             "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None,
             "shf": shf_out, "sw_hold": sw_hold, "rt_sw": rt_values,
-            "chain_replay": None if chain_out is None else chain_out.replay}
+            "chain_replay": None if chain_out is None else chain_out.replay,
+            "qv_values": None, "sand_basis": None}
 
 
 def _sample_dz(data: pd.DataFrame):

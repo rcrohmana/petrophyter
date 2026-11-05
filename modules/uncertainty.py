@@ -500,6 +500,8 @@ class _Segment:
     sw_hold: Optional[np.ndarray] = None  # Sw held fixed per sample (NaN = resistivity Sw)
     rt_sw: Optional[np.ndarray] = None    # frozen LRLC chain output (None: no step ran)
     chain_replay: Any = None              # ChainReplay when a step that ran has varied parameters
+    qv_values: Optional[np.ndarray] = None  # frozen per-sample Qv for Waxman-Smits
+    sand_basis: Any = None                # frozen SandBasis the Sw models read
 
 
 @dataclass
@@ -524,10 +526,10 @@ class FrozenWell:
 
 
 def _primary_sw_values(seg: _Segment, frozen_mapping, sp, rw, rsh, warn,
-                       rt_values=None) -> np.ndarray:
+                       rt_values=None, qv_values=None, basis=None) -> np.ndarray:
     sw, _, _, _ = _primary_sw(seg.calc, seg.data, frozen_mapping, sp, seg.vsh_s, rw, rsh,
                               seg.tctx, warn, seg.rsh_auto, only_primary=True,
-                              rt_values=rt_values)
+                              rt_values=rt_values, qv_values=qv_values, basis=basis)
     return np.asarray(sw, dtype=float)
 
 
@@ -580,13 +582,16 @@ def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> 
             rw_quality=(str(b.rw_quality) if b.rw_quality else None),
             sw_hold=(None if b.sw_hold is None else np.asarray(b.sw_hold, dtype=float)),
             rt_sw=(None if b.rt_sw is None else np.asarray(b.rt_sw, dtype=float)),
-            chain_replay=b.chain_replay)
+            chain_replay=b.chain_replay,
+            qv_values=(None if b.qv_values is None else np.asarray(b.qv_values, dtype=float)),
+            sand_basis=b.sand_basis)
         vsh_all[seg.positions] = seg.vsh
         phie_all[seg.positions] = seg.phie
         if seg.has_rt:
             sp = seg.params
             seg.sw_base = _primary_sw_values(seg, curve_mapping, sp, seg.rw, seg.rsh, IssueLog(),
-                                             rt_values=seg.rt_sw)
+                                             rt_values=seg.rt_sw, qv_values=seg.qv_values,
+                                             basis=seg.sand_basis)
         segments.append(seg)
 
     zones = [row["zone"] for row in summary.get("zones") or []]
@@ -664,7 +669,8 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
                 eff = _sw_effective_inputs(p2, rw, rsh, seg.rsh_auto, seg.tctx, seg.data)
                 rt_values = rerun_chain(seg.chain_replay, {"rsh": eff.rsh, "rw": eff.rw})
             sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn,
-                                    rt_values=rt_values)
+                                    rt_values=rt_values, qv_values=seg.qv_values,
+                                    basis=seg.sand_basis)
         if seg.sw_hold is not None:
             sw = np.where(np.isfinite(seg.sw_hold), seg.sw_hold, sw)
         pos = seg.positions
