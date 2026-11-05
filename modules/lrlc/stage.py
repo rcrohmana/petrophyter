@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-from modules.lrlc.config import AUX_ROLES
+from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, LRLC_PARAM_DEFAULTS
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
@@ -191,6 +191,18 @@ def apply_lrlc_stage(calc, data, p, run: LrlcRun, *, rt_curve, zone_keys, sw_inp
                 run.cut_rows.append(row)
 
 
+def _summary_params(resolved: dict) -> dict:
+    """The resolved ladder for the summary: 2.6 keys only where they differ from built-in.
+
+    Keeps the summary of a run that uses none of them as it was before they existed.
+    """
+    def level(values):
+        return {k: v for k, v in values.items()
+                if k not in L2_PARAM_KEYS or v != LRLC_PARAM_DEFAULTS[k]}
+    return {"default": level(resolved.get("default") or {}),
+            "zones": {z: level(v) for z, v in (resolved.get("zones") or {}).items()}}
+
+
 def _clean(value):
     """JSON-friendly python value."""
     if isinstance(value, dict):
@@ -276,7 +288,7 @@ def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz,
     out = {
         "version": 1,
         "curves": dict(run.aux_names),
-        "params": _clean(lrlc["resolved"]),
+        "params": _clean(_summary_params(lrlc["resolved"])),
         "chain": chain,
         "screening": screening,
         "movable": movable,

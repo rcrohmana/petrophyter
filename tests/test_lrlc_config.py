@@ -300,3 +300,47 @@ def test_apply_pickett(three_wells):  # noqa: F811
     assert LrlcService.apply_pickett(model, ds, None, _Fit(m=2.1), False) is True
     assert ds.overrides["m"]["value"] == 2.1
     assert ds.overrides["rw"]["mode"] == "auto"
+
+
+# --- session format 2.6 settings -------------------------------------------------------
+def test_l2_param_keys_clean_and_choices():
+    from modules.lrlc.config import L2_PARAM_KEYS, LRLC_CHOICES, LRLC_NULLABLE
+    for key in L2_PARAM_KEYS:
+        assert key in LRLC_PARAM_DEFAULTS
+        assert key in LRLC_CHOICES or key in LRLC_RANGES, key
+    assert clean_param("phi_max", None) == (None, True)
+    assert clean_param("phi_max", 0.35) == (0.35, True)
+    assert clean_param("phi_max", 0.6)[1] is False
+    assert clean_param("sw_basis", "sand") == ("sand", True)
+    assert clean_param("sw_basis", "other")[1] is False
+    assert clean_param("vlam_const", None)[1] is False
+    assert "vlam_const" not in LRLC_NULLABLE
+
+
+def test_l2_blocks_merge_with_ranges():
+    from modules.lrlc.config import merge_lrlc
+    out = merge_lrlc({"thomas_stieber": {"enabled": True, "clean_pct": 150.0, "class_share": 0.3},
+                      "guard": {"enabled": False}})
+    assert out["thomas_stieber"]["enabled"] is True
+    assert out["thomas_stieber"]["clean_pct"] == 90.0      # out of range -> default
+    assert out["thomas_stieber"]["class_share"] == 0.3
+    assert out["guard"]["enabled"] is False
+    assert merge_lrlc({})["guard"]["enabled"] is True
+
+
+def test_l2_configured_rung():
+    from types import SimpleNamespace
+    from modules.lrlc.config import lrlc_defaults, lrlc_l2_configured
+
+    class P(SimpleNamespace):
+        def __iter__(self):
+            return iter(self.wells)
+
+    lrlc = lrlc_defaults()
+    lrlc["enabled"] = True
+    assert not lrlc_l2_configured(P(lrlc=lrlc, wells=[]))       # guard default is not "configured"
+    lrlc["params"]["default"]["rt_steps"] = ["laminated"]
+    assert lrlc_l2_configured(P(lrlc=lrlc, wells=[]))
+    ds = SimpleNamespace(lrlc={}, lrlc_curves={"RT_SBC": "ILD"})
+    assert lrlc_l2_configured(P(lrlc=lrlc_defaults(), wells=[ds]))
+    assert clean_curves({"RT_SBC": "ILD", "XX": "Y"}) == {"RT_SBC": "ILD"}
