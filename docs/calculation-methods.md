@@ -444,7 +444,7 @@ References:
 
 ## LRLC screening and diagnostics *(v1.11.0)*
 
-Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and no Rt correction step in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
+Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and none of the corrections below in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. The corrections (the laminated-sand and pyrite Rt steps, the Qv estimate and the sand basis) are chosen per zone and change Sw, pay and HCPV only where you switch them on. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
 
 ### Screening criteria and flag
 
@@ -532,7 +532,161 @@ A correction step is a function that takes the resistivity of the previous step 
 RT (measured, never modified) → step 1 → step 2 → …  ⇒  RT_SW (what every Sw model reads)
 ```
 
-`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. No step ships in this version, so `RT_SW` does not appear and Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
+`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. Two steps ship: **laminated sand** (`RT_SAND`) and **pyrite** (`RT_PYR`), run in that order. Each writes its own column, so the output of every step stays visible. With no step selected, Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
+
+### Thomas-Stieber decomposition
+
+Thomas-Stieber is a two end-member model of a sand with shale laminae. The sand laminae are clean sand of porosity `phi_max` that holds dispersed clay in its pores, and the shale laminae have the porosity `phi_sh`. With `Vlam` the laminar shale volume, `Vd_s` the dispersed clay as a fraction of the sand laminae and `Vdisp` the dispersed volume of the rock:
+
+```
+phi_sand = phi_max − Vd_s × (1 − phi_sh)
+PHIT     = (1 − Vlam) × phi_sand + Vlam × phi_sh
+Vsh      = Vlam + (1 − Vlam) × Vd_s
+
+Vlam  = [ PHIT − phi_max + Vsh × (1 − phi_sh) ] / (1 − phi_max)
+Vdisp = Vsh − Vlam
+```
+
+`Vsh` is the shale volume named in the Thomas-Stieber settings (`VSH` by default) and `PHIT` is the total porosity of the run. The decomposition runs per zone with the end-points that are applied to that zone; it needs a GR curve (with the default constant shale volume it is skipped, with a note) and the two end-points. A zone without applied end-points, or with end-points that fail the checks below, gets empty `VLAM`, `VDISP`, `PHI_SAND` and `TS_CLASS` 0.
+
+**Clamping.** `Vlam` is limited to the triangle of possible points: not below `max(0, (Vsh − phi_max) / (1 − phi_max))` (the clay-supported edge) and not above `Vsh` (all shale laminar). A sample whose unclamped `Vlam` lies more than `class_tol` (default 0.03) beyond an edge is counted as outside the triangle and takes the edge value.
+
+**Classes (`TS_CLASS`).** Within the window `class_vsh_min` ≤ Vsh ≤ `class_vsh_max` (0.05 to 0.95), with the laminar share `f = Vlam / Vsh` and `class_share` = 0.20:
+
+| Code | Class | Rule |
+|---|---|---|
+| 0 | Not classified | input missing or outside 0 to 1, no applied end-points, or Vsh outside the window |
+| 1 | Laminar | `f ≥ 1 − class_share` |
+| 2 | Dispersed | `f ≤ class_share`, or a point below the dispersed line (Vsh at or below `phi_max` and unclamped `Vlam` below −`class_tol`) |
+| 3 | Mixed | `class_share < f < 1 − class_share` |
+| 4 | Structural | unclamped `Vlam` above `Vsh` by more than `class_tol` (shale in the framework) |
+| 5 | Clay-supported | beyond the clay-supported edge by more than `class_tol` |
+
+The classes are a screening aid, not a lithofacies log.
+
+**End-point proposals.** For each zone the Workbench proposes `phi_max` as the 90th percentile (`clean_pct`) of `PHIT` over the clean samples (`Vsh < clean_vsh`, default 0.05) and `phi_sh` as the median `PHIT` over the shale samples (`Vsh > shale_vsh`, default 0.80). A zone needs at least `clean_min_n` (30) clean samples that add up to at least 15 ft and `shale_min_n` (10) shale samples; a zone short of either takes the proposal of the whole well, and says so (source *well*). A proposal is usable only when `phi_max` is 0.10 to 0.45, `phi_sh` is 0 to 0.40 and `phi_sh` is at least 0.02 below `phi_max`. **A proposal is never applied by itself**: you apply the values in the Remediation panel.
+
+The result depends on both end-points and on a `PHIT` free of shale and gas effects; gas lowers the density-neutron porosity contrast, and the run counts the gas samples that are classified. Reference: Thomas and Stieber (1975).
+
+### Laminated-sand resistivity (Hagiwara)
+
+When sand and shale laminae are thinner than the tool and current runs along the bedding, the two conduct in parallel. With `Rsh` the effective shale resistivity of the zone (temperature-corrected, as everywhere else):
+
+```
+1/Rt = (1 − Vlam) / Rsand + Vlam / Rsh
+s    = Vlam × Rt / Rsh
+RT_SAND = Rsand = (1 − Vlam) × Rt / (1 − s)
+```
+
+`s` is the share of the measured conductance that the shale laminae carry. A relative error in Rt is amplified in `RT_SAND` by `1 / (1 − s)`. `Vlam` is the Thomas-Stieber `VLAM` (**Thomas-Stieber split**) or a constant (`vlam_const`, 0 to 0.9). Settings and handling of each sample:
+
+| Case | Condition | Result |
+|---|---|---|
+| Not applicable | `Vsh ≥ hag_vsh_max` (default 0.80) | `RT_SAND` is empty, counted |
+| No input | Rt or Rsh missing or not positive, `Vlam` missing or negative | empty, counted |
+| Identity | `Vlam = 0` | `RT_SAND = Rt` |
+| Invalid | `s ≥ s_invalid` (default 0.95), or `Vlam ≥ 1` | empty, counted |
+| Sensitive | `s ≥ s_warn` (default 0.80), error amplified five times or more | value kept, counted and warned |
+
+Samples whose corrected Rt is still below Rsh are counted too. A step that gives an empty value follows the setting **When a step cannot produce a value** (see the chain above). Without a `Vlam` (Thomas-Stieber off or without end-points in the zone) the step returns nothing for the zone and says so. The correction is meant for the raw deep resistivity: a curve that is already shoulder-bed corrected or deconvolved is not raw Rt (see the guard below). References: Poupon, Loy and Tixier (1954); Hagiwara (1988, US patent 4,739,255); Hagiwara (1995, 1997).
+
+### Pyrite volume and the pyrite Rt correction
+
+**Volume from RHOB and PEF.** Pyrite adds density (about 4.99 g/cc) and photoelectric absorption (PEF about 17 b/e, a volumetric factor `U = PEF × RHOB`) that a clean sand does not. With the unknowns pore volume `phi`, matrix volume `Vma` and pyrite volume `Vpy` and the known `Vsh`, three equations are solved per zone:
+
+```
+1                 = phi + Vma + Vpy + Vsh
+RHOB              = phi × rho_f + Vma × rho_ma + Vpy × rho_py + Vsh × rho_sh
+PEF × RHOB        = phi × U_f  + Vma × U_ma  + Vpy × U_py  + Vsh × U_sh
+```
+
+`U_f` is the fluid value (`u_fluid`, 0.4), `U_ma = PEF_ma × rho_ma`, `U_py = PEF_py × rho_py`, `U_sh = PEF_sh × rho_sh`. Pyrite and matrix defaults are 4.99 g/cc with PEF 16.97, and 2.65 g/cc (the zone matrix density) with PEF 1.81; the shale density is the zone shale density with PEF 3.4. The fluid density is the run's fluid density. If the 3 × 3 end-point matrix has a condition number above 10⁴ the zone gets no `VPYR` and a warning. A sample needs RHOB, PEF (0 to `pef_max`, default 25) and Vsh. A negative `Vpy` below −`neg_tol` (0.01) is left empty, a negative one within the tolerance is set to 0, and a `Vpy` above `vpyr_max` (0.25) is left empty; each is counted. The other method, **Constant VPYR**, uses one value per zone (`pyr_vpyr`) and needs no PEF.
+
+Limits: barite mud, siderite and other heavy minerals raise PEF without pyrite, and a PEF measured on a pad is a pad-contact measurement. Where pyrite is present the density porosity is biased low; the run notes this for the net reservoir.
+
+**Rt correction.** Only the connected fraction `f` of the pyrite conducts, with the resistivity `Rpy` (default 0.01 ohm.m). The pyrite conductance is removed from the measured conductance as a parallel path:
+
+```
+RT_PYR = 1 / ( 1/Rt − f × Vpy / Rpy )
+t = f × Vpy / Rpy        s = t × Rt        RT_PYR = Rt / (1 − s)
+```
+
+`f = 0` leaves Rt unchanged (the step is flagged as doing nothing), and so does `Vpy = 0`. A sample with `s ≥ s_invalid` (0.95) is empty and counted; `s ≥ s_warn` (0.80) is kept and counted as sensitive, because the correction then removes most of the measured conductance. `f` and `Rpy` are calibration values for the field, **not defaults to trust**. The step reads the output of the step before it, so with both steps on, `RT_PYR` is computed from `RT_SAND`. Reference: Clavier, Heim and Scala (1976).
+
+### Qv from Vsh and the shale CEC
+
+The Waxman-Smits model needs `Qv`, the cation exchange per pore volume. The estimate takes the exchange capacity of the rock as proportional to the shale volume:
+
+```
+CEC_rock = Vsh × cec_shale                                    (meq/100 g)
+Qv       = CEC_rock / 100 × rho_g × (1 − PHIT) / PHIT          (meq/mL)
+```
+
+`cec_shale` is the capacity of the shale in meq/100 g (default 25) and `rho_g` the grain density (the zone matrix density unless set). A sample with `PHIT` below `phi_min` (0.03) or `Qv` above `qv_max` (3 meq/mL) is left empty and counted. The result is the array `QV_EST`. **Only Waxman-Smits reads it**; where `QV_EST` is empty the model uses the constant Qv of the Waxman-Smits parameters, and the run says how many samples fell back. A Qv estimate with Waxman-Smits not among the selected Sw methods is reported as not used.
+
+**Calibration with core CEC.** When the well has core CEC (see [Core Data](data-formats.md#core-data)), each core sample is paired with the nearest log sample within `pair_tol_ft` (0.5 ft) and `cec_shale` is the least-squares slope through the origin of the pairs with `Vsh ≥ 0.05`:
+
+```
+cec_shale = Σ(CEC × Vsh) / Σ(Vsh²)
+```
+
+with R² against the mean of the core values. It needs at least `min_pairs` (5) pairs. The Remediation panel shows the proposal and writes it only when you press **Use core CEC** and apply. Vsh from the gamma ray is a proxy for clay capacity; calibrate before relying on the values. References: Waxman and Smits (1968); Hill, Shirley and Klein (1979); Juhasz (1981).
+
+### Sand basis for Sw
+
+After the laminated-sand correction, `RT_SAND` is the resistivity of the sand laminae, so the Sw model should also read the porosity and shale volume of the sand laminae. With the **sand basis** a zone's Sw models read, for samples with a finite Thomas-Stieber result and `Vlam < 1`:
+
+```
+Vd_s = Vdisp / (1 − Vlam)
+PHIT → PHI_SAND         Vsh → Vd_s         PHIE → phi_max − Vd_s
+```
+
+The basis is chosen per zone: **Automatic** uses the sand basis where the laminated step is on and the bulk basis elsewhere; **Sand laminae** and **Bulk** force it. A sample in a sand-basis zone with no Thomas-Stieber result keeps the bulk values and is counted. The sand basis changes what the Sw models read, not the stored `PHIE`, `PHIT` or `VSH` columns, and pay and HCPV keep using the bulk `PHIE` and `VSH` cutoffs.
+
+**Double counting.** With the **bulk** basis after the laminated-sand correction, the Sw model reads the bulk porosity (lower than the sand porosity) and, for Indonesian and Simandoux, the bulk `Vsh`, which already contains the laminar shale that the correction removed from Rt. Laminar shale is then counted twice and Sw comes out too high. The run warns for Indonesian and Simandoux in that case, and in every case warns that bulk porosity is read. Use the sand basis, or Archie or Waxman-Smits, after the laminated-sand correction.
+
+### Shoulder-bed guard
+
+Thomas-Stieber classifies each zone as **laminated** when, over the samples with `Vsh ≥ vsh_min` (default 0.10), the thickness-weighted laminar share of the shale volume `Σ(Vlam × dz) / Σ(Vsh × dz)` is at least `vlam_share` (0.50) and the thickness-weighted mean `Vlam` is at least `min_vlam` (0.05). A zone with no Thomas-Stieber result is not classified. The guard acts on laminated zones with these rules:
+
+1. **Vertical-resolution steps** (deconvolution, a step kind that does not ship in this version) are dropped from a laminated zone when the guard is on, and only warned about when it is off. Use the laminated-sand correction instead.
+2. **Marked curve.** When the mapped RT is declared shoulder-bed corrected (the check box in the Remediation panel) and the laminated-sand step is on in a laminated zone, everything is computed, a warning is raised and the zone is marked. The guard never makes a sample invalid. Map the raw deep RT instead.
+3. **Hint.** With the guard on, a laminated zone without the laminated-sand step gets a hint to consider it.
+4. A zone that is not classified is not blocked, and a warning says why.
+
+A shoulder-bed-corrected or deconvolved curve is a result of a model that assumes thick beds; applying a laminated-sand correction on top of it is not valid.
+
+### Diagnosis
+
+The diagnosis scores five causes of low resistivity per zone from the net reservoir samples (`NET_RES_FLAG = 1`), with statistics weighted by the depth increment. Each cause has criteria; a criterion whose input is missing is not evaluated and not counted. The score is the share of evaluable criteria that are met.
+
+| Cause | Criteria (all against the thresholds shown) |
+|---|---|
+| Thin beds / laminations | laminar share of Vsh ≥ `vlam_share` (0.50); mean `Vlam` ≥ `min_vlam` (0.05); share of laminar and mixed classes among the classified samples ≥ 0.5 |
+| Microporosity / fine grain | median Sw ≥ the zone's Sw cutoff; share of water-free samples ≥ 0.5; variation (CV) of `BVW` ≤ `bvw_cv_max` (0.20) |
+| Saline water / low contrast | median effective Rw ≤ `rw_low` (0.06 ohm.m); median `Rt / Ro` ≤ `contrast_low` (3), with `Ro = a × Rw / PHIT^m`; median Rt ≤ the screening Rt maximum |
+| Conductive minerals (pyrite) | median `VPYR` ≥ `vpyr_flag` (0.01); median PEF ≥ `pef_flag` (4 b/e) |
+| Clay conductivity / high CEC | median Qv (`QV_EST`, or the constant Qv) ≥ `qv_high` (0.30 meq/mL); mean Vsh ≥ `vsh_clay` (0.15); median Sw drop of the primary model against Archie ≥ `dsw_clay` (0.10) |
+
+A cause is **probable** at a score of 0.67 or more with at least two evaluable criteria (the pyrite cause may be probable on one), and **possible** from 0.34. The **primary cause** is the probable cause with the highest score; ties go in the order of the table. A zone with fewer than `min_n` (10) net reservoir samples is not diagnosed. A diagnosis is a ranked hypothesis from the logs: it is not a test result, and the thresholds are design defaults to calibrate per field.
+
+**Remedies.** Each cause points to a set of Remediation settings, which are only prepared in the Workbench and never applied by themselves:
+
+| Cause | Remedy |
+|---|---|
+| Thin beds / laminations | laminated-sand Rt step, Vlam end-points, sand basis; Waxman-Smits or Archie (avoid Indonesian and Simandoux with the bulk basis) |
+| Microporosity / fine grain | no Rt step; Buckles and movable-water check, saturation-height validation, the water-free flag; keep the Sw model |
+| Saline water / low contrast | no Rt step; check Rw (auto Rwa, Pickett plot) and the temperature correction; Archie or Simandoux with the corrected Rw |
+| Conductive minerals (pyrite) | pyrite step; calibrate the connected fraction and Rpy |
+| Clay conductivity / high CEC | Qv estimate from Vsh and the shale CEC; Waxman-Smits or Dual-Water |
+
+### Baseline Sw and pay for the validation
+
+When a correction is active in a well (an Rt step, a Qv estimate or the sand basis), the run also computes the Sw the well gives **without any LRLC correction**: the measured `RT`, the constant Qv of the Waxman-Smits parameters and the bulk basis, with the same primary model, Rw, Rsh and cutoffs. This is `SW_BASE`, and the net pay flag from it is `NET_PAY_BASE_FLAG`. In a zone with no active correction `SW_BASE` equals `SW`. If saturation-height Sw is used for pay, the samples that hold it keep it in the baseline too, so the comparison changes pay only where the resistivity Sw is used. The validation compares the net pay, average Sw in pay and HCPV of the two (the **before** and **after** columns) and, when saturation-height results exist, the bias and RMSE of the resistivity Sw against the saturation-height Sw for both. The baseline is written only for wells with an active correction.
+
+### Monte Carlo with the corrections
+
+The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `Rsh` is varied as before, and because it also enters the laminated-sand correction, a changed `Rsh` recomputes `RT_SAND` and so `Sw`; the uncertainty page and the export say so with the note **Rsh also varies the laminated-sand Rt**. The following are held at the values of the analysis and are added to the **Not varied** list when they are in use: the Thomas-Stieber `Vlam` (with the sand basis values), the pyrite volume and correction, and the estimated Qv. The end-points, `f`, `Rpy` and `cec_shale` are not among the varied parameters.
 
 ### Results added
 
@@ -543,9 +697,19 @@ RT (measured, never modified) → step 1 → step 2 → …  ⇒  RT_SW (what ev
 | `BVW` | v/v | bulk volume water `PHIE × SW` | same |
 | `WATER_FREE_FLAG` | 0/1 | net reservoir with `SW ≤ SWIRR + movable_tol` | same |
 | `RT_CUT` | ohm.m | resistivity at the target Sw for the primary model | the Rt cutoff is on |
-| `RT_SW` | ohm.m | resistivity the Sw models read | a correction step is active (none in this version) |
+| `RT_SW` | ohm.m | resistivity the Sw models read | a correction step is active |
+| `VLAM` | v/v | laminar shale volume (Thomas-Stieber) | Thomas-Stieber on, GR available, end-points applied |
+| `VDISP` | v/v | dispersed shale volume, `Vsh − Vlam` | same |
+| `PHI_SAND` | v/v | porosity of the sand laminae | same |
+| `TS_CLASS` | code | 0 not classified, 1 laminar, 2 dispersed, 3 mixed, 4 structural, 5 clay-supported | same |
+| `VPYR` | v/v | pyrite volume (from RHOB and PEF, or the constant) | the VPYR column is switched on, or the pyrite step uses RHOB and PEF |
+| `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
+| `RT_SAND` | ohm.m | resistivity of the sand laminae | the laminated-sand step is active |
+| `RT_PYR` | ohm.m | resistivity after the pyrite correction | the pyrite step is active |
+| `SW_BASE` | v/v | Sw without any LRLC correction | a correction is active somewhere in the well |
+| `NET_PAY_BASE_FLAG` | 0/1 | net pay flag computed from `SW_BASE` | same |
 
-The summary gains an **LRLC** block with the resolved settings per zone, the candidate table, the cutoff table, the movable-water table and the correction steps that ran.
+The summary gains an **LRLC** block with the resolved settings per zone, the candidate table, the cutoff table, the movable-water table, the correction steps that ran, the Thomas-Stieber end-points and class counts, the shoulder-bed guard decisions, the diagnosis per zone and the before-and-after validation. The Zones table of the summary and of the Excel export adds the pay before the corrections when a baseline exists.
 
 ## Uncertainty (Monte Carlo) *(v1.9.0)*
 
