@@ -90,6 +90,7 @@ def test_disable_keeps_settings_and_emits(window, qtbot):
 
 
 def test_four_panels(window, qtbot):
+    _well(window)
     _enable(window, qtbot)
     tab = window.lrlc_tab
     titles = [tab.panels.tabText(i) for i in range(tab.panels.count())]
@@ -99,24 +100,25 @@ def test_four_panels(window, qtbot):
     tab.show_panel("screening", "rt_cutoff")
     assert tab.panels.currentIndex() == 0
     assert "Vsh" in tab.cutoffs_label.text() or "cutoff" in tab.cutoffs_label.text().lower()
-    validation = tab.validation_label.text()
-    assert "1.12.0" in validation and not re.search(r"\b[A-Z]\d\b|\bL\d\b|\bP\d\b", validation)
+    tab.show_panel("validation")
+    text = tab.validation_panel.status_label.text()
+    assert "correction" in text and not re.search(r"\b[A-Z]\d\b|\bL\d\b|\bP\d\b", text)
 
 
 def test_diagnosis_sub_tabs_and_swap(window, qtbot):
     _enable(window, qtbot)
     tab = window.lrlc_tab
     names = [tab.diagnosis_tabs.tabText(i) for i in range(tab.diagnosis_tabs.count())]
-    assert names == ["Pickett", "Buckles"]
-    assert tab.diagnosis_tabs.widget(0).objectName() == "pickettPage"
-    assert tab.diagnosis_tabs.widget(1).objectName() == "bucklesPage"
+    assert names == ["Zones", "Thomas-Stieber", "Pickett", "Buckles"]
+    assert tab.diagnosis_tabs.widget(2).objectName() == "pickettPage"
+    assert tab.diagnosis_tabs.widget(3).objectName() == "bucklesPage"
     assert any(l.text() == "Run the analysis first"
-               for l in tab.diagnosis_tabs.widget(0).findChildren(QLabel))
+               for l in tab.diagnosis_tabs.widget(2).findChildren(QLabel))
     p, b = QWidget(), QWidget()
     tab.set_diagnosis_pages(p, b)
-    assert tab.diagnosis_tabs.widget(0) is p and p.objectName() == "pickettPage"
-    assert tab.diagnosis_tabs.widget(1) is b and b.objectName() == "bucklesPage"
-    assert tab.diagnosis_tabs.count() == 2
+    assert tab.diagnosis_tabs.widget(2) is p and p.objectName() == "pickettPage"
+    assert tab.diagnosis_tabs.widget(3) is b and b.objectName() == "bucklesPage"
+    assert tab.diagnosis_tabs.count() == 4
 
 
 # ---- remediation ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ def test_remediation_note_with_empty_registry(window, qtbot, monkeypatch):
     assert tab.remediation_note.text() == (
         "No Rt correction steps are available in this version. Sw reads the measured Rt.")
     assert not tab.remediation_note.isHidden()
-    assert tab.chain_note.text() == "Auto Rw and auto Rsh keep reading the measured Rt."
+    assert tab.chain_note.text() == "Rsh and Rw estimators stay on the measured RT."
     assert tab.rt_source_table.columnCount() == 2
     assert tab.rt_source_table.item(0, 1).text() == "RT"
 

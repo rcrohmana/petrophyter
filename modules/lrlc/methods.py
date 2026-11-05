@@ -132,9 +132,93 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "measured RT is kept unchanged."
         ),
         limits=(
-            "No correction step is installed in this release, so RT_SW equals RT. The listing "
-            "shows the steps that can be switched on."
+            "With no step switched on in a zone, RT_SW equals RT there. The listing shows the "
+            "steps that can be switched on; the line Sw reads names the curves in use."
         ),
         refs=(),
+    ),
+    "thomas_stieber": MethodInfo(
+        title="Thomas-Stieber laminar and dispersed shale",
+        equation=(
+            "phi_sand = phi_max - Vd_s * (1 - phi_sh)\n"
+            "PHIT     = (1 - Vlam) * phi_sand + Vlam * phi_sh\n"
+            "Vsh      = Vlam + (1 - Vlam) * Vd_s\n"
+            "Vlam     = [PHIT - phi_max + Vsh * (1 - phi_sh)] / (1 - phi_max)\n"
+            "Vdisp    = Vsh - Vlam"
+        ),
+        assumptions=(
+            "Clean sand laminae carry dispersed clay in their pores and are interbedded with "
+            "shale laminae of porosity phi_sh. phi_max is the porosity of the clean sand and "
+            "phi_sh that of the shale; both are read from the clean and the shale samples of the "
+            "well or zone and applied only when you confirm them. Samples are classed laminar, "
+            "dispersed or mixed by the laminar share of the shale volume, and structural or "
+            "clay-supported where they fall outside the triangle."
+        ),
+        limits=(
+            "The result depends on both end-points and on a total porosity that is free of "
+            "shale and gas effects. Samples outside the triangle are clamped to its edge and "
+            "counted. The classes are a screening aid, not a lithofacies log."
+        ),
+        refs=SHIPPED_METHODS["thomas_stieber"],
+    ),
+    "laminated": MethodInfo(
+        title="Laminated-sand resistivity (parallel conductance)",
+        equation=(
+            "1/Rt = (1 - Vlam) / Rsand + Vlam / Rsh\n"
+            "s = Vlam * Rt / Rsh\n"
+            "RT_SAND = (1 - Vlam) * Rt / (1 - s)"
+        ),
+        assumptions=(
+            "Sand and shale laminae conduct in parallel because the tool current runs along the "
+            "bedding. Vlam is the laminar shale volume from the Thomas-Stieber split or a "
+            "constant. The sand-lamina resistivity then feeds the Sw model, which with the sand "
+            "basis reads the porosity and shale volume of the sand laminae."
+        ),
+        limits=(
+            "A relative error in Rt is amplified by 1 / (1 - s). Samples with s above the warning "
+            "limit are counted and samples above the invalid limit are left empty. Where the "
+            "shale volume is above the Hagiwara limit nothing is corrected. A curve that is "
+            "already shoulder-bed corrected or deconvolved is not raw Rt; use the raw deep curve."
+        ),
+        refs=SHIPPED_METHODS["laminated"],
+    ),
+    "pyrite": MethodInfo(
+        title="Pyrite volume and parallel-conductance correction",
+        equation=(
+            "RHOB     = phi*rho_f + Vma*rho_ma + Vpy*rho_py + Vsh*rho_sh\n"
+            "PEF*RHOB = phi*U_f + Vma*U_ma + Vpy*U_py + Vsh*U_sh\n"
+            "1 = phi + Vma + Vpy + Vsh\n"
+            "RT_PYR = 1 / (1/Rt - f * Vpy / Rpy)"
+        ),
+        assumptions=(
+            "Pyrite adds density and photoelectric absorption that a clean sand does not, so the "
+            "volume is solved from RHOB and PEF with fixed end-points. Only the connected "
+            "fraction f of the pyrite conducts; f and the pyrite resistivity Rpy are calibration "
+            "values for the field, not defaults to trust."
+        ),
+        limits=(
+            "Barite mud, siderite, heavy minerals and a padded PEF raise PEF without pyrite. "
+            "Porosity from the bulk density is biased low where pyrite is present. Samples that "
+            "remove most of the measured conductance are counted as sensitive."
+        ),
+        refs=SHIPPED_METHODS["pyrite"],
+    ),
+    "qv": MethodInfo(
+        title="Cation exchange per pore volume (Qv)",
+        equation=(
+            "CEC_rock = Vsh * cec_shale          (meq/100 g)\n"
+            "Qv = CEC_rock / 100 * rho_g * (1 - PHIT) / PHIT     (meq/mL)"
+        ),
+        assumptions=(
+            "The clay exchange capacity of the rock scales with the shale volume. cec_shale is "
+            "the capacity of the shale, taken from core measurements when they exist. The array "
+            "replaces the single Qv of the Waxman-Smits model; the other Sw models do not read it."
+        ),
+        limits=(
+            "Samples with porosity below the minimum or Qv above the maximum are left empty and "
+            "use the constant Qv. Vsh from the gamma ray is only a proxy for clay capacity; "
+            "calibrate against core CEC before relying on the values."
+        ),
+        refs=SHIPPED_METHODS["qv"],
     ),
 }

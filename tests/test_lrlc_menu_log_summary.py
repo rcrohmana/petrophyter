@@ -233,3 +233,23 @@ def test_summary_zone_columns_conditional(qtbot):
              for c in range(zm.columnCount())]
     assert heads[-3:] == ZONE_BASE_COLUMNS
     assert zm.index(0, zm.columnCount() - 2).data() == "42.0%"
+
+
+def test_workbench_guard_switch_updates_the_menu(window):
+    LrlcService.set_guard_enabled(window.model, False)
+    window.lrlc_tab.guard_toggled.emit(False)
+    assert not window.actions_["lrlc_guard"].isChecked()
+
+
+def test_menu_guard_switch_refreshes_the_workbench(window, monkeypatch):
+    calls = []
+    monkeypatch.setattr(window.lrlc_tab, "update_display", lambda: calls.append(1))
+    window.actions_["lrlc_guard"].trigger()
+    assert calls == [1]
+
+
+def test_workbench_sw_model_link_opens_the_parameters_page(window, monkeypatch):
+    pages = []
+    monkeypatch.setattr(window.params_window, "open_page", lambda page, **k: pages.append(page))
+    window.lrlc_tab.navigate_requested.emit("params.sat")
+    assert pages == ["sat"]

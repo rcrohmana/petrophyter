@@ -368,6 +368,8 @@ class MainWindow(QMainWindow):
         # LRLC Workbench: settings writes re-check staleness; it never runs the analysis itself.
         self.lrlc_tab.run_all_requested.connect(self._on_run_all)
         self.lrlc_tab.stale_requested.connect(lambda keys: self._recompute_stale(keys or None))
+        self.lrlc_tab.guard_toggled.connect(lambda _on: self._sync_lrlc_guard_action())
+        self.lrlc_tab.navigate_requested.connect(self._on_goto_target)
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -2125,6 +2127,7 @@ class MainWindow(QMainWindow):
 
         if LrlcService.set_guard_enabled(self.model, bool(checked)):
             self._recompute_stale()
+            self.lrlc_tab.update_display()
 
     def _sync_lrlc_guard_action(self):
         """Show the project's stored guard state on the menu action (no write)."""

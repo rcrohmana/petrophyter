@@ -11,4 +11,8 @@ SHIPPED_METHODS = {
     "bvw": ("buckles1965", "morris1967", "crain_handbook"),
     "buckles": ("buckles1965", "morris1967", "crain_handbook"),
     "rt_cutoff": ("liu2023", "archie1942", "simandoux1963", "poupon1971", "waxman1968", "clavier1984"),
+    "thomas_stieber": ("thomas1975",),
+    "laminated": ("poupon1954", "hagiwara_us4739255", "hagiwara1995", "hagiwara1997"),
+    "pyrite": ("clavier1976",),
+    "qv": ("waxman1968", "hill1979", "juhasz1981"),
 }

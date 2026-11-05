@@ -119,7 +119,9 @@ def test_method_text_refs_exist_and_match_shipped():
         references.refs_for(*info.refs)
         if name in SHIPPED_METHODS:
             assert info.refs == SHIPPED_METHODS[name], name
-    assert set(METHOD_TEXT) == {"screening", "rt_cutoff", "bvw", "buckles", "pickett", "rt_chain"}
+    assert set(METHOD_TEXT) == {
+        "screening", "rt_cutoff", "bvw", "buckles", "pickett", "rt_chain", "thomas_stieber",
+        "laminated", "pyrite", "qv"}
 
 
 def test_method_text_content():
