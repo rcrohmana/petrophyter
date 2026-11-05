@@ -854,16 +854,19 @@ def _uncertainty_scopes(result):
 
 def uncertainty_header_frame(result, stale: bool) -> pd.DataFrame:
     """Key/value block above the Uncertainty table."""
-    from modules.uncertainty import not_varied_text
+    from modules.uncertainty import RSH_LAMINATED_NOTE, not_varied_text
 
     rows = [
         ("Seed", int(result.seed)),
         ("N", int(result.n)),
         ("Sampling", str(result.sampling)),
         ("Convention", P90_CONVENTION),
-        ("Not varied", not_varied_text(bool(getattr(result, "shf_pay", False)))),
-        ("Stale", "Yes" if stale else "No"),
+        ("Not varied", not_varied_text(bool(getattr(result, "shf_pay", False)),
+                                       tuple(getattr(result, "lrlc_items", ()) or ()))),
     ]
+    if getattr(result, "lrlc_laminated", False):
+        rows.append(("Rsh", RSH_LAMINATED_NOTE))
+    rows.append(("Stale", "Yes" if stale else "No"))
     return pd.DataFrame(rows, columns=["Item", "Value"])
 
 

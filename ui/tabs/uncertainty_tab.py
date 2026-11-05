@@ -22,7 +22,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.uncertainty import NOT_VARIED, format_offset, not_varied_text, rw_quality_text
+from modules.uncertainty import (
+    NOT_VARIED, RSH_LAMINATED_NOTE, format_offset, not_varied_text, rw_quality_text,
+)
 from services.uncertainty_service import result_is_stale
 from themes.colors import get_plot_color
 from themes.helpers import set_status
@@ -261,8 +263,12 @@ class UncertaintyTab(QWidget):
             self._plot_key = None
             self._scope = FIELD
         has = result is not None
-        self.not_varied_label.setText("Not varied: " + not_varied_text(
-            bool(getattr(result, "shf_pay", False))))
+        text = "Not varied: " + not_varied_text(
+            bool(getattr(result, "shf_pay", False)),
+            tuple(getattr(result, "lrlc_items", ()) or ()))
+        if getattr(result, "lrlc_laminated", False):
+            text += ". " + RSH_LAMINATED_NOTE
+        self.not_varied_label.setText(text)
         self.empty_label.setVisible(not has)
         self.content.setVisible(has)
         if has:

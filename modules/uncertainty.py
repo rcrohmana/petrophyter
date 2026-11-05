@@ -83,9 +83,46 @@ NOT_VARIED = "porosity, shale point, GR baseline"
 NOT_VARIED_SHF = "SHF Sw where used for pay"
 
 
-def not_varied_text(shf_pay: bool = False) -> str:
-    """The "not varied" list; with ``shf_pay`` it adds the SHF Sw held for pay."""
-    return f"{NOT_VARIED}, {NOT_VARIED_SHF}" if shf_pay else NOT_VARIED
+RSH_LAMINATED_NOTE = "Rsh also varies the laminated-sand Rt"
+LRLC_TV_VLAM = "Thomas-Stieber Vlam"
+LRLC_PYRITE = "pyrite volume and correction"
+LRLC_QV = "estimated Qv"
+
+
+def not_varied_text(shf_pay: bool = False, lrlc: Tuple[str, ...] = ()) -> str:
+    """The "not varied" list; ``shf_pay`` adds the SHF Sw held for pay, ``lrlc`` the laminated-sand
+    and mineral inputs that stay at their base values (see :func:`lrlc_not_varied`)."""
+    out = NOT_VARIED
+    if shf_pay:
+        out = f"{out}, {NOT_VARIED_SHF}"
+    if lrlc:
+        out = f"{out}, " + ", ".join(lrlc)
+    return out
+
+
+def lrlc_not_varied(frozen_wells) -> Tuple[Tuple[str, ...], bool]:
+    """``(items, laminated)`` for the wells: the LRLC inputs held fixed and whether a laminated
+    step is active (Rsh then also moves the laminated-sand Rt).
+
+    Read from each well's base summary chain and the frozen segments: Vlam when a laminated step
+    ran or a sand basis is in use, pyrite when a pyrite step ran, Qv when per-sample Qv is carried.
+    """
+    steps, qv, basis = set(), False, False
+    for fw in frozen_wells:
+        block = (fw.base_summary or {}).get("lrlc") or {}
+        steps.update(rec.get("step") for rec in block.get("chain") or [])
+        for seg in fw.segments:
+            qv = qv or seg.qv_values is not None
+            basis = basis or seg.sand_basis is not None
+    laminated = "laminated" in steps
+    items = []
+    if laminated or basis:
+        items.append(LRLC_TV_VLAM)
+    if "pyrite" in steps:
+        items.append(LRLC_PYRITE)
+    if qv:
+        items.append(LRLC_QV)
+    return tuple(items), laminated
 
 
 @dataclass
@@ -745,6 +782,8 @@ class MCResult:
     rw_quality: dict = field(default_factory=dict)    # well key -> sorted auto-Rw qualities
     config_hash: str = ""
     shf_pay: bool = False                 # SHF Sw held for pay in some segment
+    lrlc_items: tuple = ()                # laminated-sand / mineral inputs held fixed
+    lrlc_laminated: bool = False          # a laminated step is active (Rsh moves its Rt)
 
 
 def _scope_series(frozen_wells, per_well_zone: Dict[Tuple[int, Optional[str]], Dict[str, np.ndarray]]):
@@ -864,7 +903,10 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
     for e in excluded:
         warns.append(f"Well {e.get('name', e.get('key'))} excluded: {e.get('reason', '')}")
     shf_pay = any(seg.sw_hold is not None for fw in frozen_wells for seg in fw.segments)
-    warns.append(f"Not varied: {not_varied_text(shf_pay)}")
+    lrlc_items, lrlc_laminated = lrlc_not_varied(frozen_wells)
+    warns.append(f"Not varied: {not_varied_text(shf_pay, lrlc_items)}")
+    if lrlc_laminated and "rsh" in names:
+        warns.append(RSH_LAMINATED_NOTE)
 
     return MCResult(
         config=config_to_dict(cfg), n=int(n), seed=int(cfg.seed), sampling=cfg.sampling,
@@ -875,7 +917,7 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
         clipped=clipped, warnings=warns, elapsed_s=time.perf_counter() - t0,
         rw_quality={fw.key: sorted({sg.rw_quality for sg in fw.segments if sg.rw_quality})
                     for fw in frozen_wells},
-        shf_pay=shf_pay)
+        shf_pay=shf_pay, lrlc_items=lrlc_items, lrlc_laminated=lrlc_laminated)
 
 
 RW_QUALITY_TEXT = {"water_leg": "from water leg", "uniform": "uniform estimate"}
