@@ -28,7 +28,7 @@ The [LRLC Workbench](user-guide.md#lrlc-workbench) can read up to six curves bes
 | `DTS` | Shear slowness *(v1.11.0)* | `DTS`, `DTSM`, `DTSH`, `DT2`, `DTSD` |
 | `HIRES` | High-resolution resistivity | none: chosen by hand |
 
-`RXOZ` stays under `RS`, as before. In this version only `RS` is used (by the screening); the other roles are saved with the well for later tools. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+`RXOZ` stays under `RS`, as before. `RS` is used by the screening and `PEF` by the pyrite volume (**From RHOB and PEF**, together with the mapped density curve); the other roles are saved with the well for later tools. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
 
 ## Reading tops and core tables
 
@@ -51,11 +51,12 @@ Formation tops and core data are read by the same table reader, so the rules in 
 - Porosity aliases: `porosity`, `porosity (%)`, `por`, `phi`, `core_por`, and `core porosity`.
 - Permeability aliases: `perm`, `permeability`, `k`, `kh`, `khor`, `hor.perm`, `hor perm`, `perm (md)`, `permeability (md)`, and `horizontal perm`.
 - Grain density is optional. Aliases: `grain density`, `grain_density`, `rhog`, `rho_grain`, and `matrix density`.
+- Cation exchange capacity (CEC) is optional, in meq/100 g. Aliases: `cec`, `cec (meq/100g)`, `cation exchange capacity`, and `cec_meq`. It is read as a number; null values and negative values are excluded and counted in the load notes. If the automatic match picks the wrong column, choose the CEC column in the import dialog. The CEC column is used only by the LRLC Workbench, to calibrate the shale CEC of the Qv estimate (see [Calculation Methods](calculation-methods.md#qv-from-vsh-and-the-shale-cec)).
 - **TVD depth.** If the depth column is named `tvd` or `tvdss`, a warning says that the logs are on measured depth. Use such core data only when the well is vertical or the logs are on TVD. The multi-well import dialog asks you to confirm before it imports.
 - **Porosity scale.** Whether porosity is a percentage or a fraction is decided per well from its median value: a median above 1 means percent, and the values are divided by 100. One mistyped value therefore no longer rescales a whole well. Any value that is still above 1 after conversion (for example 150 %) is excluded and reported. If the wells of one file differ, a warning lists each well's scale. In the multi-well import dialog you can override the scale of each well.
 - Permeability is assumed to be in mD.
 - Non-numeric property values are treated as missing. The data are sorted by depth before use.
-- **Null and non-physical values** *(v1.7.1)*. Null values such as −999.25 in porosity, permeability or grain density, negative porosity, and permeability of zero or below are excluded and counted with the reason in the load notes; they never reach the statistics or the permeability calibration.
+- **Null and non-physical values** *(v1.7.1)*. Null values such as −999.25 in porosity, permeability, grain density or CEC, negative porosity, and permeability of zero or below are excluded and counted with the reason in the load notes; they never reach the statistics or the permeability calibration.
 - **Matching to the logs** *(v1.7.1)*. A core sample is compared with the log only when valid log samples lie within the matching distance on both sides of it, so a core is never matched across a gap in the log. Cores beside a gap are left out and counted ("N core samples in log gaps").
 - Without a well column, the samples belong to the active well. With one, they are assigned to loaded wells in the multi-well import dialog.
 - **Core for rock typing** *(v1.8.0)*. The Rock Typing tab uses a core row only when it has a depth, a porosity and a permeability in the same row, so give both properties on one line of the file rather than in two separate tables. A row missing either value, a permeability of zero or below, or a porosity of 0.01 or below or above 0.50 is left out and counted by reason in the tab. Core is used as measured: overburden and Klinkenberg corrections are not applied. If your values are not at reservoir stress, enter the overburden factors in the Rock Typing tab; see [Calculation Methods](calculation-methods.md#rock-typing-v180). Core with a TVD depth column enters the fit but is not used to label the logs.
@@ -113,6 +114,25 @@ Text that starts with `=` is never written as a formula *(v1.7.1)*:
 
 - **Excel.** Every cell, including column headers, is written as a value. Text that starts with `=` is stored as text, so `=1+1` shows as `=1+1`.
 - **CSV.** A text value that starts with `=`, `+`, `-`, `@`, a tab or a carriage return, and is not a number, gets a leading `'`, so a spreadsheet opens it as text (`-5 ft` is written as `'-5 ft`). Numbers, including negative numbers such as `-2.5`, are written unchanged.
+
+### LRLC result columns
+
+These columns are added to the results table, and so to the CSV, Excel and LAS exports, only by the LRLC Workbench features named in the last column. Without LRLC the files have none of them. The units are those written to LAS.
+
+| Column | Unit | Meaning | Present when |
+|---|---|---|---|
+| `VLAM` | v/v | laminar shale volume (Thomas-Stieber) | Thomas-Stieber on, with end-points applied |
+| `VDISP` | v/v | dispersed shale volume | same |
+| `PHI_SAND` | v/v | porosity of the sand laminae | same |
+| `TS_CLASS` | unitless | integer class, 0 not classified, 1 laminar, 2 dispersed, 3 mixed, 4 structural, 5 clay-supported | same |
+| `VPYR` | v/v | pyrite volume | the VPYR column is on, or the pyrite step uses RHOB and PEF |
+| `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
+| `RT_SAND` | ohm.m | laminated-sand resistivity | the laminated-sand step is active |
+| `RT_PYR` | ohm.m | pyrite-corrected resistivity | the pyrite step is active |
+| `SW_BASE` | v/v | Sw with no LRLC correction | a correction is active somewhere in the well |
+| `NET_PAY_BASE_FLAG` | unitless | net pay flag from `SW_BASE` (0 or 1) | same |
+
+`RT_SW`, `RT_CUT`, `BVW`, `LRLC_SCORE`, `LRLC_FLAG` and `WATER_FREE_FLAG` are described in [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110).
 
 ### Provenance and the Field total
 

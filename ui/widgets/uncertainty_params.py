@@ -13,8 +13,8 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.uncertainty import (
-    DEFAULT_MODES, KINDS, MODES, N_MAX, N_MIN, NOT_VARIED, PARAM_ORDER, SAMPLINGS,
-    SUGGESTED_RANGES, not_varied_text, rw_quality_text, validate_config,
+    DEFAULT_MODES, KINDS, MODES, N_MAX, N_MIN, NOT_VARIED, PARAM_ORDER, RSH_LAMINATED_NOTE,
+    SAMPLINGS, SUGGESTED_RANGES, not_varied_text, rw_quality_text, validate_config,
 )
 from themes.helpers import set_status
 
@@ -37,10 +37,12 @@ INFO_TEXT = ("Applied to every well and zone as a change of the resolved value. 
              f"Not varied: {NOT_VARIED}.")
 
 
-def info_text(shf_pay: bool = False) -> str:
-    """The page note; with saturation-height Sw used for pay it also names the SHF Sw as not varied."""
-    return ("Applied to every well and zone as a change of the resolved value. "
-            f"Not varied: {not_varied_text(shf_pay)}.")
+def info_text(shf_pay: bool = False, lrlc: tuple = (), laminated: bool = False) -> str:
+    """The page note; with saturation-height Sw used for pay it also names the SHF Sw as not varied,
+    and ``lrlc`` the laminated-sand inputs held fixed (``laminated``: Rsh also moves the sand Rt)."""
+    text = ("Applied to every well and zone as a change of the resolved value. "
+            f"Not varied: {not_varied_text(shf_pay, lrlc)}.")
+    return f"{text} {RSH_LAMINATED_NOTE}." if laminated else text
 
 
 class _Row:

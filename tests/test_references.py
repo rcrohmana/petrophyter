@@ -46,13 +46,15 @@ def test_verified_entries_have_doi_or_url():
     assert {r.key for r in verified} == {
         "liu2023", "ashfaq_us11709287", "zhao2022", "boyd1995", "worthington2000",
         "zemanek1989", "pickett1966", "buckles1965", "archie1942", "waxman1968", "clavier1984",
+        "poupon1954", "hagiwara_us4739255", "hagiwara1995", "hagiwara1997", "thomas1975",
+        "clavier1976", "hill1979", "juhasz1981",
     }
     for ref in verified:
         assert ref.doi or ref.url, ref.key
 
 
 def test_seed_table_complete():
-    assert len(REFERENCES) == 38
+    assert len(REFERENCES) == 39
 
 
 def test_refs_for_unknown_key_raises():
@@ -117,7 +119,9 @@ def test_method_text_refs_exist_and_match_shipped():
         references.refs_for(*info.refs)
         if name in SHIPPED_METHODS:
             assert info.refs == SHIPPED_METHODS[name], name
-    assert set(METHOD_TEXT) == {"screening", "rt_cutoff", "bvw", "buckles", "pickett", "rt_chain"}
+    assert set(METHOD_TEXT) == {
+        "screening", "rt_cutoff", "bvw", "buckles", "pickett", "rt_chain", "thomas_stieber",
+        "laminated", "pyrite", "qv"}
 
 
 def test_method_text_content():

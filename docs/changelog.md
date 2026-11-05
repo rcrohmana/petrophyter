@@ -2,7 +2,28 @@
 
 # Version History
 
-## v1.11.0 (Build 20261105) — Current Release
+## v1.12.0 (Build 20261105) — Current Release
+
+See the [release notes](releases/v1.12.0.md) for details. The new corrections are optional: **results do
+not change** until you switch one on, and sessions that do not use them are saved as before.
+
+- **Thomas-Stieber** laminar/dispersed shale split (`VLAM`, `VDISP`, `PHI_SAND`, `TS_CLASS`) with
+  end-point proposals per zone.
+- **Laminated-sand Rt (Hagiwara)**: the `laminated` Rt step writes `RT_SAND`; Sw can read the sand-lamina
+  porosity and dispersed shale (sand basis).
+- **Pyrite**: `VPYR` from RHOB and PEF or a manual value; the `pyrite` Rt step writes `RT_PYR`.
+- **Qv from shale CEC** (`QV_EST`) for Waxman-Smits, with a shale CEC calibrated on core CEC; core data
+  accept an optional CEC column.
+- **Shoulder-bed guard** for laminated zones (Specialized menu toggle) and **Specialized → Rt Corrections**.
+- **Workbench Diagnosis, Remediation and Validation panels**: probable cause per zone with evidence and
+  remedy, Thomas-Stieber crossplot, PEF-RHOB plot, Apply by scope, pay before and after the corrections.
+- **Baseline** `SW_BASE` and `NET_PAY_BASE_FLAG`; baseline zone columns in Summary and Excel.
+- Log display of `VLAM`, `SW_BASE`, `RT_SAND` and `RT_PYR`; Monte Carlo recomputes the laminated-sand Rt
+  with Rsh; LAS descriptions and an "LRLC inputs" provenance line.
+- New application icon.
+- **Session format 2.6** when the new features are used; it opens in v1.11.0 without them.
+
+## v1.11.0 (Build 20261105)
 
 See the [release notes](releases/v1.11.0.md) for details. LRLC analysis is optional: **results do not
 change** until you enable it, and sessions that do not use it are saved as before.

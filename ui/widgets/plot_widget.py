@@ -614,7 +614,8 @@ class CompositeLogPlot(PlotWidget):
         has_rock = "ROCK_TYPE" in filtered.columns
         has_resid = "SW_SHF_RESID" in filtered.columns
         has_lrlc_rt = rt_curve in filtered.columns and any(
-            c in filtered.columns for c in ("RT_SW", "RT_CUT", "LRLC_FLAG")
+            c in filtered.columns
+            for c in ("RT_SW", "RT_CUT", "LRLC_FLAG", "RT_SAND", "RT_PYR")
         )
         n_axes = 6 + int(has_rock) + int(has_resid) + int(has_lrlc_rt)
         # Axis index map; the Resistivity track sits after Sw and shifts the rest
@@ -663,13 +664,25 @@ class CompositeLogPlot(PlotWidget):
         axes[0].set_xlim(gr_spec.lo, gr_spec.hi)
         axes[0].set_title(gr_spec.title, fontsize=TITLE_SIZE)
         axes[0].set_xlabel(gr_spec.axis_label, fontsize=LABEL_SIZE)
-        if "VSH" in filtered.columns:
+        has_vsh = "VSH" in filtered.columns
+        has_vlam = "VLAM" in filtered.columns
+        if has_vsh or has_vlam:
             vsh_cs = ts.curve_spec("gr_vsh", "VSH")
             vsh_ax = axes[0].twiny()
             vsh_ax.patch.set_visible(False)
             self._style_axes(vsh_ax)
             vsh_ax.patch.set_visible(False)
             vsh_ax.tick_params(axis="both", labelsize=6)
+        if has_vlam:
+            vsh_ax.plot(
+                filtered["VLAM"].values,
+                depth,
+                color=get_plot_color("VLAM"),
+                linewidth=0.9,
+                linestyle=":",
+                label="Vlam (v/v)",
+            )
+        if has_vsh:
             vsh_ax.plot(
                 filtered["VSH"].values,
                 depth,
@@ -680,14 +693,15 @@ class CompositeLogPlot(PlotWidget):
             vsh_ax.fill_betweenx(
                 depth, 0, filtered["VSH"].values, color=get_plot_color("VSH"), alpha=0.3
             )
+        if has_vsh or has_vlam:
             vsh_ax.set_xlim(vsh_cs.lo, vsh_cs.hi)
             vsh_ax.set_xlabel(
                 ts.axis_label("Vsh", vsh_cs.unit), fontsize=LABEL_SIZE
             )
             vsh_ax.grid(False)
-        if "GR" in filtered.columns or "VSH" in filtered.columns:
+        if "GR" in filtered.columns or has_vsh or has_vlam:
             gr_lines, gr_labels = axes[0].get_legend_handles_labels()
-            if "VSH" in filtered.columns:
+            if has_vsh or has_vlam:
                 v_lines, v_labels = vsh_ax.get_legend_handles_labels()
                 gr_lines, gr_labels = gr_lines + v_lines, gr_labels + v_labels
             axes[0].legend(gr_lines, gr_labels, loc="upper right", fontsize=6)
@@ -756,6 +770,15 @@ class CompositeLogPlot(PlotWidget):
                 linestyle=":",
                 label="Sw SHF (pay)",
             )
+        if "SW_BASE" in filtered.columns:
+            axes[idx["sw"]].plot(
+                filtered["SW_BASE"].values,
+                depth,
+                color=get_plot_color("SW_BASE"),
+                linewidth=0.6,
+                linestyle="--",
+                label="Sw base",
+            )
         axes[idx["sw"]].set_xlim(sw_spec.lo, sw_spec.hi)
         axes[idx["sw"]].set_title(sw_spec.title, fontsize=TITLE_SIZE)
         axes[idx["sw"]].set_xlabel(sw_spec.axis_label, fontsize=LABEL_SIZE)
@@ -769,6 +792,8 @@ class CompositeLogPlot(PlotWidget):
                 (rt_curve, "RT", "-", 0.8),
                 ("RT_SW", "RT_SW", "-", 1.0),
                 ("RT_CUT", "RT_CUT", "--", 0.9),
+                ("RT_SAND", "RT_SAND", "-", 1.0),
+                ("RT_PYR", "RT_PYR", "--", 0.9),
             ):
                 if col not in filtered.columns:
                     continue

@@ -1,0 +1,1138 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.26959803178978803,
+ "avg_sw_pay": 0.3130183794119871,
+ "avg_vsh_pay": 0.08909990683277033,
+ "data_points": 201,
+ "gr_max": 120.0,
+ "gr_min": 20.0,
+ "gross_sand": 87.0,
+ "hcpv_gross": 17.502594172385216,
+ "hcpv_net_pay": 16.11317367240699,
+ "hcpv_net_res": 16.11317367240699,
+ "issues": [
+  {
+   "code": "LRLC_GUARD_NO_TS",
+   "severity": "info",
+   "target": null,
+   "text": "Zone LOWER has no Thomas-Stieber result, so the shoulder-bed guard cannot classify it and blocks nothing.",
+   "zone": "LOWER"
+  },
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 92 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "LRLC_CRITERION_UNAVAILABLE",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "Screening criteria not evaluable for the whole well: HC.",
+   "zone": null
+  }
+ ],
+ "lrlc": {
+  "chain": [
+   {
+    "counts": {
+     "below_rsh": 0,
+     "identity": 0,
+     "invalid": 0,
+     "no_input": 0,
+     "not_applicable": 0,
+     "sensitive": 0
+    },
+    "curve": "RT_SAND",
+    "fallback": 0,
+    "from": "RT",
+    "n_invalid": 0,
+    "n_valid": 80,
+    "params": {
+     "hag_vsh_max": 0.8,
+     "s_invalid": 0.95,
+     "s_warn": 0.8,
+     "vlam_const": 0.0,
+     "vlam_source": "ts"
+    },
+    "refs": [
+     "poupon1954",
+     "hagiwara_us4739255",
+     "hagiwara1995",
+     "hagiwara1997"
+    ],
+    "segment": "well",
+    "step": "laminated",
+    "zone": "UPPER"
+   }
+  ],
+  "counts": {
+   "flag": 0,
+   "n": 201,
+   "rt_sw_written": true,
+   "water_free": 174
+  },
+  "curves": {},
+  "guard": {
+   "enabled": true,
+   "zones": [
+    {
+     "blocked_steps": [],
+     "lam_share": 0.9999999999999997,
+     "laminated": true,
+     "sbc_rt": false,
+     "zone": "UPPER"
+    },
+    {
+     "blocked_steps": [],
+     "lam_share": NaN,
+     "laminated": false,
+     "sbc_rt": false,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "movable": {
+   "swirr_column": "SWIRR",
+   "swirr_method": "Hierarchical (Recommended)",
+   "tol_by_zone": {
+    "LOWER": 0.05,
+    "UPPER": 0.05
+   },
+   "zones": [
+    {
+     "avg_bvw": 0.06611140312738291,
+     "avg_movable_sw": 0.0,
+     "n": 53,
+     "net_res_ft": 26.5,
+     "pct": 100.0,
+     "water_free_ft": 26.5,
+     "zone": "UPPER"
+    },
+    {
+     "avg_bvw": 0.0923950894285773,
+     "avg_movable_sw": 0.01025118818691517,
+     "n": 121,
+     "net_res_ft": 60.5,
+     "pct": 100.0,
+     "water_free_ft": 60.5,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "params": {
+   "default": {
+    "cut_sw_target": null,
+    "movable_tol": 0.05,
+    "rt_fallback": "nan",
+    "rt_steps": [],
+    "screen_contrast_max": 2.0,
+    "screen_min_score": 5,
+    "screen_rt_max": 5.0
+   },
+   "zones": {
+    "LOWER": {
+     "cut_sw_target": null,
+     "movable_tol": 0.05,
+     "phi_max": 0.3,
+     "phi_sh": 0.08,
+     "rt_fallback": "nan",
+     "rt_steps": [],
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0
+    },
+    "UPPER": {
+     "cut_sw_target": null,
+     "movable_tol": 0.05,
+     "phi_max": 0.3,
+     "phi_sh": 0.08,
+     "rt_fallback": "nan",
+     "rt_steps": [
+      "laminated"
+     ],
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0
+    }
+   }
+  },
+  "screening": {
+   "criteria": {
+    "CONTRAST": {
+     "evaluable": 201,
+     "met": 47
+    },
+    "HC": {
+     "evaluable": 0,
+     "met": 0
+    },
+    "LOW_RT": {
+     "evaluable": 201,
+     "met": 80
+    },
+    "PHI": {
+     "evaluable": 201,
+     "met": 201
+    },
+    "SW_HIGH": {
+     "evaluable": 201,
+     "met": 0
+    },
+    "VSH": {
+     "evaluable": 201,
+     "met": 174
+    }
+   },
+   "thresholds": {
+    "LOWER": {
+     "phi_cutoff": 0.08,
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0,
+     "sw_cutoff": 0.6,
+     "vsh_cutoff": 0.4
+    },
+    "UPPER": {
+     "phi_cutoff": 0.08,
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0,
+     "sw_cutoff": 0.6,
+     "vsh_cutoff": 0.4
+    }
+   },
+   "unavailable": [
+    "HC"
+   ],
+   "zones": [
+    {
+     "avg_phie": NaN,
+     "avg_rt": NaN,
+     "avg_sw": NaN,
+     "avg_vsh": NaN,
+     "candidate_ft": 0.0,
+     "candidate_not_pay_ft": 0.0,
+     "n": 80,
+     "net_res_ft": 26.5,
+     "pct_of_net_res": 0.0,
+     "rt_cut": NaN,
+     "zone": "UPPER"
+    },
+    {
+     "avg_phie": NaN,
+     "avg_rt": NaN,
+     "avg_sw": NaN,
+     "avg_vsh": NaN,
+     "candidate_ft": 0.0,
+     "candidate_not_pay_ft": 0.0,
+     "n": 121,
+     "net_res_ft": 60.5,
+     "pct_of_net_res": 0.0,
+     "rt_cut": NaN,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "ts": {
+   "zones": [
+    {
+     "clamped": {
+      "below_dispersed": 0,
+      "clay_supported": 0,
+      "structural": 0
+     },
+     "class_counts": {
+      "0": 0,
+      "1": 80,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0
+     },
+     "lam_share": 0.9999999999999997,
+     "mean_vlam": 0.3059147596399824,
+     "n": 80,
+     "phi_max": 0.3,
+     "phi_sh": 0.08,
+     "zone": "UPPER"
+    },
+    {
+     "clamped": {
+      "below_dispersed": 0,
+      "clay_supported": 0,
+      "structural": 0
+     },
+     "class_counts": {
+      "0": 121,
+      "1": 0,
+      "2": 0,
+      "3": 0,
+      "4": 0,
+      "5": 0
+     },
+     "lam_share": NaN,
+     "mean_vlam": NaN,
+     "n": 0,
+     "phi_max": 0.3,
+     "phi_sh": 0.08,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "validation": {
+   "basis": "measured RT, scalar Qv, bulk basis",
+   "n_shf_held": 0,
+   "pay_sw": "resistivity",
+   "well": {
+    "avg_sw_pay": 0.3130183794119871,
+    "avg_sw_pay_base": 0.34500582385315437,
+    "delta": 7.0,
+    "hcpv_net_pay": 16.113173672406987,
+    "hcpv_net_pay_base": 14.544204788226418,
+    "net_pay": 87.0,
+    "net_pay_base": 80.0
+   },
+   "zones": [
+    {
+     "avg_sw_pay": 0.30000000000000004,
+     "avg_sw_pay_base": 0.4512040787967584,
+     "delta": 7.0,
+     "hcpv_net_pay": 4.087888426709842,
+     "hcpv_net_pay_base": 2.5189195425292716,
+     "net_pay": 26.5,
+     "net_pay_base": 19.5,
+     "zone": "UPPER"
+    },
+    {
+     "avg_sw_pay": 0.3173342720432376,
+     "avg_sw_pay_base": 0.3173342720432376,
+     "delta": 0.0,
+     "hcpv_net_pay": 12.025285245697146,
+     "hcpv_net_pay_base": 12.025285245697146,
+     "net_pay": 60.5,
+     "net_pay_base": 60.5,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "version": 1,
+  "zones": [
+   {
+    "causes": [
+     {
+      "criteria": [
+       {
+        "id": "lam_share",
+        "met": true,
+        "op": ">=",
+        "threshold": 0.5,
+        "value": 0.9999999999999997
+       },
+       {
+        "id": "mean_vlam",
+        "met": true,
+        "op": ">=",
+        "threshold": 0.05,
+        "value": 0.3059147596399824
+       },
+       {
+        "id": "class13_share",
+        "met": true,
+        "op": ">=",
+        "threshold": 0.5,
+        "value": 1.0
+       }
+      ],
+      "key": "laminated",
+      "label": "Thin beds / laminations",
+      "level": "probable",
+      "n_eval": 3,
+      "remedy": {
+       "qv_source": null,
+       "rt_steps": [
+        "laminated"
+       ],
+       "sw_basis": "sand",
+       "sw_models": [
+        "Waxman-Smits",
+        "Archie"
+       ],
+       "text": "Add the laminated-sand Rt step and set the Vlam endpoints; consider the sand basis. Use Waxman-Smits or Archie after the step; with the bulk basis avoid Indonesian and Simandoux."
+      },
+      "score": 1.0
+     },
+     {
+      "criteria": [
+       {
+        "id": "sw_median",
+        "met": false,
+        "op": ">=",
+        "threshold": 0.6,
+        "value": 0.30000000000000004
+       },
+       {
+        "id": "water_free_share",
+        "met": true,
+        "op": ">=",
+        "threshold": 0.5,
+        "value": 1.0
+       },
+       {
+        "id": "bvw_cv",
+        "met": true,
+        "op": "<=",
+        "threshold": 0.2,
+        "value": 0.13903814757894012
+       }
+      ],
+      "key": "microporosity",
+      "label": "Microporosity / fine grain",
+      "level": "probable",
+      "n_eval": 3,
+      "remedy": {
+       "qv_source": null,
+       "rt_steps": [],
+       "sw_basis": null,
+       "sw_models": [],
+       "text": "Not an Rt problem: use the Buckles / movable-water check and the saturation-height validation, and read the water-free flag. Keep the Sw model."
+      },
+      "score": 0.6666666666666666
+     },
+     {
+      "criteria": [
+       {
+        "id": "rw_median",
+        "met": true,
+        "op": "<=",
+        "threshold": 0.06,
+        "value": 0.05
+       },
+       {
+        "id": "rt_ro_median",
+        "met": false,
+        "op": "<=",
+        "threshold": 3.0,
+        "value": 5.351289399263791
+       },
+       {
+        "id": "rt_median",
+        "met": true,
+        "op": "<=",
+        "threshold": 5.0,
+        "value": 4.22899948354486
+       }
+      ],
+      "key": "saline",
+      "label": "Saline water / low contrast",
+      "level": "probable",
+      "n_eval": 3,
+      "remedy": {
+       "qv_source": null,
+       "rt_steps": [],
+       "sw_basis": null,
+       "sw_models": [
+        "Archie",
+        "Simandoux"
+       ],
+       "text": "No Rt step: check Rw (auto Rwa, Pickett plot) and the Arps temperature correction, then use Archie or Simandoux with the corrected Rw."
+      },
+      "score": 0.6666666666666666
+     }
+    ],
+    "guard": {
+     "lam_share": 0.9999999999999997,
+     "laminated": true
+    },
+    "n_res": 53,
+    "primary": "laminated",
+    "status": "ok",
+    "thickness_ft": 26.5,
+    "ts": {
+     "class13_share": 1.0,
+     "lam_share": 0.9999999999999997,
+     "mean_vlam": 0.3059147596399824
+    },
+    "zone": "UPPER"
+   },
+   {
+    "causes": [
+     {
+      "criteria": [
+       {
+        "id": "sw_median",
+        "met": false,
+        "op": ">=",
+        "threshold": 0.6,
+        "value": 0.3179265218719772
+       },
+       {
+        "id": "water_free_share",
+        "met": true,
+        "op": ">=",
+        "threshold": 0.5,
+        "value": 1.0
+       },
+       {
+        "id": "bvw_cv",
+        "met": true,
+        "op": "<=",
+        "threshold": 0.2,
+        "value": 0.010713481498216399
+       }
+      ],
+      "key": "microporosity",
+      "label": "Microporosity / fine grain",
+      "level": "probable",
+      "n_eval": 3,
+      "remedy": {
+       "qv_source": null,
+       "rt_steps": [],
+       "sw_basis": null,
+       "sw_models": [],
+       "text": "Not an Rt problem: use the Buckles / movable-water check and the saturation-height validation, and read the water-free flag. Keep the Sw model."
+      },
+      "score": 0.6666666666666666
+     }
+    ],
+    "guard": {
+     "lam_share": null,
+     "laminated": null
+    },
+    "n_res": 121,
+    "primary": "microporosity",
+    "status": "ok",
+    "thickness_ft": 60.5,
+    "ts": null,
+    "zone": "LOWER"
+   }
+  ]
+ },
+ "net_pay": 87.0,
+ "net_reservoir": 87.0,
+ "ng_pay": 1.0,
+ "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 1.0
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     20.0,
+     120.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.0
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "project",
+    "value": 2.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "LOWER": {
+   "a": {
+    "source": "project",
+    "value": 1.0
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     20.0,
+     120.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.0
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "project",
+    "value": 2.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "UPPER": {
+   "a": {
+    "source": "project",
+    "value": 1.0
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     20.0,
+     120.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.0
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "project",
+    "value": 2.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 23.45502876571156,
+ "rsh": 2.0,
+ "rsh_source": "manual",
+ "rw": 0.05,
+ "rw_source": "manual",
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_ARCHIE": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 121
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 80
+    }
+   }
+  }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 92,
+  "limited_to_max": 0,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 201
+ },
+ "swirr_mean": 0.3043205179969346,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": [],
+ "zone_diagnostics": {
+  "LOWER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 60.5,
+   "limiting": null,
+   "lrlc_note": "LRLC: probable microporosity; see Remediation.",
+   "net_pay": 60.5,
+   "net_reservoir": 60.5,
+   "pass_phi": 1.0,
+   "pass_sw": 1.0,
+   "pass_vsh": 1.0,
+   "status": "ok",
+   "valid": 121
+  },
+  "UPPER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 26.5,
+   "limiting": "vsh_cutoff",
+   "lrlc_note": "LRLC: probable laminated sand (Vlam share 1.00); see Remediation.",
+   "net_pay": 26.5,
+   "net_reservoir": 26.5,
+   "pass_phi": 1.0,
+   "pass_sw": 1.0,
+   "pass_vsh": 0.6625,
+   "status": "ok",
+   "valid": 80
+  }
+ },
+ "zones": [
+  {
+   "avg_phie_pay": 0.22037134375794304,
+   "avg_sw_pay": 0.30000000000000004,
+   "avg_sw_pay_base": 0.4512040787967584,
+   "avg_vsh_pay": 0.2333699516863127,
+   "bottom": 1039.5,
+   "gross_sand": 26.5,
+   "hcpv_net_pay": 4.087888426709842,
+   "hcpv_net_pay_base": 2.5189195425292716,
+   "net_pay": 26.5,
+   "net_pay_base": 19.5,
+   "net_reservoir": 26.5,
+   "ng_pay": 1.0,
+   "ng_reservoir": 1.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 1.0
+    },
+    "m": {
+     "source": "project",
+     "value": 2.0
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "project",
+     "value": 2.0
+    },
+    "rw": {
+     "source": "project",
+     "value": 0.05
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 5.83984060958549,
+   "samples": 80,
+   "top": 1000.0,
+   "zone": "UPPER"
+  },
+  {
+   "avg_phie_pay": 0.2911601348120011,
+   "avg_sw_pay": 0.3173342720432376,
+   "avg_sw_pay_base": 0.3173342720432376,
+   "avg_vsh_pay": 0.025907242558078195,
+   "bottom": 1100.0,
+   "gross_sand": 60.5,
+   "hcpv_net_pay": 12.025285245697146,
+   "hcpv_net_pay_base": 12.025285245697146,
+   "net_pay": 60.5,
+   "net_pay_base": 60.5,
+   "net_reservoir": 60.5,
+   "ng_pay": 1.0,
+   "ng_reservoir": 1.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 1.0
+    },
+    "m": {
+     "source": "project",
+     "value": 2.0
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "project",
+     "value": 2.0
+    },
+    "rw": {
+     "source": "project",
+     "value": 0.05
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 17.615188156126067,
+   "samples": 121,
+   "top": 1040.0,
+   "zone": "LOWER"
+  }
+ ]
+}

@@ -110,6 +110,8 @@ def test_capture_copies_do_not_alias_calculator_results():
     (basis,) = capture
     assert isinstance(basis.vsh, np.ndarray) and isinstance(basis.positions, np.ndarray)
     assert basis.positions.dtype.kind == "i"
+    assert basis.qv_values is None and basis.sand_basis is None   # no LRLC: nothing to carry
+    assert basis.qv_values is None and basis.sand_basis is None   # no LRLC: nothing to carry
 
 
 # ---- _primary_sw --------------------------------------------------------

@@ -70,6 +70,7 @@ TRACK_SPECS: Dict[str, TrackSpec] = {
         curves=(
             CurveSpec("GR", "API", 0.0, 150.0),
             CurveSpec("VSH", "v/v", 0.0, 1.0, secondary=True),
+            CurveSpec("VLAM", "v/v", 0.0, 1.0, secondary=True),
         ),
         scale="linear", lo=0.0, hi=150.0, unit="API", axis_name="GR",
     ),
@@ -80,6 +81,8 @@ TRACK_SPECS: Dict[str, TrackSpec] = {
             CurveSpec("RT", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RS", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RT_SW", "ohm·m", 0.2, 2000.0, "log"),
+            CurveSpec("RT_SAND", "ohm·m", 0.2, 2000.0, "log"),
+            CurveSpec("RT_PYR", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RT_CUT", "ohm·m", 0.2, 2000.0, "log"),
         ),
         scale="log", lo=0.2, hi=2000.0, unit="ohm·m", axis_name="RT",
@@ -155,7 +158,9 @@ def curve_spec(track: str, name: str) -> Optional[CurveSpec]:
 # Residual track (Sw - Sw SHF): title and fixed x range
 SHF_RESID_TITLE = "Sw − Sw SHF"
 SHF_RESID_RANGE = (-0.5, 0.5)
-NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY")
+NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY", "SW_BASE")
+# Curves that are read at the crosshair only (not drawn in the Classic view).
+READOUT_ONLY_COLUMNS = {"VPYR": "v/v", "QV_EST": "meq/cc"}
 SHF_NON_METHOD_COLUMNS = NON_METHOD_SW_COLUMNS  # old name, kept as an alias
 
 

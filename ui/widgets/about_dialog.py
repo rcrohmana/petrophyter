@@ -47,7 +47,7 @@ class AboutDialog(QDialog):
         icon_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             "icons",
-            "app_icon.svg",
+            "app_icon.png",
         )
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
@@ -98,6 +98,15 @@ class AboutDialog(QDialog):
         history_text = (
             "<p style='margin-bottom: 8px;'><b>Version History:</b></p>"
             f"<p style='margin: 0 0 8px 0;'><b>v{APP_VERSION_DISPLAY} - Current Release</b></p>"
+            "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
+            "<li>Laminated sands: Thomas-Stieber laminar and dispersed shale, Hagiwara "
+            "laminated-sand Rt, Sw on the sand laminae, a shoulder-bed guard</li>"
+            "<li>Pyrite volume from RHOB and PEF with a pyrite Rt correction; Qv from shale CEC "
+            "with core CEC calibration</li>"
+            "<li>Workbench Diagnosis, Remediation and Validation panels: probable cause per zone, "
+            "Apply by scope, pay before and after; new application icon; session format 2.6</li>"
+            "</ul>"
+            "<p style='margin: 0 0 8px 0;'><b>v1.11.0 (Build 20261105)</b></p>"
             "<ul style='margin: 0 0 10px 20px; padding: 0;'>"
             "<li>LRLC Workbench (Specialized menu, Ctrl+L): screening score and flag for "
             "low-resistivity low-contrast pay, Rt cutoff from the Sw model, bulk volume water "

@@ -75,6 +75,54 @@ def lrlc_screening_data():
     })
 
 
+def lrlc_laminated_data():
+    """Sand laminae and shale laminae from the forward model, Upper laminated and Lower clean.
+
+    The sand laminae carry Archie Sw 0.30 at porosity 0.30; the shale laminae have porosity
+    0.08 and Rsh 2 ohm.m. Rt is the parallel combination, total porosity the volume-weighted
+    value and the shale volume equals the laminar volume (laminar line). Lower is nearly clean
+    sand. Deterministic.
+    """
+    phi_max, phi_sh, rw, rsh, sw = 0.30, 0.08, 0.05, 2.0, 0.30
+    depth = np.linspace(1000.0, 1100.0, 201)
+    wave = 0.5 + 0.5 * np.sin(depth / 3.0)
+    vlam = np.where(depth < 1040.0, 0.12 + 0.36 * wave, 0.01 + 0.03 * wave)
+    phit = (1.0 - vlam) * phi_max + vlam * phi_sh
+    rsand = rw / (phi_max ** 2 * sw ** 2)
+    rt = 1.0 / ((1.0 - vlam) / rsand + vlam / rsh)
+    return pd.DataFrame({
+        "DEPTH": depth,
+        "GR": 20.0 + 100.0 * vlam,
+        "RHOB": 2.65 - 1.65 * phit,
+        "RT": rt,
+    })
+
+
+def lrlc_pyrite_data():
+    """A clean sand with a pyritic interval: RHOB and PEF from the volumetric model.
+
+    Matrix, pyrite and fluid densities 2.65, 4.99 and 1.0 g/cc; matrix and pyrite PEF 1.81 and
+    16.97; the fluid volumetric cross-section 0.36. The true Rt is Archie at Sw 0.40; connected
+    pyrite (half of it) adds a parallel conductance with Rpy 0.1 ohm.m. Deterministic.
+    """
+    rw, rpy, f, sw = 0.05, 0.1, 0.5, 0.40
+    depth = np.linspace(2000.0, 2100.0, 201)
+    phi = 0.18 + 0.05 * np.sin(depth / 7.0)
+    vpyr = 0.05 * np.clip(np.sin(depth / 11.0), 0.0, None)
+    vma = 1.0 - phi - vpyr
+    rhob = phi * 1.0 + vma * 2.65 + vpyr * 4.99
+    u = phi * 0.36 + vma * 1.81 * 2.65 + vpyr * 16.97 * 4.99
+    rt_true = rw / (phi ** 2 * sw ** 2)
+    rt = 1.0 / (1.0 / rt_true + f * vpyr / rpy)
+    return pd.DataFrame({
+        "DEPTH": depth,
+        "GR": np.full(len(depth), 20.0),
+        "RHOB": rhob,
+        "PEF": u / rhob,
+        "RT": rt,
+    })
+
+
 # Literal rock-type definitions (as Project.rock_types stores them) for the
 # rock_typing_enabled case: three FZI types, pooled over the project.
 ROCK_TYPE_SET = {
@@ -188,6 +236,51 @@ CASES = {
         "tops": True,
         "lrlc": {"settings": {"enabled": True, "rt_cutoff": {"enabled": True}},
                  "params": {"default": {}, "zones": {"LOWER": {"screen_rt_max": 8.0}}}},
+    },
+    # Laminated sand: Thomas-Stieber on in both zones, the Hagiwara step in Upper only; the
+    # corrected Rt recovers the forward Sw (0.30) and the baseline columns show the uncorrected one.
+    "lrlc_laminated": {
+        "builder": lrlc_laminated_data,
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 20.0,
+            "gr_max_manual": 120.0,
+            "sw_methods": ["Archie"],
+            "sw_primary_method": "Archie",
+            "rw": 0.05,
+            "rw_mode": "manual",
+            "a": 1.0,
+            "m": 2.0,
+            "n": 2.0,
+            "rsh": 2.0,
+            "rsh_mode": "manual",
+        },
+        "tops": True,
+        "lrlc": {"settings": {"enabled": True, "thomas_stieber": {"enabled": True}},
+                 "params": {"default": {},
+                            "zones": {"UPPER": {"rt_steps": ["laminated"],
+                                                "phi_max": 0.30, "phi_sh": 0.08},
+                                      "LOWER": {"phi_max": 0.30, "phi_sh": 0.08}}}},
+    },
+    # Pyrite: volume from RHOB and PEF, half connected, Rpy 0.1 ohm.m; the step restores the
+    # resistivity of the pore system.
+    "lrlc_pyrite": {
+        "builder": lrlc_pyrite_data,
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 20.0,
+            "gr_max_manual": 120.0,
+            "sw_methods": ["Archie"],
+            "sw_primary_method": "Archie",
+            "rw": 0.05,
+            "rw_mode": "manual",
+            "a": 1.0,
+            "m": 2.0,
+            "n": 2.0,
+        },
+        "lrlc": {"settings": {"enabled": True, "pyrite": {"enabled": True, "u_fluid": 0.36}},
+                 "params": {"default": {"rt_steps": ["pyrite"], "pyr_method": "rhob_pef",
+                                        "pyr_f": 0.5, "pyr_rpy": 0.1}, "zones": {}}},
     },
     # A log-derived fit with use for pay requested: refused, pay stays on resistivity Sw.
     "shf_log_derived": {

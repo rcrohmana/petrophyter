@@ -51,7 +51,9 @@ def _spec(name="x", order=1, column="RT_X", extra=(), fn=None):
                     label=name, description="d", refs=(), extra_columns=extra)
 
 
-def test_registry_starts_empty():
+def test_registry_starts_empty(monkeypatch):
+    monkeypatch.setattr(chain, "STEPS", {})
+    monkeypatch.setattr(chain, "DERIVES", {})
     assert chain.STEPS == {} and chain.DERIVES == {}
     assert available_steps() == []
     assert chain_path([]) == "RT"
@@ -87,7 +89,9 @@ def test_unzoned_constant_comes_from_param_scopes():
     assert shf_unzoned == UNZONED
 
 
-def test_available_steps_sorted_by_order(register_test_steps):
+def test_available_steps_sorted_by_order(register_test_steps, monkeypatch):
+    monkeypatch.delitem(chain.STEPS, "laminated")
+    monkeypatch.delitem(chain.STEPS, "pyrite")
     assert [s.name for s in available_steps()] == [
         "test_identity", "test_scale", "test_rsh", "test_bad", "test_extra"]
 
@@ -261,7 +265,7 @@ def test_multi_zone_rest_segment_with_default_and_unknown(register_test_steps):
 def test_provenance_record_shape(register_test_steps):
     _, out = run(["test_rsh"])
     assert set(out.records[0]) == {"zone", "segment", "step", "curve", "from", "params", "refs",
-                                   "n_valid", "n_invalid", "fallback"}
+                                   "n_valid", "n_invalid", "fallback", "counts"}
     r = out.records[0]
     assert r["zone"] is None and r["curve"] == "RT_RSH" and r["from"] == "RT"
     assert r["refs"] == ["test_ref"] and r["params"] == {}

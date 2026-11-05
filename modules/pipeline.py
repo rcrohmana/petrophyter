@@ -20,6 +20,7 @@ import pandas as pd
 
 from modules.issue_codes import ISSUE_CODES, IssueLog  # noqa: F401  (re-exported)
 from modules.las_utils import mask_nonpositive
+from modules.lrlc import l2
 from modules.lrlc.chain import apply_rt_chain, chain_active_anywhere
 from modules.lrlc.rt_cutoff import SwInputs
 from modules.lrlc.stage import (
@@ -32,6 +33,7 @@ from modules.param_scopes import (
 from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
 from modules.rock_typing import (
     apply_rock_types, rock_type_rows, rock_types_zone_scoped, rock_typing_unavailable)
+from modules.shf_stage import compare_stats
 from modules.shf_stage import (
     apply_shf, merge_counts, new_counts, pay_refused_for, shf_count_issues, shf_summary,
     zone_series)
@@ -836,6 +838,18 @@ def _swirr_method_label(method, n_fallback, warnings):
     return method
 
 
+@dataclass(frozen=True)
+class SandBasis:
+    """Sand-fraction porosity and shale volume the Sw models read (one value per segment row).
+
+    Already merged with the bulk values by the caller where a sample has no sand value.
+    """
+
+    phie: np.ndarray
+    phit: np.ndarray
+    vsh: np.ndarray
+
+
 @dataclass
 class SegmentBasis:
     """What the saturation stage used for one segment (``run_pipeline(capture=[])``).
@@ -867,6 +881,9 @@ class SegmentBasis:
     # LRLC Rt chain: the frozen RT_SW (None when no step ran) and its replay record.
     rt_sw: Optional[np.ndarray] = None
     chain_replay: Optional[object] = None
+    # LRLC: per-sample Qv for Waxman-Smits and the sand basis for the Sw models (None: bulk).
+    qv_values: Optional[np.ndarray] = None
+    sand_basis: Optional["SandBasis"] = None
 
 
 def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay,
@@ -881,6 +898,8 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
         sw_hold=None if sw_hold is None else np.array(sw_hold, dtype=float),
         rt_sw=None if pay.get("rt_sw") is None else np.array(pay["rt_sw"], dtype=float),
         chain_replay=pay.get("chain_replay"),
+        qv_values=None if pay.get("qv_values") is None else np.array(pay["qv_values"], dtype=float),
+        sand_basis=pay.get("sand_basis"),
     ))
 
 
@@ -1054,7 +1073,8 @@ def _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data):
 
 
 def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                rsh_auto=False, only_primary=False, rt_values=None):
+                rsh_auto=False, only_primary=False, rt_values=None, qv_values=None,
+                basis=None):
     """Effective Rw / Rsh / WS B, PHIE / PHIT, the Sw methods and the ``SW`` column.
 
     Returns ``(sw, phie, phit, sw_fallback)``. ``sw`` is the ``SW`` Series (also stored
@@ -1062,6 +1082,10 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     ``sw_fallback`` is None when the primary method supplied ``SW``, else the column
     used instead, or :data:`SW_DEFAULTED`. With ``only_primary`` only the method that
     ends up as ``SW`` is computed; ``SW`` is the same as the full path's.
+
+    ``qv_values`` (an array aligned to the rows) replaces ``p["ws_qv"]`` for Waxman-Smits only.
+    ``basis`` (a :class:`SandBasis`) replaces the porosity and shale volume the Sw models read;
+    the returned ``phie`` / ``phit`` stay the bulk ones.
     """
     sw = None
     sw_fallback = None
@@ -1079,6 +1103,14 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     if phit is None:
         phit = pd.Series(np.nan, index=data.index)
 
+    # What the Sw models read; the bulk phie / phit / vsh are returned and used for pay.
+    m_phie, m_phit, m_vsh = phie, phit, vsh
+    if basis is not None:
+        m_phie = pd.Series(np.asarray(basis.phie, dtype=float), index=data.index)
+        m_phit = pd.Series(np.asarray(basis.phit, dtype=float), index=data.index)
+        m_vsh = pd.Series(np.asarray(basis.vsh, dtype=float), index=data.index)
+    ws_qv = p["ws_qv"] if qv_values is None else np.asarray(qv_values, dtype=float)
+
     if has_rt:
         selected = p["sw_methods"]
         primary_col = SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
@@ -1091,20 +1123,20 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
                 wanted = [name for name in SW_COLUMN_MAP if name in selected][:1]
             selected = wanted
         if "Archie" in selected:
-            calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n, rt=rt_values)
+            calc.calculate_sw_archie(rt_curve, m_phie, rw_eff, a, m, n, rt=rt_values)
         if "Indonesian" in selected:
-            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+            calc.calculate_sw_indonesian(rt_curve, m_phie, m_vsh, rw_eff, rsh_eff, a, m, n,
                                          rt=rt_values)
         if "Simandoux" in selected:
-            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+            calc.calculate_sw_simandoux(rt_curve, m_phie, m_vsh, rw_eff, rsh_eff, a, m, n,
                                         rt=rt_values)
         if "Waxman-Smits" in selected:
             # Total-porosity models: solved on PHIT, returned as effective Sw on PHIE.
-            calc.calculate_sw_waxman_smits(rt_curve, phit, rw_eff, a, m, n, p["ws_qv"], ws_b,
-                                           phie=phie, rt=rt_values)
+            calc.calculate_sw_waxman_smits(rt_curve, m_phit, rw_eff, a, m, n, ws_qv, ws_b,
+                                           phie=m_phie, rt=rt_values)
         if "Dual-Water" in selected:
-            calc.calculate_sw_dual_water(rt_curve, phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
-                                         phie=phie, rt=rt_values)
+            calc.calculate_sw_dual_water(rt_curve, m_phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
+                                         phie=m_phie, rt=rt_values)
 
         if primary_col in calc.results.columns:
             calc.results["SW"] = calc.results[primary_col]
@@ -1137,10 +1169,12 @@ def _lrlc_setup(p, labels, data, curve_mapping, has_rt, warnings):
         return None
     aux, aux_names = build_aux(lrlc, data, warnings)
     keys = pd.Series(zone_keys_for(data.index, labels), index=data.index, dtype=object)
-    return LrlcRun(
+    run = LrlcRun(
         lrlc=lrlc, aux=aux, aux_names=aux_names,
         force_rt_sw=chain_active_anywhere(lrlc, keys.to_numpy(dtype=object)),
         well_labels=keys, well_derived={}, has_labels=labels is not None)
+    run.plan = l2.make_plan(lrlc, keys.to_numpy(dtype=object), curve_mapping.get("RT", "RT"))
+    return run
 
 
 def _lrlc_segment_name(zone, lrlc_run) -> str:
@@ -1149,10 +1183,47 @@ def _lrlc_segment_name(zone, lrlc_run) -> str:
     return "rest" if lrlc_run.planned else "well"
 
 
-def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone, lrlc_run):
+def _lrlc_env(calc, data, curve_mapping, p, vsh, zone, lrlc_run):
+    """The segment environment of the laminated / mineral / Qv derives."""
+    index = data.index
+    n = len(index)
+    res = calc.results
+
+    def column(name):
+        series = res.get(name)
+        return np.full(n, np.nan) if series is None else series.to_numpy(dtype=float)
+
+    vsh_a = np.asarray(vsh, dtype=float)
+    vsh_col = l2.block(lrlc_run.lrlc, "thomas_stieber")["vsh_column"]
+    vsh_ts = column(vsh_col) if vsh_col != "VSH" and vsh_col in res.columns else vsh_a
+    rhob_curve = curve_mapping.get("RHOB", "RHOB")
+    gr_curve = curve_mapping.get("GR", "GR")
+    rt_curve = curve_mapping.get("RT", "RT")
+    return l2.SegEnv(
+        lrlc=lrlc_run.lrlc, keys=zone_keys_for(index, zone), p=p, vsh=vsh_a, vsh_ts=vsh_ts,
+        phit=column("PHIT"), phie=column("PHIE"),
+        rt=pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float),
+        dz=np.broadcast_to(np.asarray(_sample_dz(data), dtype=float), (n,)),
+        has_gr=_has(gr_curve, data),
+        rhob=(pd.to_numeric(data[rhob_curve], errors="coerce").to_numpy(dtype=float)
+              if _has(rhob_curve, data) else None),
+        pef=lrlc_run.aux_array("PEF", index),
+        gas=column("GAS_FLAG") if "GAS_FLAG" in res.columns else None,
+        plan=lrlc_run.plan)
+
+
+def _issues_to_log(issues, warnings):
+    for code, text, zone, severity in issues:
+        warnings.add(code, text, severity=severity, zone=zone)
+
+
+def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone, lrlc_run,
+                    seg_derived=None, guard=None):
     """Run the Rt chain on one segment; writes ``RT_SW`` and the step columns to ``calc.results``.
 
-    ``eff`` is the segment's :class:`SwEffectiveInputs`. Returns the ``ChainOutput``.
+    ``eff`` is the segment's :class:`SwEffectiveInputs`; ``seg_derived`` the segment derives
+    (``VLAM``, ``VPYR``, ...) and ``guard`` the bound shoulder-bed guard. Returns the
+    ``ChainOutput``.
     """
     index = data.index
     n = len(index)
@@ -1169,6 +1240,7 @@ def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone
              else np.arange(n, dtype=float))
     derived = {k: np.asarray(v.reindex(index) if hasattr(v, "reindex") else v)
                for k, v in lrlc_run.well_derived.items()}
+    derived.update({k: np.asarray(v) for k, v in (seg_derived or {}).items()})
     ctx = {
         "depth": depth, "rt_raw": rt, "vsh": np.asarray(vsh, dtype=float),
         "phit": results_array("PHIT"), "phie": results_array("PHIE"),
@@ -1181,10 +1253,10 @@ def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone
     for role, key in (("PEF", "pef"), ("RM", "rm"), ("RS", "rs"), ("RXO", "rxo"),
                       ("HIRES", "hires")):
         ctx[key] = lrlc_run.aux_array(role, index)
-    out = apply_rt_chain(rt, ctx, keys, lrlc_run.lrlc, lrlc_run.force_rt_sw,
+    out = apply_rt_chain(rt, ctx, keys, lrlc_run.lrlc, lrlc_run.force_rt_sw, guard=guard,
                          segment=_lrlc_segment_name(zone, lrlc_run))
-    for code, text, issue_zone, severity in out.issues:
-        warnings.add(code, text, severity=severity, zone=issue_zone)
+    _issues_to_log(out.issues, warnings)
+    _issues_to_log(l2.chain_count_issues(out.records), warnings)
     if out.write_rt_sw:
         calc.results["RT_SW"] = out.rt_sw
     for name, values in out.columns.items():
@@ -1230,14 +1302,28 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     tail.
     """
     rt_values, chain_out, eff = None, None, None
+    qv_values, sand_basis, l2_env = None, None, None
     if lrlc_run is not None:
         eff = _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data)
+        l2_env = _lrlc_env(calc, data, curve_mapping, p, vsh, zone, lrlc_run)
+        derived = l2.run_derives(l2_env)
+        for name, values in derived.items():
+            calc.results[name] = values
+        guard = l2.build_guard(l2_env, derived, lrlc_run.guard_decisions, lrlc_run.guard_states)
         chain_out = _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings,
-                                    zone, lrlc_run)
+                                    zone, lrlc_run, seg_derived=derived, guard=guard)
         rt_values = chain_out.rt_values
+        qv_values = l2.qv_array(l2_env, derived.get("QV_EST"))
+        arrays = l2.sand_basis(l2_env, derived)
+        if arrays is not None:
+            sand_basis = SandBasis(*arrays)
+        lrlc_run.ts_notes.update(l2_env.notes.get("ts", {}))
+        lrlc_run.rw_eff_parts.append(pd.Series(
+            np.broadcast_to(np.asarray(eff.rw, dtype=float), (len(data),)), index=data.index))
+        _issues_to_log(l2_env.issues, warnings)
     sw_new, phie, phit, sw_fallback = _primary_sw(
         calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto,
-        rt_values=rt_values)
+        rt_values=rt_values, qv_values=qv_values, basis=sand_basis)
 
     swirr_method = p["swirr_method"]
     k_buckles = p["k_buckles"]
@@ -1282,7 +1368,13 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     pay = calc.calculate_net_pay(
         vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
     )
+    sw_base_pay = None
     if lrlc_run is not None:
+        zone_key_array = zone_keys_for(data.index, zone)
+        sw_base_pay = _lrlc_baseline(
+            calc, data, curve_mapping, p, vsh, phie, rw, rsh, tctx, rsh_auto, sw_for_pay, sw_hold,
+            zone_key_array, lrlc_run)
+        _vpyr_bias_note(calc.results, zone_key_array, warnings)
         sw_inputs = SwInputs(
             phie=phie, phit=phit, vsh=vsh, rw_eff=eff.rw, rsh_eff=eff.rsh, rwb_eff=eff.rwb,
             ws_b=eff.ws_b, a=p["a"], m=p["m"], n=p["n"], ws_qv=p["ws_qv"], dw_swb=p["dw_swb"])
@@ -1293,7 +1385,58 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
             "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None,
             "shf": shf_out, "sw_hold": sw_hold, "rt_sw": rt_values,
-            "chain_replay": None if chain_out is None else chain_out.replay}
+            "chain_replay": None if chain_out is None else chain_out.replay,
+            "qv_values": qv_values, "sand_basis": sand_basis, "sw_base_pay": sw_base_pay}
+
+
+def _lrlc_baseline(calc, data, curve_mapping, p, vsh, phie, rw, rsh, tctx, rsh_auto,
+                   sw_for_pay, sw_hold, keys, lrlc_run):
+    """``SW_BASE`` and ``NET_PAY_BASE_FLAG`` on ``calc.results``; returns the baseline pay Sw.
+
+    "Before" is the Sw without any LRLC correction (measured RT, constant Qv, bulk basis) with
+    the same model and cutoffs. A segment without an active correction copies ``SW`` when
+    another segment of the well has one (so every segment writes the columns); a well without
+    any active correction writes nothing and returns None.
+    """
+    if not lrlc_run.plan.any_active:
+        return None
+    if not l2.segment_active(lrlc_run.lrlc, keys):
+        calc.results["SW_BASE"] = calc.results["SW"]
+        calc.results["NET_PAY_BASE_FLAG"] = calc.results["NET_PAY_FLAG"]
+        return sw_for_pay
+    base = PetrophysicsCalculator(data)
+    base.results = calc.results.copy()
+    sw_base = _primary_sw(base, data, curve_mapping, p, vsh, rw, rsh, tctx, IssueLog(), rsh_auto,
+                          only_primary=True)[0]
+    if sw_hold is not None:
+        held = np.isfinite(sw_hold)
+        lrlc_run.shf_held += int(held.sum())
+        sw_base_pay = pd.Series(np.where(held, sw_hold, sw_base.to_numpy(dtype=float)),
+                                index=data.index)
+    else:
+        sw_base_pay = sw_base
+    base.calculate_net_pay(vsh, phie, sw_base_pay, p["vsh_cutoff"], p["phi_cutoff"],
+                           p["sw_cutoff"])
+    calc.results["SW_BASE"] = sw_base
+    calc.results["NET_PAY_BASE_FLAG"] = base.results["NET_PAY_FLAG"]
+    return sw_base_pay
+
+
+def _vpyr_bias_note(results, keys, warnings):
+    """Info: pyrite in the net reservoir lowers the density porosity there."""
+    if "VPYR" not in results.columns or "NET_RES_FLAG" not in results.columns:
+        return
+    vpyr = results["VPYR"].to_numpy(dtype=float)
+    with np.errstate(invalid="ignore"):
+        hit = (vpyr > 0.01) & (results["NET_RES_FLAG"].to_numpy() == 1)
+    for key in dict.fromkeys(keys):
+        count = int((hit & (keys == key)).sum())
+        if count:
+            where = "the unzoned interval" if key == UNZONED else f"zone {key}"
+            warnings.add("LRLC_PYR_PHI_BIAS",
+                         f"Pyrite above 1 percent in {count} net reservoir sample(s) in {where}: "
+                         "the density porosity there is biased low (not corrected).",
+                         zone=None if key == UNZONED else key)
 
 
 def _sample_dz(data: pd.DataFrame):
@@ -1324,9 +1467,17 @@ def _pay_stats(results, vsh, phie, sw, dz, mask=None):
 ZONE_SUMMARY_PARAMS = ("a", "m", "n", "rw", "rsh", "vsh_cutoff", "phi_cutoff", "sw_cutoff")
 
 
-def _zone_rows(results, labels, data, pay_series, step, sources_by_zone):
-    """Per-zone pay summary rows in depth order (spec §4.8)."""
+def _zone_rows(results, labels, data, pay_series, step, sources_by_zone, base=None):
+    """Per-zone pay summary rows in depth order (spec §4.8).
+
+    ``base`` is ``(baseline pay Sw, baseline dHCPV_NET_PAY)`` when the LRLC baseline exists;
+    each row then also carries ``net_pay_base``, ``avg_sw_pay_base`` and ``hcpv_net_pay_base``.
+    """
     rows = []
+    base_results = None
+    if base is not None and "NET_PAY_BASE_FLAG" in results.columns:
+        base_results = results.copy()
+        base_results["NET_PAY_FLAG"] = results["NET_PAY_BASE_FLAG"]
     for zone in _segment_order(labels, data["DEPTH"]):
         mask = labels == zone
         depth = data.loc[mask, "DEPTH"]
@@ -1335,6 +1486,11 @@ def _zone_rows(results, labels, data, pay_series, step, sources_by_zone):
         row.update(_pay_stats(results, *pay_series, step, mask))
         if "dHCPV_NET_PAY" in results.columns:
             row["hcpv_net_pay"] = float(results.loc[mask, "dHCPV_NET_PAY"].sum())
+        if base_results is not None:
+            st = _pay_stats(base_results, pay_series[0], pay_series[1], base[0], step, mask)
+            row["net_pay_base"] = st["net_pay"]
+            row["avg_sw_pay_base"] = st["avg_sw_pay"]
+            row["hcpv_net_pay_base"] = float(np.asarray(base[1], dtype=float)[mask.to_numpy()].sum())
         table = sources_by_zone.get(zone, {})
         names = ZONE_SUMMARY_PARAMS
         if any(str(table.get(k, {}).get("source", "")).startswith("auto")
@@ -1410,12 +1566,13 @@ def zone_diagnostic_note(diag):
     """
     note = diag.get("note")
     base = _zone_status_note(diag)
-    if not note:
-        return base
-    text = f"GR baseline: {note}."
-    if base is None:
-        return "info", text
-    return base[0], f"{base[1]} {text}"
+    if note:
+        text = f"GR baseline: {note}."
+        base = ("info", text) if base is None else (base[0], f"{base[1]} {text}")
+    lrlc = diag.get("lrlc_note")
+    if lrlc:
+        base = ("info", lrlc) if base is None else (base[0], f"{base[1]} {lrlc}")
+    return base
 
 
 def _ft(value):
@@ -1464,6 +1621,75 @@ def _zone_diagnostics_by_zone(labels, pay_series, step, sources_by_zone, log=Non
             if log is not None:
                 log.add("ZONE_NO_SHALE", ZONE_NO_SHALE_NOTE, zone=zone)
     return out
+
+
+def _lrlc_l2_summary(summary, run, results, data, labels, pay, p, curve_mapping, param_sources,
+                     base_dhcpv, warnings):
+    """Add ``ts``, ``guard``, ``validation`` and ``zones`` to ``summary["lrlc"]`` and the zone notes.
+
+    Every block exists only when its feature is on, so a run with LRLC on and nothing
+    selected keeps the summary it had.
+    """
+    out = summary["lrlc"]
+    plan, lrlc = run.plan, run.lrlc
+    n = len(data)
+    dz = np.broadcast_to(np.asarray(_sample_dz(data), dtype=float), (n,))
+    keys = zone_keys_for(data.index, labels)
+    if labels is not None:
+        keys = labels.to_numpy(dtype=object)
+    ts_stats = {}
+    if plan.ts_on and "VLAM" in results.columns:
+        col = l2.block(lrlc, "thomas_stieber")["vsh_column"]
+        vsh_arr = (results[col].to_numpy(dtype=float) if col in results.columns
+                   else np.asarray(pay["vsh"], dtype=float))
+        ts_stats = l2.ts_stats_by_key(results, vsh_arr, keys, dz, lrlc)
+        out["ts"] = l2.ts_block(ts_stats, run.ts_notes, labels is not None)
+    guard_zones = {}
+    if run.guard_states:
+        out["guard"] = l2.guard_block(run.guard_states, run.guard_decisions, lrlc)
+        guard_zones = {(z["zone"] if z["zone"] is not None else UNZONED): z
+                       for z in out["guard"]["zones"]}
+    if "NET_PAY_BASE_FLAG" in results.columns and pay.get("sw_base_pay") is not None:
+        out["validation"] = l2.validation_block(
+            results, _pay_stats, pay["vsh"], pay["phie"], pay["sw"], pay["sw_base_pay"],
+            base_dhcpv, dz, summary.get("zones") or [], summary.get("shf"), run.shf_held,
+            compare_stats)
+        if run.shf_held:
+            warnings.add("LRLC_BASE_SHF_HELD",
+                         f"Pay Sw is taken from saturation height at {run.shf_held} sample(s); "
+                         "the Rt correction changes pay only at the other samples.")
+    if not plan.l2_on:
+        return
+    zone_list = ([(z, z) for z in _segment_order(labels, data["DEPTH"])] if labels is not None
+                 else [(l2.WELL_ZONE, UNZONED)])
+
+    def zone_settings(zone):
+        key = UNZONED if zone == l2.WELL_ZONE else zone
+        source = (param_sources or {}).get(zone) or (param_sources or {}).get(WELL_SOURCES_KEY) or {}
+
+        def val(name):
+            try:
+                return float(source[name]["value"])
+            except (KeyError, TypeError, ValueError):
+                return float(p[name])
+        return {"sw_cutoff": val("sw_cutoff"), "a": val("a"), "m": val("m")}
+
+    rw_eff = (pd.concat(run.rw_eff_parts).reindex(data.index).to_numpy(dtype=float)
+              if run.rw_eff_parts else np.full(n, np.nan))
+    rt_curve = curve_mapping.get("RT", "RT")
+    diag = l2.diagnose_all(
+        results, keys if labels is not None else np.full(n, UNZONED, dtype=object), zone_list,
+        dz, pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float), pay["vsh"],
+        run.aux_array("PEF", data.index), rw_eff, lrlc, ts_stats, zone_settings,
+        float(p["ws_qv"]), warnings)
+    out["zones"] = diag
+    zd = summary.get("zone_diagnostics") or {}
+    for res in diag:
+        zone = res["zone"]
+        if zone in zd:
+            text = l2.zone_note(res, guard_zones.get(zone))
+            if text:
+                zd[zone]["lrlc_note"] = text
 
 
 def _shf_well_summary(p, curve_mapping, results, stages, tvd_source, warnings) -> dict:
@@ -1697,6 +1923,8 @@ def run_pipeline(
         shf_stages = [pp["shf"] for pp in pays]
         pay = {k: pd.concat([pp[k] for pp in pays]).reindex(data.index)
                for k in ("vsh", "phie", "sw", "swirr")}
+        if all(pp.get("sw_base_pay") is not None for pp in pays):
+            pay["sw_base_pay"] = pd.concat([pp["sw_base_pay"] for pp in pays]).reindex(data.index)
         summary = _pay_stats(calc.results, pay["vsh"], pay["phie"], pay["sw"], _sample_dz(data))
         warnings.dedupe()
 
@@ -1708,6 +1936,16 @@ def run_pipeline(
         net_res_flag=calc.results.get("NET_RES_FLAG"),
         net_pay_flag=calc.results.get("NET_PAY_FLAG"),
     )
+
+    base_dhcpv = None
+    if "NET_PAY_BASE_FLAG" in calc.results.columns and pay.get("sw_base_pay") is not None:
+        fork = PetrophysicsCalculator(data)
+        fork.results = calc.results.copy()
+        fork.calculate_hcpv(
+            phie=pay["phie"], sw=pay["sw_base_pay"], depth=data["DEPTH"],
+            net_res_flag=calc.results.get("NET_RES_FLAG"),
+            net_pay_flag=calc.results["NET_PAY_BASE_FLAG"])
+        base_dhcpv = fork.results["dHCPV_NET_PAY"]
 
     # ---- Summary ------------------------------------------------------------
     emit("Finalizing results...", 95)
@@ -1762,7 +2000,8 @@ def run_pipeline(
     summary["param_sources"] = param_sources
     summary["zones"] = (
         _zone_rows(calc.results, labels, data, (pay["vsh"], pay["phie"], pay["sw"]),
-                   _sample_dz(data), param_sources)
+                   _sample_dz(data), param_sources,
+                   None if base_dhcpv is None else (pay["sw_base_pay"], base_dhcpv))
         if labels is not None else []
     )
     if summary["zones"]:
@@ -1790,6 +2029,8 @@ def run_pipeline(
         summary["lrlc"] = lrlc_summary(
             lrlc_run, calc.results, rt_measured, pay["vsh"], pay["phie"], labels,
             _sample_dz(data), p, summary, param_sources, warnings)
+        _lrlc_l2_summary(summary, lrlc_run, calc.results, data, labels, pay, p, curve_mapping,
+                         param_sources, base_dhcpv, warnings)
     elif p.get("lrlc"):
         summary["lrlc"] = {"version": 1, "skipped": "no RT"}
 

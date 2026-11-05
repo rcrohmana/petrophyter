@@ -608,6 +608,8 @@ class InteractiveLogPlot(QWidget):
                 width = 1.5
                 if opts.get("dotted"):
                     style, width = Qt.PenStyle.DotLine, 1.0
+                if opts.get("thin"):
+                    width = 1.0
                 pen = pg.mkPen(color, width=width, style=style)
                 if dashed:
                     self._dashed.add(curve_name)
@@ -624,6 +626,12 @@ class InteractiveLogPlot(QWidget):
             self._plot_rock_type(data, depth)
         if has_resid:
             self._plot_shf_residual(data, depth)
+        for name, unit in ts.READOUT_ONLY_COLUMNS.items():
+            if name in data.columns:
+                # Readout only: not drawn
+                self.curves_data[name] = (depth, data[name].values)
+                self.curve_units[name] = unit
+                self.curve_labels[name] = name
         if "HAFWL" in data.columns:
             # Readout only: height above the free water level is not drawn
             self.curves_data["HAFWL"] = (depth, data["HAFWL"].values)
@@ -682,6 +690,11 @@ class InteractiveLogPlot(QWidget):
         # Track 0: GR (bottom axis, API) and Vsh (top axis, v/v)
         config[0] = [self._spec_curve("gr_vsh", n) for n in ts.present_curves("gr_vsh", cols)]
 
+        # Laminar-shale volume: dotted on the Vsh axis
+        for entry in config[0]:
+            if entry[0] == "VLAM":
+                entry[4]["dotted"] = True
+
         # Track 1: Porosity, reversed 0.5-0 v/v
         config[1] = [
             self._spec_curve("porosity", n) for n in ts.porosity_plot_curves(cols)
@@ -724,6 +737,10 @@ class InteractiveLogPlot(QWidget):
         if "SW_PAY" in cols:
             track2.append(("SW_PAY", _current_curve_color("SW_PAY"), False, (0.0, 1.0),
                            dict(shf_opts, label="Sw SHF (pay)", dotted=True)))
+        # Baseline Sw (without the Rt corrections): thin dashed, not an Sw method
+        if "SW_BASE" in cols:
+            track2.append(("SW_BASE", _current_curve_color("SW_BASE"), False, (0.0, 1.0),
+                           dict(shf_opts, label="Sw base", thin=True)))
         config[2] = track2
 
         # Track 3: Resistivity (bottom axis, log) and permeability (top axis, log)
@@ -732,7 +749,7 @@ class InteractiveLogPlot(QWidget):
             for n in ts.present_curves("resistivity", cols)
         ]
         for entry in track3:
-            if entry[0] == "RT_CUT":
+            if entry[0] in ("RT_CUT", "RT_PYR"):
                 entry[4]["dashed"] = True
         perm_label = ts.TRACK_SPECS["permeability"].axis_label
         for c in ts.present_curves("permeability", cols):

@@ -6,6 +6,8 @@ yields nothing, so exports of runs without LRLC are unchanged.
 
 from typing import Any, Dict, List, Optional
 
+from modules.lrlc.config import LRLC_PARAM_DEFAULTS
+
 # Fixed descriptions (ASCII, no colon; derived curves are marked MODELLED)
 _FIXED = {
     "RT_CUT": "MODELLED RT AT TARGET SW (primary model)",
@@ -13,6 +15,19 @@ _FIXED = {
     "WATER_FREE_FLAG": "FLAG SW AT OR BELOW SWIRR PLUS TOL IN NET RES",
     "LRLC_FLAG": "FLAG LRLC SCREENING CANDIDATE",
     "LRLC_SCORE": "COUNT OF SCREENING CRITERIA MET",
+    "VLAM": "MODELLED LAMINAR SHALE VOLUME (THOMAS-STIEBER)",
+    "VDISP": "MODELLED DISPERSED SHALE VOLUME (THOMAS-STIEBER)",
+    "PHI_SAND": "MODELLED SAND POROSITY (THOMAS-STIEBER)",
+    "TS_CLASS": "THOMAS-STIEBER CLASS CODE 0 TO 5",
+    "QV_EST": "ESTIMATED QV FROM VSH AND CEC",
+    "SW_BASE": "SW FROM MEASURED RT, NO LRLC CORRECTION",
+    "NET_PAY_BASE_FLAG": "NET PAY FLAG FROM SW_BASE",
+}
+
+# Step columns whose description names the curve they were computed from.
+_STEP_TEXT = {
+    "RT_SAND": "MODELLED LAMINATED-SAND RT (HAGIWARA)",
+    "RT_PYR": "MODELLED PYRITE-CORRECTED RT",
 }
 
 OTHER_ZONE = "other"
@@ -73,9 +88,79 @@ def lrlc_curve_descriptions(ds: Any) -> Dict[str, str]:
     path = " | ".join(distinct) if distinct else "RT"
     out = {"RT_SW": f"MODELLED RT READ BY SW MODELS ({path})"}
     out.update(_FIXED)
+    out["VPYR"] = ("MODELLED PYRITE VOLUME FROM RHOB/PEF"
+                   if any(v.get("pyr_method") == "rhob_pef" for _, v in _levels(block))
+                   else "USER-SET PYRITE VOLUME")
     from modules.lrlc.chain import STEPS  # lazy: empty registry in this release
 
     for spec in STEPS.values():
         if spec.column and spec.description:
             out[spec.column] = str(spec.description)
+    sources: Dict[str, List[str]] = {}
+    for rec in block.get("chain") or []:
+        if isinstance(rec, dict) and rec.get("curve") in _STEP_TEXT:
+            origin = str(rec.get("from") or "RT")
+            if origin not in sources.setdefault(rec["curve"], []):
+                sources[rec["curve"]].append(origin)
+    for column, text in _STEP_TEXT.items():
+        out[column] = f"{text}, FROM {' OR '.join(sources.get(column) or ['RT'])}"
     return out
+
+
+def _levels(block: dict) -> List[tuple]:
+    """``(zone label or None, settings)``: the zone levels, or the default level alone."""
+    params = block.get("params") if isinstance(block.get("params"), dict) else {}
+    default = params.get("default") or {}
+    zones = params.get("zones") or {}
+    base = dict(LRLC_PARAM_DEFAULTS)
+    if not zones:
+        return [(None, {**base, **default})]
+    return [(zone, {**base, **default, **(values or {})}) for zone, values in zones.items()]
+
+
+def _num(value: Any) -> str:
+    try:
+        return f"{float(value):g}"
+    except (TypeError, ValueError):
+        return "none"
+
+
+def _scoped(label: Optional[str], text: str) -> str:
+    return f"{label} {text}" if label else text
+
+
+def lrlc_inputs_text(summary_lrlc: Optional[dict]) -> str:
+    """The "LRLC inputs" provenance value; ``""`` when no laminated-mineral feature was used.
+
+    Names the Thomas-Stieber end-points, the Qv estimate, the pyrite correction, the Sw
+    basis and the shoulder-bed guard, read from the run's summary block.
+    """
+    if not isinstance(summary_lrlc, dict):
+        return ""
+    parts: List[str] = []
+    ts = summary_lrlc.get("ts")
+    if isinstance(ts, dict) and ts.get("zones"):
+        items = []
+        for row in ts["zones"]:
+            zone = str(row.get("zone"))
+            items.append(_scoped(
+                None if zone == "WELL" else zone,
+                f"phi_max {_num(row.get('phi_max'))} phi_sh {_num(row.get('phi_sh'))}"))
+        parts.append("Thomas-Stieber " + ", ".join(items))
+    levels = _levels(summary_lrlc)
+    steps = {rec.get("step") for rec in summary_lrlc.get("chain") or [] if isinstance(rec, dict)}
+    qv = [(z, v) for z, v in levels if v.get("qv_source") == "estimate"]
+    if qv:
+        parts.append("Qv estimate " + ", ".join(
+            _scoped(z, f"cec_shale {_num(v.get('cec_shale'))}") for z, v in qv))
+    if "pyrite" in steps:
+        parts.append("Pyrite " + ", ".join(
+            _scoped(z, f"{v.get('pyr_method', 'manual')} f {_num(v.get('pyr_f'))} "
+                       f"Rpy {_num(v.get('pyr_rpy'))}") for z, v in levels))
+    if "laminated" in steps:
+        bases = {"bulk" if v.get("sw_basis") == "bulk" else "sand" for _, v in levels}
+        parts.append("Sw basis " + "/".join(sorted(bases)))
+    guard = summary_lrlc.get("guard")
+    if parts and isinstance(guard, dict):
+        parts.append("guard " + ("on" if guard.get("enabled") else "off"))
+    return "; ".join(parts)

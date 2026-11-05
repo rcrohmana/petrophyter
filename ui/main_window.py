@@ -368,6 +368,8 @@ class MainWindow(QMainWindow):
         # LRLC Workbench: settings writes re-check staleness; it never runs the analysis itself.
         self.lrlc_tab.run_all_requested.connect(self._on_run_all)
         self.lrlc_tab.stale_requested.connect(lambda keys: self._recompute_stale(keys or None))
+        self.lrlc_tab.guard_toggled.connect(lambda _on: self._sync_lrlc_guard_action())
+        self.lrlc_tab.navigate_requested.connect(self._on_goto_target)
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -631,6 +633,13 @@ class MainWindow(QMainWindow):
             lambda: self.show_lrlc("screening"))
         act("rt_cutoff_overlay", "Rt Cutoff Overlay…", "scissors", None,
             lambda: self.show_lrlc("screening", "rt_cutoff"))
+        act("rt_laminated", "Laminated Sand Rt (Hagiwara)…", "layers", None,
+            lambda: self.show_lrlc("remediation", "laminated"))
+        act("rt_pyrite", "Pyrite Correction…", "hexagon", None,
+            lambda: self.show_lrlc("remediation", "pyrite"))
+        act("lrlc_guard", "Shoulder-bed Guard (laminated zones)", None, None,
+            self._on_lrlc_guard_toggled, checkable=True)
+        self.actions_["lrlc_guard"].setChecked(True)
         act("shf_shortcut", "Saturation-Height (Rt-independent Sw)…", "droplets", None,
             lambda: self.tab_widget.setCurrentWidget(self.shf_tab))
         for key, title, _menu, icon in PAGES:
@@ -697,6 +706,14 @@ class MainWindow(QMainWindow):
         saturation_tools.menuAction().setIcon(get_icon("droplets"))
         saturation_tools.addAction(self.actions_["rt_cutoff_overlay"])
         saturation_tools.addAction(self.actions_["shf_shortcut"])
+        rt_corrections = specialized.addMenu("Rt Corrections")
+        self._action_icons["rt_corrections_menu"] = "waves-horizontal"
+        self.actions_["rt_corrections_menu"] = rt_corrections.menuAction()
+        rt_corrections.menuAction().setIcon(get_icon("waves-horizontal"))
+        rt_corrections.addAction(self.actions_["rt_laminated"])
+        rt_corrections.addAction(self.actions_["rt_pyrite"])
+        specialized.addSeparator()
+        specialized.addAction(self.actions_["lrlc_guard"])
         for key, _title, menu, _icon in PAGES:
             if key == "rock":
                 menus[menu].addSeparator()  # Basic | Advanced split (spec §2.2)
@@ -1411,6 +1428,7 @@ class MainWindow(QMainWindow):
 
     def _reset_ui(self):
         """Fresh-state UI: no well is active."""
+        self._sync_lrlc_guard_action()
         self.banner.clear()
         self.update_qc_chip(None)
         self.stale_label.setVisible(False)
@@ -2103,6 +2121,23 @@ class MainWindow(QMainWindow):
             if field and focus is not None:
                 focus(field)
 
+    def _on_lrlc_guard_toggled(self, checked=False):
+        """Store the shoulder-bed guard state and re-check which wells are out of date."""
+        from services.lrlc_service import LrlcService
+
+        if LrlcService.set_guard_enabled(self.model, bool(checked)):
+            self._recompute_stale()
+            self.lrlc_tab.update_display()
+
+    def _sync_lrlc_guard_action(self):
+        """Show the project's stored guard state on the menu action (no write)."""
+        guard = self.model.project.lrlc.get("guard")
+        on = guard.get("enabled", True) if isinstance(guard, dict) else True
+        action = self.actions_["lrlc_guard"]
+        action.blockSignals(True)
+        action.setChecked(bool(on))
+        action.blockSignals(False)
+
     def show_lrlc(self, panel="screening", section=None, zone=None):
         """Select the LRLC Workbench tab on a panel (and section / zone)."""
         self.tab_widget.setCurrentWidget(self.lrlc_tab)
@@ -2120,7 +2155,7 @@ class MainWindow(QMainWindow):
         if key.startswith("edit_zone:"):
             self._edit_zone(key.split(":", 1)[1])
         elif key.startswith("lrlc_zone:"):
-            self.show_lrlc("screening", zone=key.split(":", 1)[1])
+            self.show_lrlc("diagnosis", zone=key.split(":", 1)[1])
         elif key in self.actions_ and self.actions_[key].isEnabled():
             # QAction.trigger() ignores isEnabled(), so honour the busy state here.
             self.actions_[key].trigger()
@@ -2643,6 +2678,7 @@ class MainWindow(QMainWindow):
         self.batch_runner.cancel()
         self._discard_uncertainty()
         self.model.reset()
+        self._sync_lrlc_guard_action()
         self._refresh_uncertainty_page()
         self.model.session_path = None
         self.model.mark_clean()
@@ -2654,6 +2690,7 @@ class MainWindow(QMainWindow):
     @_restoring_guard
     def _update_ui_from_model(self):
         """Restore persisted controls independently after loading a session."""
+        self._sync_lrlc_guard_action()
 
         def restore_analysis_mode():
             per_formation = self.model.analysis_mode == "Per-Formation"

@@ -15,7 +15,7 @@ from tests.test_session_v2 import three_wells, _save, _restore  # noqa: F401
 
 
 def test_version_constant():
-    assert SessionService.SESSION_VERSION == "2.5"
+    assert SessionService.SESSION_VERSION == "2.6"
 
 
 def test_not_in_use_stays_old_version(three_wells, tmp_path):  # noqa: F811
@@ -113,7 +113,7 @@ def test_restore_drops_unknown_and_invalid(three_wells, tmp_path):  # noqa: F811
 
 
 @pytest.mark.parametrize("version,notice", [
-    ("2.4", False), ("2.5", False), ("2.6", True), ("2.9", True), ("1.9", False)])
+    ("2.4", False), ("2.5", False), ("2.6", False), ("2.7", True), ("2.9", True), ("1.9", False)])
 def test_minor_notice(tmp_path, version, notice):
     path = tmp_path / "v.json"
     path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
