@@ -36,6 +36,8 @@ from modules.lrlc.methods import METHOD_TEXT
 from modules.param_scopes import normalize_zone
 from services.lrlc_service import LrlcService as svc
 from themes.helpers import set_status
+from ..widgets.lrlc_buckles import BucklesPanel
+from ..widgets.lrlc_pickett import PickettPanel
 from ..widgets.method_box import MethodReferenceBox
 from .rock_typing_tab import fit_table_height
 
@@ -142,6 +144,11 @@ class LrlcTab(QWidget):
         self._scope = "project_default"
         self._batch_running = False
         self._setup_ui()
+        self.pickett_panel = PickettPanel()
+        self.buckles_panel = BucklesPanel()
+        self.set_diagnosis_pages(self.pickett_panel, self.buckles_panel)
+        self.pickett_panel.stale_requested.connect(self.stale_requested.emit)
+        self.zone_changed.connect(lambda _z: self._render_diagnosis())
         self.update_display()
         for signal in (model.analysis_complete, model.project.well_updated,
                        model.project.active_well_changed):
@@ -598,9 +605,18 @@ class LrlcTab(QWidget):
                 self._render_curves()
                 self._render_results()
                 self._render_remediation()
+                self._render_diagnosis()
         finally:
             self._updating = was
         self._render_guidance()
+
+    def _render_diagnosis(self):
+        """Point the Pickett and Buckles panels at the active well and the selected zone."""
+        if not self._enabled():
+            return
+        ds, zone = self._ds(), self.selected_zone()
+        self.pickett_panel.set_context(self.model, ds, zone)
+        self.buckles_panel.set_context(self.model, ds, zone)
 
     def _fill_zone_combo(self, combo, first, zones, keep):
         combo.clear()
@@ -872,6 +888,8 @@ class LrlcTab(QWidget):
     # ------------------------------------------------------------ lifecycle
     def refresh_theme(self):
         self._render_guidance()
+        self.pickett_panel.refresh_theme()
+        self.buckles_panel.refresh_theme()
 
     def reset_ui(self):
         """Reset for New Project: back to the placeholder with empty selections."""
