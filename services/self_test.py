@@ -129,7 +129,7 @@ def step_shf() -> str:
 
 
 def step_lrlc() -> str:
-    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT matches its closed form, BibTeX renders and the Rt chain runs."""
+    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT, the laminated-sand Rt and the estimated Qv match their closed forms, BibTeX renders and the Rt chain runs."""
     import numpy as np
     import pandas as pd
 
@@ -188,7 +188,20 @@ def step_lrlc() -> str:
         raise RuntimeError("the identity Rt chain changed the resistivity")
     if not out.write_rt_sw or "RT_ID" not in out.columns:
         raise RuntimeError("the Rt chain did not write its columns")
-    return f"Pickett m = {fit.m:.3f}, RT_CUT = {cut[0]:.3f} ohm.m, chain ok"
+
+    # Laminated sand: Rt 5 ohm.m with 30 percent laminar shale of 2 ohm.m gives 14 ohm.m sand
+    # (parallel conductance); an estimated Qv of 25 meq/100 g clay at Vsh 0.15, PHIT 0.20 is 0.3975.
+    from modules.lrlc.laminated import hagiwara_rt
+    from modules.lrlc.qv import estimate_qv
+
+    sand, valid, _counts = hagiwara_rt(np.array([5.0]), 0.3, 2.0, 0.3, 0.8, 0.8, 0.95)
+    if not valid[0] or abs(sand[0] - 14.0) > 1e-9:
+        raise RuntimeError(f"laminated-sand Rt {sand} does not match the closed form 14.0")
+    qv_est, _qv_counts = estimate_qv(np.array([0.15]), np.array([0.20]), 25.0, 2.65, 0.03, 3.0)
+    if abs(qv_est[0] - 0.3975) > 1e-9:
+        raise RuntimeError(f"estimated Qv {qv_est} does not match the closed form 0.3975")
+    return (f"Pickett m = {fit.m:.3f}, RT_CUT = {cut[0]:.3f} ohm.m, laminated Rt = {sand[0]:.1f} "
+            f"ohm.m, Qv = {qv_est[0]:.4f} meq/mL, chain ok")
 
 
 def step_pipeline() -> str:

@@ -457,7 +457,8 @@ def ts_block(stats: Dict[Any, dict], ts_notes: dict, has_labels: bool) -> dict:
         rows.append({
             "zone": key if has_labels or key != UNZONED else WELL_ZONE,
             "phi_max": note.get("phi_max"), "phi_sh": note.get("phi_sh"),
-            "n": st["n"], "class_counts": st["class_counts"],
+            "n": st["n"],
+            "class_counts": {str(c): v for c, v in st["class_counts"].items()},
             "lam_share": st["lam_share"], "mean_vlam": st["mean_vlam"],
             "clamped": dict(note.get("clamped") or {}),
         })

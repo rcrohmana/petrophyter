@@ -203,6 +203,14 @@ ZONE_COLUMNS = [
     "Avg Sw", "HCPV", "a", "m", "n", "Rw", "Rsh", "Vsh cutoff", "Phi cutoff",
     "Sw cutoff", "Param sources",
 ]
+# Zone-sheet columns added only when the run produced them: pay before the Rt
+# corrections (summary zone key) and the LRLC diagnosis of the zone.
+ZONE_LRLC_COLUMNS = {
+    "Net pay (before)": "net_pay_base",
+    "Avg Sw (before)": "avg_sw_pay_base",
+    "HCPV (before)": "hcpv_net_pay_base",
+}
+ZONE_DIAGNOSIS_COLUMNS = ["LRLC probable cause", "LRLC level"]
 STATUS_LABELS = {
     "run_ok": "Run", "stale": "Out of date", "error": "Error",
     "loaded": "Not run", "empty": "Empty",
@@ -401,9 +409,12 @@ def provenance_block(ds, depth_range=None) -> dict:
     }
     summary = getattr(ds, "summary", None)
     if isinstance(summary, dict) and isinstance(summary.get("lrlc"), dict):
-        from modules.lrlc.provenance import rt_corrections_text
+        from modules.lrlc.provenance import lrlc_inputs_text, rt_corrections_text
 
         block["Rt corrections"] = rt_corrections_text(summary["lrlc"])
+        inputs = lrlc_inputs_text(summary["lrlc"])
+        if inputs:
+            block["LRLC inputs"] = inputs
     return block
 
 
@@ -429,6 +440,8 @@ def _las_other_lines(block: dict) -> list:
     ]
     if "Rt corrections" in block:
         lines.append(f"Rt corrections {block['Rt corrections']}")
+    if "LRLC inputs" in block:
+        lines.append(f"LRLC inputs {block['LRLC inputs']}")
     return lines
 
 
@@ -542,6 +555,9 @@ def zones_frame(wells) -> pd.DataFrame:
     rows = []
     for ds in wells:
         summary = ds.summary if ds.summary and ds.calculated and ds.status != "error" else None
+        diagnosis = {
+            str(d.get("zone")): d for d in
+            ((summary or {}).get("lrlc") or {}).get("zones") or [] if isinstance(d, dict)}
         for zone in (summary or {}).get("zones") or []:
             params = zone.get("params") or {}
 
@@ -565,7 +581,20 @@ def zones_frame(wells) -> pd.DataFrame:
                 "Vsh cutoff": value("vsh_cutoff"), "Phi cutoff": value("phi_cutoff"),
                 "Sw cutoff": value("sw_cutoff"), "Param sources": sources,
             })
-    return pd.DataFrame(rows, columns=ZONE_COLUMNS)
+            for column, key in ZONE_LRLC_COLUMNS.items():
+                if key in zone:
+                    rows[-1][column] = _num(zone.get(key))
+            diag = diagnosis.get(str(zone.get("zone")))
+            if diag is not None:
+                cause = next((c for c in diag.get("causes") or []
+                              if c.get("key") == diag.get("primary")), None)
+                rows[-1]["LRLC probable cause"] = cause["label"] if cause else "none"
+                rows[-1]["LRLC level"] = (cause["level"] if cause
+                                          else str(diag.get("status", "")))
+    columns = list(ZONE_COLUMNS)
+    columns += [c for c in ZONE_LRLC_COLUMNS if any(c in r for r in rows)]
+    columns += [c for c in ZONE_DIAGNOSIS_COLUMNS if any(c in r for r in rows)]
+    return pd.DataFrame(rows, columns=columns)
 
 
 # ---------------------------------------------------------------------------
