@@ -11,6 +11,7 @@ import pytest
 from PyQt6.QtWidgets import QFileDialog, QLabel, QMessageBox, QWidget
 
 from models.project import WellDataset
+from modules.lrlc import chain
 from services.lrlc_service import LrlcService
 from tests.golden.cases import FULL_MAPPING, fixture_frame
 from tests.lrlc_teststeps import register_test_steps  # noqa: F401
@@ -119,7 +120,8 @@ def test_diagnosis_sub_tabs_and_swap(window, qtbot):
 
 
 # ---- remediation ---------------------------------------------------------------------------
-def test_remediation_note_with_empty_registry(window, qtbot):
+def test_remediation_note_with_empty_registry(window, qtbot, monkeypatch):
+    monkeypatch.setattr(chain, "STEPS", {})
     _enable(window, qtbot)
     tab = window.lrlc_tab
     assert tab.remediation_note.text() == (
@@ -130,7 +132,10 @@ def test_remediation_note_with_empty_registry(window, qtbot):
     assert tab.rt_source_table.item(0, 1).text() == "RT"
 
 
-def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_test_steps):
+def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_test_steps,
+                                                       monkeypatch):
+    monkeypatch.delitem(chain.STEPS, "laminated")
+    monkeypatch.delitem(chain.STEPS, "pyrite")
     _well(window)
     _enable(window, qtbot)
     tab = window.lrlc_tab

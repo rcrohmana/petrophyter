@@ -335,6 +335,9 @@ def _stats(sw, sws, mask) -> dict:
             "r2": float(1.0 - (d ** 2).sum() / sst) if n > 1 and sst > 0 else None}
 
 
+compare_stats = _stats      # public name: Sw misfit statistics against SW_SHF
+
+
 def shf_summary(shf, results, counts, fluids, tvd_label, perm_column, phie_column,
                 pay_requested, pay_refused, all_only, contacts_used=None) -> dict:
     """``summary["shf"]`` from the finished results of a well and the merged stage outputs.

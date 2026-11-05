@@ -75,6 +75,13 @@ def assert_unchanged(off, on):
     (r0, s0), (r1, s1) = off, on
     pd.testing.assert_frame_equal(r1[list(r0.columns)], r0, check_exact=True)
     skip = {"issues", "warnings", "lrlc"}
+    s1 = dict(s1)
+    # An active correction adds the before columns and may add a diagnosis note.
+    s1["zones"] = [{k: v for k, v in z.items() if not k.endswith("_base")}
+                   for z in s1.get("zones", [])]
+    if "zone_diagnostics" in s1:
+        s1["zone_diagnostics"] = {z: {k: v for k, v in d.items() if k != "lrlc_note"}
+                                  for z, d in s1["zone_diagnostics"].items()}
     assert_same({k: v for k, v in s1.items() if k not in skip},
                 {k: v for k, v in s0.items() if k not in skip})
 

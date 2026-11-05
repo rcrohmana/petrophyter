@@ -155,7 +155,7 @@ def curve_spec(track: str, name: str) -> Optional[CurveSpec]:
 # Residual track (Sw - Sw SHF): title and fixed x range
 SHF_RESID_TITLE = "Sw − Sw SHF"
 SHF_RESID_RANGE = (-0.5, 0.5)
-NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY")
+NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY", "SW_BASE")
 SHF_NON_METHOD_COLUMNS = NON_METHOD_SW_COLUMNS  # old name, kept as an alias
 
 

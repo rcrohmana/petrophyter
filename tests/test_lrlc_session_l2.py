@@ -182,8 +182,6 @@ def test_stale_hash_follows_l2_ladder_keys_while_lrlc_is_on(three_wells):  # noq
     assert h1 != h0
 
 
-@pytest.mark.skip(reason="needs models/app_model._lrlc_params to carry the settings blocks "
-                         "(guard, qv, thomas_stieber, pyrite); another worker is extending it")
 def test_stale_hash_follows_l2_blocks_while_lrlc_is_on(three_wells):  # noqa: F811
     model, keys = three_wells
     LrlcService.set_enabled(model, True)

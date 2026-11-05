@@ -347,6 +347,7 @@ def apply_rt_chain(rt, ctx_arrays, zone_keys, lrlc, force_rt_sw, guard=None,
                 "zone": label, "segment": segment, "step": spec.name, "curve": spec.column,
                 "from": prev_col, "params": step_params(prm, spec), "refs": refs,
                 "n_valid": n_valid, "n_invalid": n_bad, "fallback": n_fb,
+                "counts": dict(res.counts or {}),
             })
             prev_col = spec.column
             cur = out

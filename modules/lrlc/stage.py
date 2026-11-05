@@ -13,12 +13,17 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from modules.lrlc import l2
 from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, LRLC_PARAM_DEFAULTS
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
 from modules.param_scopes import UNZONED, normalize_zone
 from modules.shf_stage import zone_series
+
+# The laminated and pyrite steps and the segment derives are available as soon as the
+# pipeline side of LRLC is imported.
+l2.register_all()
 
 # Roles whose non-positive readings are NaN in the LRLC context (counted once per role).
 POSITIVE_ROLES = ("RM", "RS", "RXO", "HIRES")
@@ -46,6 +51,12 @@ class LrlcRun:
     cut_eligible: int = 0
     cut_no_root: int = 0
     cut_rows: List[dict] = field(default_factory=list)
+    plan: l2.L2Plan = field(default_factory=l2.L2Plan)
+    ts_notes: Dict[Any, dict] = field(default_factory=dict)         # zone key -> end-points, clamps
+    guard_states: Dict[Any, dict] = field(default_factory=dict)
+    guard_decisions: Dict[Any, Any] = field(default_factory=dict)
+    rw_eff_parts: List[pd.Series] = field(default_factory=list)
+    shf_held: int = 0                                               # pay Sw held on SHF values
 
     def aux_array(self, role: str, index) -> Optional[np.ndarray]:
         series = self.aux.get(role)

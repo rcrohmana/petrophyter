@@ -1040,11 +1040,18 @@ class AppModel(QObject):
         for z in ladder_zones(project_params, well_params):
             if z not in zones:
                 zones.append(z)
+        if assigned.get("RT_SBC"):
+            curves["RT_SBC"] = assigned["RT_SBC"]
         return {
             "enabled": True,
             "screening": dict(lrlc.get("screening") or {}),
             "rt_cutoff": dict(lrlc.get("rt_cutoff") or {}),
             "movable": dict(lrlc.get("movable") or {}),
+            "thomas_stieber": dict(lrlc.get("thomas_stieber") or {}),
+            "pyrite": dict(lrlc.get("pyrite") or {}),
+            "qv": dict(lrlc.get("qv") or {}),
+            "guard": dict(lrlc.get("guard") or {}),
+            "diagnosis": dict(lrlc.get("diagnosis") or {}),
             "curves": curves,
             "resolved": {
                 "default": resolve_lrlc(project_params, well_params, None),
