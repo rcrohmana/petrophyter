@@ -442,6 +442,111 @@ References:
 - Amyx, J.W., Bass, D.M., Whiting, R.L. (1960), *Petroleum Reservoir Engineering: Physical Properties*, McGraw-Hill.
 - Purcell, W.R. (1949), *Capillary pressures: their measurement using mercury and the calculation of permeability therefrom*, *Transactions of the AIME* 186.
 
+## LRLC screening and diagnostics *(v1.11.0)*
+
+Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and no Rt correction step in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
+
+### Screening criteria and flag
+
+Six criteria are tested at each sample, on the measured `RT` (never `RT_SW`):
+
+| # | Criterion | Test | Evaluable when |
+|---|---|---|---|
+| 1 | Low Rt | `RT < screen_rt_max` | RT is valid |
+| 2 | Hydrocarbon indicator | `GAS_FLAG = 1` (if used and present) or `RT / RS ≥ 1.0` (if used and the RS curve is mapped) | the gas flag exists, or RS and RT are valid |
+| 3 | Porosity | `PHIE > phi_cutoff` | PHIE is valid |
+| 4 | Shale volume | `VSH < vsh_cutoff` | VSH is valid |
+| 5 | Contrast to shale | `RT / Rsh ≤ screen_contrast_max` | RT and the effective Rsh (temperature-corrected) are valid and positive |
+| 6 | Sw high | `Sw ≥ sw_cutoff` | Sw is valid |
+
+`phi_cutoff`, `vsh_cutoff` and `sw_cutoff` are the pay cutoffs of the zone (there are no separate LRLC cutoffs). `screen_rt_max` (default 5 ohm.m), `screen_contrast_max` (default 2) and `screen_min_score` (default 5) are **design defaults, not published constants; calibrate them per field**. The 1.0 limit on `RT / RS` is fixed: with fresh mud, deep resistivity at or above shallow indicates hydrocarbons and below it indicates water, but the indicator is weak with saline mud. Boyd et al. (1995) *(to verify)*, Worthington (2000) *(to verify)* and Zemanek (1989) *(to verify)* are the qualitative basis for the criteria, not for the numbers.
+
+```
+LRLC_SCORE = number of criteria met (0 to 6; a criterion that cannot be evaluated counts as not met)
+LRLC_FLAG  = 1 when criteria 1, 3 and 6 are evaluable and met,
+             and LRLC_SCORE ≥ min(screen_min_score, number of evaluable criteria)
+```
+
+Low resistivity in porous rock that the conventional Sw calls wet is the definition; criteria 2, 4 and 5 raise the confidence. The cap by the number of evaluable criteria lets the flag work when, for example, there is no hydrocarbon indicator. A sample with no valid Rt has score 0 and flag 0. A flagged sample is a candidate, not a pay zone: it needs a test, core or a recalibrated Sw model.
+
+### Resistivity cutoff (`RT_CUT`)
+
+For each sample, `RT_CUT` is the resistivity at which the **selected primary Sw model** returns the target Sw (`cut_sw_target`, by default the zone's Sw cutoff). A sample is pay by the Sw criterion when its resistivity is above `RT_CUT`. It is an overlay: it changes no Sw, flag or pay. With the Sw model's inputs of the sample (`PHIE`, `PHIT`, `Vsh`, effective Rw and Rsh, `a`, `m`, `n`, and for Waxman-Smits and Dual-Water their own terms), the closed forms are:
+
+```
+Archie        Rt_cut = a × Rw / (PHIE^m × Sw_t^n)
+Simandoux     1 / Rt_cut = PHIE^m × Sw_t² / (a × Rw) + Vsh × Sw_t / Rsh      (n = 2)
+Indonesian    1 / sqrt(Rt_cut) = [ Vsh^(1 − Vsh/2) / sqrt(Rsh) + PHIE^(m/2) / sqrt(a × Rw) ] × Sw_t^(n/2)
+```
+
+(`Sw_t` is the target. The Simandoux form is the model's own equation solved for Rt; for other values of n the model is solved numerically for Sw, and the bisection below applies.) Waxman-Smits and Dual-Water have no closed inverse, so the cutoff for every model is found the same way: a vectorised bisection of `log10 Rt` between 0.01 and 100 000 ohm.m (30 halvings, a width of 7 / 2³⁰ decades), using the app's own Sw function with the same per-sample inputs as the run, on a scratch calculator that leaves the run's results untouched. Sw is non-increasing in Rt for all five models, so the bisection is valid. The result reproduces the target within 10⁻⁶ when fed back through the model.
+
+A sample has no cutoff (`RT_CUT` is empty) when its porosity is missing or at most 0.001, an input is missing, or the model cannot reach the target inside the bracket (very high porosity, for example, needs less than 0.01 ohm.m). Those without a root are counted and listed as notes; samples that are not eligible are not counted as failures. Liu et al. (2023) derived a field cutoff of about 4.2 ohm.m for one formation with a Simandoux-type model; that is a field result and not a default here.
+
+**Zone cutoff.** For each zone one cutoff is also given, from the thickness-weighted means of PHIE, PHIT, Vsh, Rw, Rsh and the other inputs over the pay samples, or the net reservoir samples when there is no pay, or the gross sand samples when there is no net reservoir; with none of them, the zone has no value. The table in the Workbench names the basis.
+
+References: Liu et al. (2023); Archie (1942) *(to verify)*; Simandoux (1963) *(to verify)*; Poupon and Leveaux (1971) *(to verify)*; Waxman and Smits (1968) *(to verify)*; Clavier, Coates and Dumanoir (1984) *(to verify)*.
+
+### Bulk volume water and the water-free flag
+
+```
+BVW = PHIE × SW                                   (v/v)
+WATER_FREE_FLAG = 1  when NET_RES_FLAG = 1 and SW ≤ SWIRR + movable_tol
+```
+
+`SW` is the effective primary Sw, so for Waxman-Smits and Dual-Water `BVW` is on the same basis as HCPV. `SWIRR` is the column chosen in the Workbench (`SWIRR` by default, the result of the Swirr method in use; or `SWIRR_BUCKLES`, `SWIRR_CLEANZONE`, `SWIRR_STAT`). A chosen column that is missing in a segment falls back to `SWIRR`, with a warning. Hierarchical `SWIRR` is capped at `SW`, so `SW − SWIRR` is the movable water saturation. A sample with a high Sw whose Sw is close to Swirr is at irreducible water (typically fine-grained or micro-porous rock) and can produce water-free; the flag is a screen, not a test result. It is not evaluated, and counted, for net-reservoir samples without a Swirr; `movable_tol` defaults to 0.05.
+
+In the **Buckles** plot, points of one rock type at irreducible water lie on a hyperbola of constant bulk volume water, `Sw = k / PHIE` with `k = BVW`. References: Buckles (1965) *(to verify)*; Morris and Biggs (1967) *(to verify)*; Crain's Petrophysical Handbook *(to verify)*.
+
+### Pickett plot and the wet-point fit
+
+Archie's equation in logarithms is a straight line:
+
+```
+log10 Rt = −m × log10 PHI + log10(a × Rw) − n × log10 Sw
+```
+
+so water-bearing samples (`Sw = 1`) fall on a line of slope `−m` and intercept `log10(a × Rw)` at `PHI = 1`, and lines of constant Sw are parallel to it, shifted by `−n × log10 Sw`. The plot uses the measured `RT` (not `RT_SW`) against `PHIE` (or `PHIT`); with formation temperature on, `RT` is divided by the Arps factor first, so the fitted Rw is at the Rw reference temperature, like the Rw of the Parameters window.
+
+**Wet points.** The automatic proposal takes samples with `VSH ≤ vsh_max` (default 0.25) and `PHI ≥ phi_min` (0.05), cuts `log10 PHI` into `n_bins` (8) equal bins, skips bins with fewer than 5 candidates, and in each bin keeps the candidates at or below the `wet_quantile` (0.10) of `log10 Rt`. Boxes added or removed by hand are applied afterwards.
+
+**Fit.** A Huber robust fit by iteratively reweighted least squares on `y = log10 Rt`, `x = log10 PHI` over the wet points: start from ordinary least squares; scale `s = max(1.4826 × MAD(r), 10⁻⁶)` of the residuals `r`; weights `w = min(1, 1.345 × s / |r|)`; repeat the weighted fit until the change is below 10⁻⁸ or after 50 iterations. The slope `b` gives `m = −b`; the intercept `c` gives `a×Rw = 10^c`, and `Rw = a×Rw / a` with the `a` of the zone (never fitted). Standard errors are `s_w² (XᵀWX)⁻¹` with `s_w² = Σ w r² / (N − 2)`. In **Rw only** mode `m` is kept at its current value and the intercept is the Huber location of `y + m × x`.
+
+| Status | Meaning |
+|---|---|
+| `ok` | fitted, and m and Rw are inside their allowed ranges (m 1.3–3.0, Rw 0.005–10 ohm.m) |
+| `too_few_points` | fewer than `min_points` (10) wet points |
+| `narrow_porosity_range` | the wet points span less than 0.2 decades of porosity (not tested in Rw only mode) |
+| `m_outside_range`, `rw_outside_range` | fitted but outside the range: shown, and not applicable |
+| `no_data` | no usable sample |
+
+Limits: the wet points must really be water-bearing (a hydrocarbon-bearing envelope overstates Rw); clay conduction biases m low; Rw is assumed constant over the interval, after the temperature normalisation. References: Pickett (1966) *(to verify)*; Archie (1942) *(to verify)*.
+
+### The Rt array path and the correction chain
+
+Every Sw model (Archie, Indonesian, Simandoux, Waxman-Smits, Dual-Water) can read its resistivity from an array that holds one value per sample, instead of the `RT` column, in the same way Rw, Rsh and the Waxman-Smits `B` can already be per sample. The array is used only when a correction step has run in that part of the well. With none, the models are called exactly as in 1.10.0.
+
+A correction step is a function that takes the resistivity of the previous step (the measured `RT` for the first) and returns a corrected one for a zone. Steps run in a fixed order, independent of how they are listed, once per zone, and the result of the last step is what the Sw models read:
+
+```
+RT (measured, never modified) → step 1 → step 2 → …  ⇒  RT_SW (what every Sw model reads)
+```
+
+`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. No step ships in this version, so `RT_SW` does not appear and Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
+
+### Results added
+
+| Column | Unit | Meaning | Added when |
+|---|---|---|---|
+| `LRLC_SCORE` | count | screening criteria met, 0 to 6 | LRLC on and RT mapped |
+| `LRLC_FLAG` | 0/1 | screening candidate | same |
+| `BVW` | v/v | bulk volume water `PHIE × SW` | same |
+| `WATER_FREE_FLAG` | 0/1 | net reservoir with `SW ≤ SWIRR + movable_tol` | same |
+| `RT_CUT` | ohm.m | resistivity at the target Sw for the primary model | the Rt cutoff is on |
+| `RT_SW` | ohm.m | resistivity the Sw models read | a correction step is active (none in this version) |
+
+The summary gains an **LRLC** block with the resolved settings per zone, the candidate table, the cutoff table, the movable-water table and the correction steps that ran.
+
 ## Uncertainty (Monte Carlo) *(v1.9.0)*
 
 The deterministic HCPV and net pay depend on parameters that are never known exactly. The Monte Carlo analysis

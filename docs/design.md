@@ -350,6 +350,29 @@ The toolbar `WellSelector` combo (`ui/widgets/well_selector.py`) mirrors the pro
 wells and is shown when there are two or more; it emits `well_selected(str)` only on a
 user choice.
 
+### 4.16 Menu bar and the LRLC Workbench
+
+- Menu bar order, left to right: File, Session, Analysis, Specialized, Parameters,
+  Corrections, View, Help (`test_menu_order`). Specialized is created as `Speciali&zed`
+  because `P` belongs to Parameters.
+- Specialized holds LRLC Workbench... (`activity`, `Ctrl+L`), a separator and the Saturation
+  Tools submenu (`droplets`, built like the Theme submenu) with Rt Cutoff Overlay...
+  (`scissors`) and Saturation-Height (Rt-independent Sw)... (`droplets`). It lists only
+  entries that exist; there are no disabled placeholders. Help gains Scientific
+  References... (`book-open`), which opens a read-only dialog with Export BibTeX....
+- Every iconed menu action is in `_action_icons`, so icons follow the theme.
+- The LRLC Workbench tab (`ui/tabs/lrlc_tab.py`) follows the Saturation-Height tab: a stacked
+  root with a placeholder page (Enable LRLC analysis) and a content page of four panels
+  (Screening, Diagnosis, Remediation, Validation), scrolling pages, a controls column of
+  320 to 380 px, `SectionLabel` headings and a status line. It writes only through
+  `LrlcService` and never runs the analysis (it emits `stale_requested`). Each tool carries
+  a Method & Reference box (`ui/widgets/method_box.py`): equation in the monospace token
+  font, assumptions, limits and short citations, with a "(to verify)" mark on unconfirmed
+  ones. The Data Browser zone node has the context action Analyze as LRLC candidate
+  (`activity`); the browser stays read-only.
+- Plot colours for the new curves (`RT_SW`, `RT_CUT`, `BVW`, `LRLC_FLAG`,
+  `WATER_FREE_FLAG`) are plot tokens with dark overrides, like the other curve colours.
+
 ## 5. Notification policy
 
 | Event | Surface |
@@ -384,12 +407,14 @@ change. `app_icon.svg` / `.ico` are the application logo and are outside this se
 | `layers` | Formation tops |
 | `database` | Core data |
 | `file-text` | LAS file nodes |
-| `activity` | Curve nodes |
+| `activity` | Curve nodes; Specialized > LRLC Workbench; Data Browser "Analyze as LRLC candidate" |
+| `scissors` | Specialized > Saturation Tools > Rt Cutoff Overlay |
+| `droplets` | Specialized > Saturation Tools (submenu and Saturation-Height entry) |
 | `sigma` | Results node, computed curves |
 | `sun`, `moon` | Theme menu items |
 | `panel-left` | View > Data Browser |
 | `sliders-horizontal` | Parameters toolbar button; matplotlib "tune" |
-| `book-open` | User Guide |
+| `book-open` | User Guide; Help > Scientific References |
 | `info` | About, info banner |
 | `circle-check` | Success banner |
 | `triangle-alert` | Warning banner |

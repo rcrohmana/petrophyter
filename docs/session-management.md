@@ -2,14 +2,14 @@
 
 # Session Management
 
-Session management was introduced in v1.1 for project continuity. Since format 2.0 a session stores the whole multi-well project; format 2.1 adds the record of how each well's tops and core data were imported, format 2.2 *(v1.8.0)* adds the rock typing definitions and settings, format 2.3 *(v1.9.0)* adds the Monte Carlo uncertainty setup, and format 2.4 *(v1.10.0)* adds saturation-height data.
+Session management was introduced in v1.1 for project continuity. Since format 2.0 a session stores the whole multi-well project; format 2.1 adds the record of how each well's tops and core data were imported, format 2.2 *(v1.8.0)* adds the rock typing definitions and settings, format 2.3 *(v1.9.0)* adds the Monte Carlo uncertainty setup, format 2.4 *(v1.10.0)* adds saturation-height data, and format 2.5 *(v1.11.0)* adds the LRLC settings.
 
 - **Session → Save Session…** (`Ctrl+S`): write the project to the current session file (the one last saved or loaded); the first time, it asks for a file.
 - **Session → Save Session As…** (`Ctrl+Shift+S`): choose a new file, which becomes the current one *(v1.7.1)*.
 - **Session → Load Session…:** Re-open the saved wells and restore every parameter scope.
 - **Version Compatibility:** Track the session format version.
 
-A format 2.1, 2.2, 2.3 or 2.4 session stores:
+A format 2.1, 2.2, 2.3, 2.4 or 2.5 session stores:
 
 - `global_params`: the project parameters (all the values listed below);
 - `zone_params`: project · zone parameters, keyed by zone name;
@@ -46,7 +46,18 @@ The fits are saved with the session and the raw Pc points are not: the Pc file i
 
 **Opening a 2.4 session in an older version.** Version 1.9.x and older open the file as a 2.x session and ignore the saturation-height keys without a message: the rest of the project loads, and a session saved again from that version no longer contains the saturation-height data (the settings, fits, contacts and Pc file paths). Sessions of format 2.3 and older have no `shf` key and load with saturation-height modelling off.
 
-**Sessions from a newer Petrophyter.** Petrophyter refuses a session whose format major version is higher than the one it writes (3.0 or 9.0, when this version writes 2.x). It shows the message **This session was saved by a newer Petrophyter (format X.Y). Update Petrophyter to open it.** with the format of the file in place of X.Y, and changes nothing in the open project. Without this guard, such a file would be read as an old parameter-only session. Sessions of format 1.x, 2.0, 2.1, 2.2, 2.3 and 2.4 all load.
+**Format 2.5: LRLC** *(v1.11.0)*. A session is written as format **2.5** only when the LRLC analysis is used: **Enable LRLC analysis** is on, or any LRLC setting, threshold or auxiliary curve role differs from a fresh project (a project that was enabled and then disabled is still saved as 2.5, so the settings are kept). Changing only a plot option of the Pickett or Buckles tabs does not count. Otherwise the session is written as 2.4 or lower as before. A 2.5 session adds:
+
+- the top-level key `lrlc`: whether LRLC is enabled, the screening indicators, whether the Rt cutoff is on, the Swirr column of the movable-water flag, the thresholds and Rt correction settings at the project default and project zone levels, and the options of the Pickett and Buckles plots;
+- in each well, only when set: `lrlc` (the thresholds and Rt correction settings at the well default and well zone levels) and `lrlc_curves` (the auxiliary curve roles you assigned, including **Not used**; roles left on automatic are found again from the curve names on every run and are not stored).
+
+Results, the candidate tables and the manual wet-point boxes of the Pickett tab are not saved. The values written by **Apply m** or **Apply m and Rw** are ordinary well and well-zone parameters and are saved with them. The LRLC settings are part of the parameter hash, so a loaded session is not marked out of date by the round trip.
+
+**Opening a 2.5 session in an older version.** Version 1.10.x and older open the file as a 2.x session and ignore the LRLC keys without a message: the rest of the project loads, Sw and pay are computed exactly as they would be here with LRLC off or with no Rt correction step (the same values), the LRLC columns are absent, and a session saved again from that version no longer contains the LRLC settings.
+
+**Sessions from a newer Petrophyter.** Petrophyter refuses a session whose format major version is higher than the one it writes (3.0 or 9.0, when this version writes 2.x). It shows the message **This session was saved by a newer Petrophyter (format X.Y). Update Petrophyter to open it.** with the format of the file in place of X.Y, and changes nothing in the open project. Without this guard, such a file would be read as an old parameter-only session. Sessions of format 1.x, 2.0, 2.1, 2.2, 2.3, 2.4 and 2.5 all load.
+
+**A newer minor format** *(v1.11.0)*. A session of the same major version but a higher minor (for example 2.9 opened by a version that writes 2.5) still loads. Settings this version does not know are dropped, and the notification banner of the restore adds the note **This session was saved by a newer Petrophyter (format X.Y); settings this version does not know were not loaded.** Saving the project again writes the settings this version knows.
 
 **Sessions from 1.7.1 and older** *(v1.7.2)*. Version 1.7.2 corrects several calculations (porosity,
 Dual-Water and Waxman-Smits Sw, auto Rw, pay thickness and averages; see the
@@ -60,7 +71,7 @@ the other parameters; version 1.7.1 and older ignore them.
 
 **Merged wells** *(v1.7.1)*. Each merged well keeps its own merge step and gap limit, so a project with wells merged at different steps restores each one as it was merged. Sessions saved by v1.7.0 and older stored the last merge step of the project for every merged well; such wells are merged again under the v1.7.1 rules (no edge extrapolation, resistivity interpolated in log10) with that step, and a banner note names the step and the row count. If a merged well's row count looks wrong, import it again with **Merge LAS Files**.
 
-Loading a 2.0, 2.1, 2.2, 2.3 or 2.4 session replaces the loaded wells: the LAS, tops, core and Pc files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
+Loading a 2.0, 2.1, 2.2, 2.3, 2.4 or 2.5 session replaces the loaded wells: the LAS, tops, core and Pc files are read again from their paths. Wells whose files are missing are skipped, and all notes appear in one banner. The wells are rebuilt in the background: the window stays responsive and the status bar shows the progress, for example `Restoring 3 of 10: BKS-03`. While it runs, opening files, Save Session, Merge LAS Files, Run Analysis and Run All Wells are unavailable ("Unavailable while a session is loading"). **New Project** or another **Load Session…** cancels the restore and leaves no partial project. If the restore fails, or every well in the file is skipped, the project that was open stays as it was and a warning banner says why *(v1.7.1)*.
 
 **Source fingerprints** *(v1.7.2)*. When a file is loaded, Petrophyter computes its SHA-256 hash and size from the bytes it reads. The session stores them next to the paths: `source_fingerprints` for each well (one entry per LAS file, so a merged well has one per file), and `tops_sha256` and `core_sha256` for the tops and core files. Saving never reads the files again. The `sources` list is unchanged, so an older version still opens the session.
 
@@ -85,7 +96,7 @@ Project parameters include:
 - Temperature settings: correction on or off, surface temperature, gradient and its Auto mode, Rw reference temperature, temperature datum depth, Rsh reference temperature, and Waxman-Smits B from temperature. Older sessions load with the datum at 0, no Rsh reference temperature, and B from temperature off, which reproduces their results.
 - Merge and core settings
 
-The current session format version is **2.4** (written only when the project holds saturation-height content; otherwise **2.3** when the uncertainty setup is configured, **2.2** when rock typing is used, or **2.1**). Format 2.0 and 2.1 files still load, with rock typing off, with name matching for tops and core data. Format 1.x files still load: they hold parameters only, which are applied to the project (and, when a well is loaded, to its Rw, Rsh, and GR baseline as well values), and the loaded wells stay in place. Version 1.4 added `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
+The current session format version is **2.5** (written only when the LRLC analysis is used; otherwise **2.4** when the project holds saturation-height content, **2.3** when the uncertainty setup is configured, **2.2** when rock typing is used, or **2.1**). Format 2.0 and 2.1 files still load, with rock typing off, with name matching for tops and core data. Format 1.x files still load: they hold parameters only, which are applied to the project (and, when a well is loaded, to its Rw, Rsh, and GR baseline as well values), and the loaded wells stay in place. Version 1.4 added `rw_mode` and `rsh_mode` (`"auto"` or `"manual"`). Older files without them load as follows: `rw_mode` is `"auto"` when the saved Rw is 0.01 or lower and `"manual"` otherwise, and `rsh_mode` is `"auto"`.
 
 **Lithology presets.** A named lithology preset at a well, zone, or well · zone scope now supplies a, m, and n at that scope. When an older session holds explicit a, m, and n entries equal to the preset's values at the same scope, loading removes those entries and keeps the preset, so later changes of the preset flow down. A note in the load banner reports it. Entries that differ from the preset stay explicit, and the project-level values are not touched.
 

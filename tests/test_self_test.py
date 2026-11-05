@@ -15,6 +15,7 @@ def test_numeric_steps_pass_in_process():
     assert self_test.step_lapack()
     assert self_test.step_uncertainty()
     assert self_test.step_shf()
+    assert "chain ok" in self_test.step_lrlc()
     assert self_test.step_pipeline()
 
 
@@ -63,7 +64,7 @@ def test_main_self_test_runs_end_to_end(tmp_path):
     )
     out = proc.stdout + proc.stderr
     assert proc.returncode == 0, out
-    for step in ("imports", "lapack", "pipeline", "main window"):
+    for step in ("imports", "lapack", "saturation-height", "lrlc", "pipeline", "main window"):
         assert f"[self-test] {step}: ok" in proc.stdout, out
     assert log.read_text(encoding="utf-8").strip().splitlines()[-1] == self_test.OK_LINE
 

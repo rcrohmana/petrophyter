@@ -128,6 +128,69 @@ def step_shf() -> str:
     return "Leverett J fit ok"
 
 
+def step_lrlc() -> str:
+    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT matches its closed form, BibTeX renders and the Rt chain runs."""
+    import numpy as np
+    import pandas as pd
+
+    import modules.lrlc.chain as chain
+    import modules.lrlc.movable  # noqa: F401
+    import modules.lrlc.screening  # noqa: F401
+    from modules.lrlc.pickett import fit_pickett
+    from modules.lrlc.rt_cutoff import SwInputs, rt_cutoff
+    from modules.param_scopes import UNZONED
+    from modules.references import to_bibtex_all
+
+    # Pickett: synthetic Archie wet line (m = 2, a = 1, Rw = 0.05) with small deterministic noise
+    # and a few resistive outliers that the Huber fit must shrug off.
+    rng = np.random.default_rng(7)
+    phi = np.geomspace(0.08, 0.35, 40)
+    rt = 0.05 / phi ** 2.0 * 10.0 ** rng.normal(0.0, 0.01, phi.size)
+    rt[[3, 17, 29]] *= 3.0
+    fit = fit_pickett(phi, rt, np.ones(phi.size, dtype=bool), a=1.0, m_current=2.0)
+    if fit.status != "ok" or abs(fit.m - 2.0) > 0.04:
+        raise RuntimeError(f"Pickett fit failed: {fit.status}, m = {fit.m:.3f}")
+
+    # Rt cutoff: the Archie closed form a Rw / (PHIE^m Sw^n) at Sw = 0.5 is 5 ohm.m for PHIE = 0.2.
+    index = pd.RangeIndex(3)
+    inputs = SwInputs(phie=0.2, phit=0.2, vsh=0.1, rw_eff=0.05, rsh_eff=2.0, rwb_eff=0.05,
+                      ws_b=1.0, a=1.0, m=2.0, n=2.0, ws_qv=0.0, dw_swb=0.0)
+    cut, _n_eligible, n_no_root = rt_cutoff("Archie", inputs, 0.5, index)
+    if n_no_root or not np.allclose(cut, 5.0, rtol=1e-6):
+        raise RuntimeError(f"RT_CUT {cut} does not match the Archie closed form 5.0")
+
+    if not to_bibtex_all().strip():
+        raise RuntimeError("the reference registry rendered no BibTeX")
+
+    # Rt chain with a local identity step (a StepSpec that is never registered globally).
+    def identity(rt_in, _ctx, _params):
+        return chain.StepResult(rt_out=rt_in.copy(), valid_mask=np.isfinite(rt_in))
+
+    spec = chain.StepSpec(name="selftest_identity", order=1, column="RT_ID", fn=identity,
+                          label="Identity", description="SELF TEST IDENTITY", refs=())
+    rt_in = np.array([2.0, 5.0, 20.0, np.nan])
+    arrays = {"depth": np.arange(4.0), "vsh": np.full(4, 0.2), "phit": np.full(4, 0.2),
+              "phie": np.full(4, 0.2), "rsh": np.full(4, 2.0), "rw": np.full(4, 0.05)}
+    lrlc = {"resolved": {"default": {"rt_steps": ["selftest_identity"], "rt_fallback": "nan"},
+                         "zones": {}}}
+    # apply_rt_chain resolves step names through the registry, so the spec is present only
+    # for this call and the registry is restored afterwards.
+    saved = dict(chain.STEPS)
+    chain.STEPS["selftest_identity"] = spec
+    try:
+        out = chain.apply_rt_chain(rt_in, arrays, np.array([UNZONED] * 4, dtype=object), lrlc, False)
+    finally:
+        chain.STEPS.clear()
+        chain.STEPS.update(saved)
+    if "selftest_identity" in chain.STEPS:
+        raise RuntimeError("the local step leaked into the registry")
+    if not np.array_equal(out.rt_sw, rt_in, equal_nan=True):
+        raise RuntimeError("the identity Rt chain changed the resistivity")
+    if not out.write_rt_sw or "RT_ID" not in out.columns:
+        raise RuntimeError("the Rt chain did not write its columns")
+    return f"Pickett m = {fit.m:.3f}, RT_CUT = {cut[0]:.3f} ohm.m, chain ok"
+
+
 def step_pipeline() -> str:
     from modules.pipeline import run_pipeline
 
@@ -180,6 +243,7 @@ STEPS: List[Tuple[str, Callable[[], str]]] = [
     ("lapack", step_lapack),
     ("uncertainty", step_uncertainty),
     ("saturation-height", step_shf),
+    ("lrlc", step_lrlc),
     ("pipeline", step_pipeline),
     ("main window", step_window),
 ]

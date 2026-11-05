@@ -15,6 +15,21 @@ Checks at load *(v1.7.1)*:
 
 **Merging.** The merged depth grid covers the union of the files. Values are interpolated only between measured samples that are at most the gap limit apart, never past the first or last sample of a file, and a grid depth that falls on a measured sample keeps the measured value. Resistivity is interpolated in log10. A TVD or MD curve in the files is merged like any other curve *(v1.7.1)*.
 
+## Auxiliary curve roles *(v1.11.0)*
+
+The [LRLC Workbench](user-guide.md#lrlc-workbench) can read up to six curves besides the five mapped on the **Curve Mapping** page. They are optional, are not mapped there, and are chosen per well in the Workbench's **Curves** group. A role with no choice is found from the curve names, the first match in each list winning; **Not used** switches a role off for the well.
+
+| Role | Curve | Recognised mnemonics |
+|---|---|---|
+| `RM` | Medium resistivity | `RM`, `RILM`, `RMED`, `RIM` |
+| `RS` | Shallow resistivity (used for the deep / shallow separation of the screening) | `RS`, `LLS`, `ILS`, `RESS`, `RXOZ`, `RSHALLOW` |
+| `RXO` | Flushed-zone (micro) resistivity *(v1.11.0)* | `RXO`, `MSFL`, `MCFL`, `RXO8` |
+| `PEF` | Photoelectric factor | `PEF`, `PE`, `PEFZ` |
+| `DTS` | Shear slowness *(v1.11.0)* | `DTS`, `DTSM`, `DTSH`, `DT2`, `DTSD` |
+| `HIRES` | High-resolution resistivity | none: chosen by hand |
+
+`RXOZ` stays under `RS`, as before. In this version only `RS` is used (by the screening); the other roles are saved with the well for later tools. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+
 ## Reading tops and core tables
 
 Formation tops and core data are read by the same table reader, so the rules in this section apply to both.

@@ -38,6 +38,16 @@ Present in both displays only when the results hold `SW_SHF` (saturation-height 
 
 The **Saturation-Height** tab has its own plots: J against Sw with the fitted curves, Sw against height, and the profile around the free water level. See the [User Guide](user-guide.md#saturation-height).
 
+## Resistivity Track and Shaded Flags *(v1.11.0)*
+
+Present only when the results hold LRLC columns (LRLC analysis on, and a run made); without them both displays are as before.
+
+- **Resistivity track (Classic).** The Classic display gains a **Resistivity** track right after the Sw track, so the Permeability, Pay Flags, HCPV, Rock Type and residual tracks each move one place to the right. It draws the measured Rt, `RT_SW` (solid) and `RT_CUT` (dashed) on a log axis from 0.2 to 2000 ohm·m. It appears when `RT_SW`, `RT_CUT` or `LRLC_FLAG` is in the results; `RT_SW` itself exists only when an Rt correction step is active (none ships in this version), so in practice the track shows Rt and `RT_CUT`.
+- **Resistivity track (Interactive).** The existing resistivity track lists `RT_SW` and `RT_CUT` with the other resistivity curves when the columns exist; `RT_CUT` is dashed. The cursor readout includes them.
+- **Shaded flags.** The Pay Flags track shades the depth intervals flagged by `LRLC_FLAG` (**LRLC**) and `WATER_FREE_FLAG` (**Water-free**) with a translucent fill, in the legend of the track. In the Interactive display the readout gives the flag values at the cursor depth.
+
+The **LRLC Workbench** tab has its own plots (Pickett and Buckles). See the [User Guide](user-guide.md#lrlc-workbench).
+
 ## Uncertainty Tab *(v1.9.0)*
 
 The **Uncertainty** tab (after Summary) draws the latest Monte Carlo result for the row selected in its table (the field, a well, or a zone) and the selected metric.
@@ -91,3 +101,21 @@ The Excel workbook gets an **SHF** sheet, in the all-wells workbook for every we
 - **SHF Sw for pay**: *used*, *not used* or *refused (log-derived fit)*.
 
 A well named *SHF* gets a numbered sheet name such as *SHF (2)*. The *Rock Types*, *Uncertainty* and *Tornado* sheets and the Summary and Zones columns are unchanged. With SHF Sw used for pay, the Uncertainty sheet header lists "SHF Sw where used for pay" among the parameters that are not varied.
+
+### LRLC in the exports *(v1.11.0)*
+
+Added only when the LRLC analysis is on and has run; without it, the files are as before.
+
+- **Columns.** The results table of CSV, Excel and LAS gains `LRLC_SCORE`, `LRLC_FLAG`, `BVW` and `WATER_FREE_FLAG`; `RT_CUT` when the Rt cutoff is on; and `RT_SW` when an Rt correction step is active (none ships in this version). The flags are integers (0 or 1). There is no separate LRLC sheet in this version.
+- **LAS curves.** The LRLC curves are written with a plain-text description and a unit instead of the column name. Derived curves are marked `MODELLED`; the text has no colon and is ASCII.
+
+| Curve | Unit | Description |
+|---|---|---|
+| `RT_SW` | OHMM | `MODELLED RT READ BY SW MODELS (<path>)`, the path being the correction chain, for example `RT_SAND <- RT` |
+| `RT_CUT` | OHMM | `MODELLED RT AT TARGET SW (primary model)` |
+| `BVW` | V/V | `MODELLED BULK VOLUME WATER PHIE*SW` |
+| `WATER_FREE_FLAG` | UNITLESS | `FLAG SW AT OR BELOW SWIRR PLUS TOL IN NET RES` |
+| `LRLC_FLAG` | UNITLESS | `FLAG LRLC SCREENING CANDIDATE` |
+| `LRLC_SCORE` | UNITLESS | `COUNT OF SCREENING CRITERIA MET` |
+
+- **Provenance.** The block gains a line **Rt corrections** after **Depth interval**, saying which resistivity the Sw models read in each zone, for example `RT_SW = RT_SAND <- RT (zones: UPPER); RT_SW = RT (zones: other)`, or `none (RT_SW not written)` when no correction step ran. It appears on the Excel **Provenance** sheet, in the CSV `.provenance.txt` file and as the line `Rt corrections` in the LAS `~OTHER INFORMATION` section. Runs without LRLC have no such line.
