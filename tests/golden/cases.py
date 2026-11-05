@@ -50,6 +50,31 @@ def mixed_depth_step_data():
     })
 
 
+def lrlc_screening_data():
+    """A shaly log with a shallow resistivity curve (``RS``): thin low-resistivity sands.
+
+    Sand and shale alternate (shale fraction 0 to 1 by a smooth wave); sands read only 3 to 8
+    ohm.m, the shallow curve reads below the deep one in the upper half (hydrocarbon-like) and about equal to it
+    in the lower half, so the screening criteria split both ways. Deterministic.
+    """
+    rng = np.random.default_rng(20261021)
+    depth = np.linspace(1000.0, 1100.0, 200)
+    shale = 0.5 + 0.5 * np.sin(depth / 5.0 + 0.6)
+    noise = rng.random(len(depth))
+    rt = 1.4 + 6.5 * (1.0 - shale) * (0.55 + 0.45 * rng.random(len(depth)))
+    rs_ratio = np.where(depth < 1040.0, 0.7 + 0.2 * rng.random(len(depth)),
+                        0.8 + 0.5 * rng.random(len(depth)))
+    return pd.DataFrame({
+        "DEPTH": depth,
+        "GR": 40.0 + 80.0 * shale + 4.0 * noise,
+        "RHOB": 2.28 + 0.24 * shale + 0.02 * rng.random(len(depth)),
+        "NPHI": 0.15 + 0.22 * shale + 0.015 * rng.random(len(depth)),
+        "DT": 78.0 + 38.0 * shale + 3.0 * rng.random(len(depth)),
+        "RT": rt,
+        "RS": rt * rs_ratio,
+    })
+
+
 # Literal rock-type definitions (as Project.rock_types stores them) for the
 # rock_typing_enabled case: three FZI types, pooled over the project.
 ROCK_TYPE_SET = {
@@ -145,6 +170,25 @@ CASES = {
                              "fits": {"All": _power_fit(BASIS_CORE)}},
                 "contacts": SHF_CONTACTS},
     },
+    # LRLC on without a correction step: screening, BVW, water-free flag and the Rt cutoff.
+    # A zone-scoped screening threshold for LOWER; primary Simandoux.
+    "lrlc_screening": {
+        "builder": lrlc_screening_data,
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 40.0,
+            "gr_max_manual": 120.0,
+            "sw_methods": ["Archie", "Simandoux"],
+            "sw_primary_method": "Simandoux",
+            "rw": 0.06,
+            "rw_mode": "manual",
+            "rsh": 2.0,
+            "rsh_mode": "manual",
+        },
+        "tops": True,
+        "lrlc": {"settings": {"enabled": True, "rt_cutoff": {"enabled": True}},
+                 "params": {"default": {}, "zones": {"LOWER": {"screen_rt_max": 8.0}}}},
+    },
     # A log-derived fit with use for pay requested: refused, pay stays on resistivity Sw.
     "shf_log_derived": {
         "data": "sample_log_data",
@@ -185,6 +229,15 @@ def build_case(name):
             "set": defs["sets"]["*"], "zone_sets": {}, "settings": dict(defs["settings"]),
             "basis": "pooled", "core_max_dist": 2.0}
         params["rock_core"] = None
+    if spec.get("lrlc"):
+        # What AppModel.params_for_well hands the pipeline when LRLC is on.
+        from models.app_model import AppModel
+
+        model = AppModel()
+        model.las_data = data
+        model.formation_tops = tops
+        _set_lrlc(model, spec["lrlc"])
+        params["lrlc"] = model._lrlc_params(model._well)
     if spec.get("shf"):
         # What AppModel.params_for_well hands the pipeline when saturation height is on.
         from models.app_model import AppModel
@@ -196,10 +249,18 @@ def build_case(name):
     return data, mapping, params, tops
 
 
+def _set_lrlc(model, lrlc):
+    """Put a case's LRLC settings and ladder values on ``Project.lrlc``."""
+    from modules.lrlc.config import merge_lrlc
+
+    model.project.lrlc = merge_lrlc({**copy.deepcopy(lrlc["settings"]),
+                                     "params": copy.deepcopy(lrlc["params"])})
+
+
 def apply_to_model(model, name, params):
     """Set a case's params on an AppModel; definitions go to ``Project.rock_types``."""
     for key, value in params.items():
-        if key in ("rock_types", "rock_core", "shf"):
+        if key in ("rock_types", "rock_core", "shf", "lrlc"):
             continue
         assert hasattr(model, key), key
         setattr(model, key, value)
@@ -208,3 +269,5 @@ def apply_to_model(model, name, params):
     if CASES[name].get("shf"):
         model.project.shf.update(copy.deepcopy(CASES[name]["shf"]["settings"]))
         model._well.shf_contacts = copy.deepcopy(CASES[name]["shf"]["contacts"])
+    if CASES[name].get("lrlc"):
+        _set_lrlc(model, CASES[name]["lrlc"])

@@ -20,6 +20,10 @@ import pandas as pd
 
 from modules.issue_codes import ISSUE_CODES, IssueLog  # noqa: F401  (re-exported)
 from modules.las_utils import mask_nonpositive
+from modules.lrlc.chain import apply_rt_chain, chain_active_anywhere
+from modules.lrlc.rt_cutoff import SwInputs
+from modules.lrlc.stage import (
+    LrlcRun, apply_lrlc_stage, build_aux, lrlc_summary, zone_keys_for)
 from modules.param_scopes import (
     GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
     ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
@@ -860,6 +864,9 @@ class SegmentBasis:
     sw_fallback: Optional[str] = None
     # Per-sample Sw held fixed in Monte Carlo (SHF Sw used for pay); NaN = use resistivity Sw.
     sw_hold: Optional[np.ndarray] = None
+    # LRLC Rt chain: the frozen RT_SW (None when no step ran) and its replay record.
+    rt_sw: Optional[np.ndarray] = None
+    chain_replay: Optional[object] = None
 
 
 def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay,
@@ -872,11 +879,13 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
         vsh=np.array(pay["vsh"], dtype=float), phie=np.array(pay["phie"], dtype=float),
         phit=np.array(pay["phit"], dtype=float), sw_fallback=pay["sw_fallback"],
         sw_hold=None if sw_hold is None else np.array(sw_hold, dtype=float),
+        rt_sw=None if pay.get("rt_sw") is None else np.array(pay["rt_sw"], dtype=float),
+        chain_replay=pay.get("chain_replay"),
     ))
 
 
 def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=None,
-                 capture=None, positions=None, tvd=None):
+                 capture=None, positions=None, tvd=None, lrlc_run=None):
     """Compute one planned zone segment; returns ``(calc, pay, sources_table)``.
 
     ``well`` holds the well-level resolved numbers (GR baseline, Rw, Rsh) and
@@ -958,7 +967,7 @@ def _zone_curves(seg, curve_mapping, p, plan_entry, well, tctx, warnings, zone=N
     sp["rw"], sp["rsh"] = values["rw"], values["rsh"]
     sp["rw_mode"] = sp["rsh_mode"] = "manual"
     pay = _saturation_to_pay(calc, seg, curve_mapping, sp, vsh, values["rw"], values["rsh"],
-                             tctx, warnings, rsh_auto, zone, tvd)
+                             tctx, warnings, rsh_auto, zone, tvd, lrlc_run=lrlc_run)
     if capture is not None:
         _capture_basis(capture, zone, positions, sp, values["rw"], values["rsh"],
                        rsh_auto, tctx, rw_quality, pay, pay.get("sw_hold"))
@@ -1115,6 +1124,88 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     return sw, phie, phit, sw_fallback
 
 
+def _lrlc_setup(p, labels, data, curve_mapping, has_rt, warnings):
+    """The run-wide LRLC state, or None (LRLC off, or on without an RT curve).
+
+    With LRLC on and no RT the info issue ``LRLC_NO_RT`` is added and None returned.
+    """
+    lrlc = p.get("lrlc")
+    if not lrlc:
+        return None
+    if not has_rt:
+        warnings.add("LRLC_NO_RT", "LRLC is on but no RT curve is mapped; no LRLC output.")
+        return None
+    aux, aux_names = build_aux(lrlc, data, warnings)
+    keys = pd.Series(zone_keys_for(data.index, labels), index=data.index, dtype=object)
+    return LrlcRun(
+        lrlc=lrlc, aux=aux, aux_names=aux_names,
+        force_rt_sw=chain_active_anywhere(lrlc, keys.to_numpy(dtype=object)),
+        well_labels=keys, well_derived={}, has_labels=labels is not None)
+
+
+def _lrlc_segment_name(zone, lrlc_run) -> str:
+    if isinstance(zone, str):
+        return "zone"
+    return "rest" if lrlc_run.planned else "well"
+
+
+def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone, lrlc_run):
+    """Run the Rt chain on one segment; writes ``RT_SW`` and the step columns to ``calc.results``.
+
+    ``eff`` is the segment's :class:`SwEffectiveInputs`. Returns the ``ChainOutput``.
+    """
+    index = data.index
+    n = len(index)
+    rt_curve = curve_mapping.get("RT", "RT")
+    rt = pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float)
+    keys = zone_keys_for(index, zone)
+
+    def results_array(name):
+        series = calc.results.get(name)
+        return np.full(n, np.nan) if series is None else series.to_numpy(dtype=float)
+
+    rhob_curve = curve_mapping.get("RHOB", "RHOB")
+    depth = (data["DEPTH"].to_numpy(dtype=float) if "DEPTH" in data.columns
+             else np.arange(n, dtype=float))
+    derived = {k: np.asarray(v.reindex(index) if hasattr(v, "reindex") else v)
+               for k, v in lrlc_run.well_derived.items()}
+    ctx = {
+        "depth": depth, "rt_raw": rt, "vsh": np.asarray(vsh, dtype=float),
+        "phit": results_array("PHIT"), "phie": results_array("PHIE"),
+        "rsh": np.asarray(eff.rsh, dtype=float), "rw": np.asarray(eff.rw, dtype=float),
+        "temperature": None if tctx is None else tctx.temp.loc[index].to_numpy(dtype=float),
+        "rhob": (pd.to_numeric(data[rhob_curve], errors="coerce").to_numpy(dtype=float)
+                 if _has(rhob_curve, data) else None),
+        "derived": derived,
+    }
+    for role, key in (("PEF", "pef"), ("RM", "rm"), ("RS", "rs"), ("RXO", "rxo"),
+                      ("HIRES", "hires")):
+        ctx[key] = lrlc_run.aux_array(role, index)
+    out = apply_rt_chain(rt, ctx, keys, lrlc_run.lrlc, lrlc_run.force_rt_sw,
+                         segment=_lrlc_segment_name(zone, lrlc_run))
+    for code, text, issue_zone, severity in out.issues:
+        warnings.add(code, text, severity=severity, zone=issue_zone)
+    if out.write_rt_sw:
+        calc.results["RT_SW"] = out.rt_sw
+    for name, values in out.columns.items():
+        calc.results[name] = values
+    zone_depth = {}
+    for key in dict.fromkeys(keys):
+        zone_depth[None if key == UNZONED else key] = float(np.nanmin(depth[keys == key]))
+    for rec in out.records:
+        lrlc_run.records.append(rec)
+        lrlc_run.record_depths.append(zone_depth.get(rec["zone"], 0.0))
+    return out
+
+
+def _sw_model_cut(p, sw_fallback):
+    """Name of the Sw model that ended up as ``SW`` (None when none did)."""
+    if sw_fallback == SW_DEFAULTED:
+        return None
+    column = sw_fallback or SW_COLUMN_MAP.get(p["sw_primary_method"], "SW_SIMAN")
+    return SW_MODEL_NAMES.get(column)
+
+
 def _shf_all_only(p) -> bool:
     """True when one "All" saturation-height fit serves every sample.
 
@@ -1125,7 +1216,7 @@ def _shf_all_only(p) -> bool:
 
 
 def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                       rsh_auto=False, zone=None, tvd=None):
+                       rsh_auto=False, zone=None, tvd=None, lrlc_run=None):
     """Sw, Swirr, permeability and pay flags on ``calc``.
 
     ``rw`` is a number (at the reference temperature when the Arps correction is
@@ -1134,10 +1225,19 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     ``vsh``/``phie``/``sw``/``swirr`` series used and the net-pay summary of
     this calculator's samples. ``zone`` (a name, or a Series of zone labels) picks the
     rock-type set; it is only read when rock typing is on. ``tvd`` (TVD per sample of the
-    whole well, resolved once) is read only when saturation height is on.
+    whole well, resolved once) is read only when saturation height is on. ``lrlc_run`` (None
+    for every run without LRLC) switches on the Rt chain at the head and the LRLC stage at the
+    tail.
     """
+    rt_values, chain_out, eff = None, None, None
+    if lrlc_run is not None:
+        eff = _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data)
+        chain_out = _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings,
+                                    zone, lrlc_run)
+        rt_values = chain_out.rt_values
     sw_new, phie, phit, sw_fallback = _primary_sw(
-        calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto)
+        calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto,
+        rt_values=rt_values)
 
     swirr_method = p["swirr_method"]
     k_buckles = p["k_buckles"]
@@ -1182,9 +1282,18 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     pay = calc.calculate_net_pay(
         vsh, phie, sw_for_pay, p["vsh_cutoff"], p["phi_cutoff"], p["sw_cutoff"]
     )
+    if lrlc_run is not None:
+        sw_inputs = SwInputs(
+            phie=phie, phit=phit, vsh=vsh, rw_eff=eff.rw, rsh_eff=eff.rsh, rwb_eff=eff.rwb,
+            ws_b=eff.ws_b, a=p["a"], m=p["m"], n=p["n"], ws_qv=p["ws_qv"], dw_swb=p["dw_swb"])
+        apply_lrlc_stage(
+            calc, data, p, lrlc_run, rt_curve=curve_mapping.get("RT", "RT"),
+            zone_keys=zone_keys_for(data.index, zone), sw_inputs=sw_inputs,
+            sw_model=_sw_model_cut(p, sw_fallback), dz=_sample_dz(data), warnings=warnings)
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
             "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None,
-            "shf": shf_out, "sw_hold": sw_hold}
+            "shf": shf_out, "sw_hold": sw_hold, "rt_sw": rt_values,
+            "chain_replay": None if chain_out is None else chain_out.replay}
 
 
 def _sample_dz(data: pd.DataFrame):
@@ -1527,10 +1636,14 @@ def run_pipeline(
     solver_raw = {}
     flag_calcs = []     # calculators whose per-sample Sw / Swirr flags feed the diagnostics
 
+    lrlc_run = _lrlc_setup(p, labels, data, curve_mapping, has_rt, warnings)
+    if lrlc_run is not None:
+        lrlc_run.planned = bool(plan)
+
     if not plan:
         emit("Calculating Swirr...", 65)
         pay = _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                                 rsh_auto, labels, shf_tvd)
+                                 rsh_auto, labels, shf_tvd, lrlc_run=lrlc_run)
         shf_stages = [pay["shf"]]
         if capture is not None:
             _capture_basis(capture, None, np.arange(len(data)), dict(p), rw, rsh, rsh_auto, tctx,
@@ -1551,7 +1664,7 @@ def run_pipeline(
             emit(f"Calculating zone {zone}...", 55 + int(25 * i / len(zones)))
             seg_calc, seg_pay, table = _zone_curves(
                 data[labels == zone], curve_mapping, p, plan[zone], well, tctx, warnings, zone,
-                capture, np.flatnonzero((labels == zone).to_numpy()), shf_tvd,
+                capture, np.flatnonzero((labels == zone).to_numpy()), shf_tvd, lrlc_run,
             )
             parts.append(seg_calc.results)
             pays.append(seg_pay)
@@ -1569,7 +1682,8 @@ def run_pipeline(
             )
             _compute_porosity(rest_calc, rest_vsh, rest_data, curve_mapping, sp, warnings)
             rest_pay = _saturation_to_pay(rest_calc, rest_data, curve_mapping, sp, rest_vsh,
-                                          rw, rsh, tctx, warnings, rsh_auto, labels[rest], shf_tvd)
+                                          rw, rsh, tctx, warnings, rsh_auto, labels[rest], shf_tvd,
+                                          lrlc_run=lrlc_run)
             pays.append(rest_pay)
             if capture is not None:
                 _capture_basis(capture, None, np.flatnonzero(rest.to_numpy()), sp, rw, rsh,
@@ -1670,6 +1784,14 @@ def run_pipeline(
     if p.get("shf"):
         summary["shf"] = _shf_well_summary(
             p, curve_mapping, calc.results, shf_stages, shf_tvd_source, warnings)
+
+    if lrlc_run is not None:
+        rt_measured = pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float)
+        summary["lrlc"] = lrlc_summary(
+            lrlc_run, calc.results, rt_measured, pay["vsh"], pay["phie"], labels,
+            _sample_dz(data), p, summary, param_sources, warnings)
+    elif p.get("lrlc"):
+        summary["lrlc"] = {"version": 1, "skipped": "no RT"}
 
     vsh_cutoffs = {}
     for zone in (dict.fromkeys(labels.dropna()) if labels is not None else ()):

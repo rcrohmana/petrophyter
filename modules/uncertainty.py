@@ -23,9 +23,11 @@ from scipy import stats
 
 from modules.issue_codes import IssueLog
 from modules.las_utils import mask_nonpositive
+from modules.lrlc.chain import rerun_chain
 from modules.petrophysics import PetrophysicsCalculator, depth_increments, pay_summary
 from modules.pipeline import (
-    PARAM_DEFAULTS, PipelineError, _filter_formations, _primary_sw, run_pipeline,
+    PARAM_DEFAULTS, PipelineError, _filter_formations, _primary_sw, _sw_effective_inputs,
+    run_pipeline,
 )
 
 # Canonical parameter order: sampling columns follow this order, never the UI order.
@@ -496,6 +498,8 @@ class _Segment:
     sw_base: Optional[np.ndarray] = None
     rw_quality: Optional[str] = None     # auto-Rw quality of this segment, None for a fixed Rw
     sw_hold: Optional[np.ndarray] = None  # Sw held fixed per sample (NaN = resistivity Sw)
+    rt_sw: Optional[np.ndarray] = None    # frozen LRLC chain output (None: no step ran)
+    chain_replay: Any = None              # ChainReplay when a step that ran has varied parameters
 
 
 @dataclass
@@ -519,9 +523,11 @@ class FrozenWell:
     curve_mapping: Dict[str, str] = field(default_factory=dict, repr=False)
 
 
-def _primary_sw_values(seg: _Segment, frozen_mapping, sp, rw, rsh, warn) -> np.ndarray:
+def _primary_sw_values(seg: _Segment, frozen_mapping, sp, rw, rsh, warn,
+                       rt_values=None) -> np.ndarray:
     sw, _, _, _ = _primary_sw(seg.calc, seg.data, frozen_mapping, sp, seg.vsh_s, rw, rsh,
-                              seg.tctx, warn, seg.rsh_auto, only_primary=True)
+                              seg.tctx, warn, seg.rsh_auto, only_primary=True,
+                              rt_values=rt_values)
     return np.asarray(sw, dtype=float)
 
 
@@ -572,12 +578,15 @@ def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> 
             data=seg_data, vsh_s=pd.Series(b.vsh, index=seg_data.index),
             vsh=np.asarray(b.vsh, dtype=float), phie=np.asarray(b.phie, dtype=float), calc=calc,
             rw_quality=(str(b.rw_quality) if b.rw_quality else None),
-            sw_hold=(None if b.sw_hold is None else np.asarray(b.sw_hold, dtype=float)))
+            sw_hold=(None if b.sw_hold is None else np.asarray(b.sw_hold, dtype=float)),
+            rt_sw=(None if b.rt_sw is None else np.asarray(b.rt_sw, dtype=float)),
+            chain_replay=b.chain_replay)
         vsh_all[seg.positions] = seg.vsh
         phie_all[seg.positions] = seg.phie
         if seg.has_rt:
             sp = seg.params
-            seg.sw_base = _primary_sw_values(seg, curve_mapping, sp, seg.rw, seg.rsh, IssueLog())
+            seg.sw_base = _primary_sw_values(seg, curve_mapping, sp, seg.rw, seg.rsh, IssueLog(),
+                                             rt_values=seg.rt_sw)
         segments.append(seg)
 
     zones = [row["zone"] for row in summary.get("zones") or []]
@@ -650,7 +659,12 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
                     p2[nm] = apply(nm, sp[nm])
             rw = apply("rw", seg.rw) if "rw" in theta else seg.rw
             rsh = apply("rsh", seg.rsh) if "rsh" in theta else seg.rsh
-            sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn)
+            rt_values = seg.rt_sw
+            if seg.chain_replay is not None and ("rsh" in theta or "rw" in theta):
+                eff = _sw_effective_inputs(p2, rw, rsh, seg.rsh_auto, seg.tctx, seg.data)
+                rt_values = rerun_chain(seg.chain_replay, {"rsh": eff.rsh, "rw": eff.rw})
+            sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn,
+                                    rt_values=rt_values)
         if seg.sw_hold is not None:
             sw = np.where(np.isfinite(seg.sw_hold), seg.sw_hold, sw)
         pos = seg.positions
