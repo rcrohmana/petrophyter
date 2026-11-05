@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
 from modules.shf_config import merge_shf, shf_in_use
+from modules.lrlc.config import clean_curves, clean_well_lrlc, lrlc_in_use, merge_lrlc
 from modules.uncertainty import UncertaintyConfig, config_from_dict, config_to_dict
 from version import APP_VERSION, version_tuple
 
@@ -140,6 +141,14 @@ def _major(version) -> Optional[int]:
         return None
 
 
+def _minor(version) -> Optional[int]:
+    """The minor number of a session version string, or None when it has none."""
+    try:
+        return int(str(version).split(".")[1])
+    except (IndexError, TypeError, ValueError):
+        return None
+
+
 def _uncertainty_configured(project) -> bool:
     """True when an uncertainty distribution is enabled or the setup differs from a fresh one."""
     cfg = getattr(project, "uncertainty", None)
@@ -184,7 +193,7 @@ def _clean_contacts(raw) -> Dict:
 def session_version_for(project_or_model) -> str:
     """The highest version among the features the project uses.
 
-    "2.4" when it holds saturation-height content (Pc data, fits, contacts or SHF on); "2.3" when
+    "2.5" when LRLC is on or configured; "2.4" when it holds saturation-height content (Pc data, fits, contacts or SHF on); "2.3" when
     the uncertainty setup is configured (a distribution enabled, or any setting changed); "2.2"
     when rock typing is on or the project holds rock types; else "2.1".
 
@@ -194,7 +203,7 @@ def session_version_for(project_or_model) -> str:
     project = getattr(project_or_model, "project", project_or_model)
     rock = (bool(getattr(project_or_model, "rock_typing_enabled", False))
             or bool(getattr(project, "rock_types", None)))
-    ladder = ((shf_in_use(project), "2.4"), (_uncertainty_configured(project), "2.3"),
+    ladder = ((lrlc_in_use(project), "2.5"), (shf_in_use(project), "2.4"), (_uncertainty_configured(project), "2.3"),
               (rock, "2.2"))
     return max((v for on, v in ladder if on), key=version_tuple, default="2.1")
 
@@ -634,12 +643,13 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.4"
+    SESSION_VERSION = "2.5"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.last_error = ""    # why the last load_session returned None
+        self.last_notice = ""   # a successful load that dropped settings of a newer minor
     
     def save_session(self, model, file_path: str) -> bool:
         """
@@ -693,6 +703,7 @@ class SessionService(QObject):
             is then in ``last_error``)
         """
         self.last_error = ""
+        self.last_notice = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 session_data = json.load(f)
@@ -707,6 +718,14 @@ class SessionService(QObject):
                 self.last_error = message
                 self.error.emit(message)
                 return None
+
+            # A newer minor of the same major loads, but settings it knows are dropped.
+            minor, own_minor = _minor(version), _minor(self.SESSION_VERSION)
+            if (major is not None and major == own and minor is not None
+                    and own_minor is not None and minor > own_minor):
+                self.last_notice = (
+                    f"This session was saved by a newer Petrophyter (format {version}); "
+                    "settings this version does not know were not loaded.")
 
             # Check version compatibility while keeping older parameter-only
             # sessions loadable; unknown fields are simply ignored below.
@@ -762,6 +781,7 @@ class SessionService(QObject):
                         model.project.uncertainty = UncertaintyConfig()
                     model.project.uncertainty_result = None
                     model.project.shf = merge_shf(session_data.get("shf"))
+                    model.project.lrlc = merge_lrlc(session_data.get("lrlc"))
                 return True
 
             self._upgrade_legacy(session_data)
@@ -1121,6 +1141,8 @@ class SessionService(QObject):
             ds.overrides = copy.deepcopy(entry["overrides"] or {})
         ds.zone_overrides = copy.deepcopy(entry.get("zone_overrides") or {})
         ds.shf_contacts = _clean_contacts(entry.get("shf_contacts"))
+        ds.lrlc = clean_well_lrlc(entry.get("lrlc"))
+        ds.lrlc_curves = clean_curves(entry.get("lrlc_curves"))
 
         if entry.get("tops_path"):
             path = entry["tops_path"]
@@ -1229,6 +1251,9 @@ class SessionService(QObject):
                 "core_depth_unit": getattr(ds, "core_depth_unit", None),
                 **({"shf_contacts": copy.deepcopy(ds.shf_contacts)}
                    if getattr(ds, "shf_contacts", None) else {}),
+                **({"lrlc": copy.deepcopy(ds.lrlc)} if getattr(ds, "lrlc", None) else {}),
+                **({"lrlc_curves": dict(ds.lrlc_curves)}
+                   if getattr(ds, "lrlc_curves", None) else {}),
                 **({"pc_path": ds.pc_path, "pc_import": getattr(ds, "pc_import", None)}
                    if getattr(ds, "pc_path", None) else {}),
                 **hashes,
@@ -1252,4 +1277,6 @@ class SessionService(QObject):
             data["uncertainty"] = config_to_dict(project.uncertainty)
         if project is not None and shf_in_use(project):
             data["shf"] = copy.deepcopy(project.shf)
+        if project is not None and lrlc_in_use(project):
+            data["lrlc"] = copy.deepcopy(project.lrlc)
         return _json_safe(data)

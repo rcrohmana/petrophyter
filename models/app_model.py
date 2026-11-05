@@ -1008,7 +1008,49 @@ class AppModel(QObject):
             self._rock_typing_params(ds, flat)
         if (self.project.shf or {}).get("enabled"):
             flat["shf"] = self._shf_params(ds)
+        if (self.project.lrlc or {}).get("enabled"):
+            flat["lrlc"] = self._lrlc_params(ds)
         return copy.deepcopy(flat)
+
+    def _lrlc_params(self, ds: WellDataset) -> dict:
+        """LRLC settings for one well; only carried while the feature is on.
+
+        The Workbench-only blocks (``pickett``, ``buckles``) are not here: they do not change a
+        run, so they stay out of the stale-tracking hash. Curve roles are auto-detected at
+        resolution time (a user assignment wins; an assigned name missing from the data is
+        dropped), so a newly loaded curve changes the hash.
+        """
+        from modules.las_parser import find_curve
+        from modules.lrlc.config import (
+            AUX_ROLES, ladder_zones, resolve_lrlc)
+
+        lrlc = self.project.lrlc
+        project_params = lrlc.get("params") or {}
+        well_params = ds.lrlc or {}
+        columns = [str(c) for c in getattr(getattr(ds, "las_data", None), "columns", [])]
+        assigned = ds.lrlc_curves or {}
+        curves = {}
+        for role in AUX_ROLES:
+            if role in assigned:
+                name = assigned[role]
+                curves[role] = name if name in columns else None
+            else:
+                curves[role] = find_curve(columns, role)
+        zones = list(self.zones_for(ds))
+        for z in ladder_zones(project_params, well_params):
+            if z not in zones:
+                zones.append(z)
+        return {
+            "enabled": True,
+            "screening": dict(lrlc.get("screening") or {}),
+            "rt_cutoff": dict(lrlc.get("rt_cutoff") or {}),
+            "movable": dict(lrlc.get("movable") or {}),
+            "curves": curves,
+            "resolved": {
+                "default": resolve_lrlc(project_params, well_params, None),
+                "zones": {z: resolve_lrlc(project_params, well_params, z) for z in zones},
+            },
+        }
 
     def _shf_params(self, ds: WellDataset) -> dict:
         """Saturation-height settings for one well; only carried while the feature is on.

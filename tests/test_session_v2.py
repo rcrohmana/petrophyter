@@ -222,11 +222,14 @@ def test_newer_major_version_is_refused_and_model_untouched(tmp_path, version):
     assert model.rw == rw_before and len(model.project) == 0
 
 
-@pytest.mark.parametrize("version", ["1.0", "1.4", "2.0", "2.1", "2.2", "2.3", "2.4", "2.9"])
+@pytest.mark.parametrize("version", ["1.0", "1.4", "2.0", "2.1", "2.2", "2.3", "2.4", "2.5", "2.9"])
 def test_same_or_older_major_versions_still_load(tmp_path, version):
     path = tmp_path / "ok.json"
     path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
-    assert SessionService().load_session(str(path)) is not None
+    svc = SessionService()
+    assert svc.load_session(str(path)) is not None
+    # only a newer minor of this major sets the notice
+    assert bool(svc.last_notice) is (version == "2.9")
 
 
 def test_session_version_is_2_1_while_rock_typing_is_unused(three_wells, tmp_path):

@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 from modules.las_utils import normalize_well_name, well_key
 from modules.shf_config import shf_defaults
+from modules.lrlc.config import lrlc_defaults
 from modules.uncertainty import UncertaintyConfig
 
 
@@ -80,6 +81,11 @@ class WellDataset:
         # row = {"fwl": float (ft), "fluid": "oil" | "gas",
         #        "water_density": float | None (g/cc; None = project water density)}.
         self.shf_contacts: Dict = {}
+        # LRLC: this well's own ladder levels ({} = nothing set, else
+        # {"default": {...}, "zones": {ZONE: {...}}}) and the user's auxiliary curve
+        # assignments {role: mnemonic or None}. Inputs, so kept out of DERIVED_FIELDS.
+        self.lrlc: Dict = {}
+        self.lrlc_curves: Dict[str, Optional[str]] = {}
         self.curve_mapping: Dict[str, str] = default_curve_mapping()
         self.analysis_mode = "Whole Well"
         self.selected_formations: List[str] = []
@@ -189,6 +195,8 @@ class Project(QObject):
         self.uncertainty_result = None
         # Saturation-height settings and stored fits (modules.shf_config).
         self.shf = shf_defaults()
+        # LRLC settings (modules.lrlc.config).
+        self.lrlc = lrlc_defaults()
 
     # ---- access ----
     def __len__(self) -> int:
@@ -296,5 +304,6 @@ class Project(QObject):
         self.uncertainty = UncertaintyConfig()
         self.uncertainty_result = None
         self.shf = shf_defaults()
+        self.lrlc = lrlc_defaults()
         self.wells_changed.emit()
         self.active_well_changed.emit("")

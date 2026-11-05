@@ -64,6 +64,9 @@ class LASParser:
         # Other curves
         'SPD':   ['SPD'],
         'TTEN':  ['TTEN'],
+        # LRLC auxiliary roles (appended; RXOZ stays under RS)
+        'RXO':   ['RXO', 'MSFL', 'MCFL', 'RXO8'],
+        'DTS':   ['DTS', 'DTSM', 'DTSH', 'DT2', 'DTSD'],
     }
 
     def __init__(self):
