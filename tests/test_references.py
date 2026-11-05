@@ -175,7 +175,7 @@ def test_method_box_shows_method(qtbot):
 
     box = MethodReferenceBox()
     qtbot.addWidget(box)
-    assert box.title() == "Method & Reference"
+    assert box.title() == "Method && Reference"  # drawn as "Method & Reference"
     box.set_method(METHOD_TEXT["rt_cutoff"])
     assert "RT_CUT" in box.equation.toPlainText()
     cites = box.citations.text()

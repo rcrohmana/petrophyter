@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -117,7 +118,10 @@ def _table(columns) -> QTableWidget:
     table.setHorizontalHeaderLabels(list(columns))
     table.verticalHeader().setVisible(False)
     table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-    table.horizontalHeader().setStretchLastSection(True)
+    header = table.horizontalHeader()
+    # Columns as wide as their header and values; the table scrolls sideways if needed.
+    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+    header.setStretchLastSection(True)
     return table
 
 
@@ -164,21 +168,38 @@ class LrlcTab(QWidget):
         outer.addWidget(self.stack)
 
     def _build_placeholder(self) -> QWidget:
+        # A fixed-width column centred by stretches: a word-wrapped QLabel added with an
+        # alignment flag loses its height-for-width and gets clipped to one line's height.
         page = QWidget()
-        v = QVBoxLayout(page)
-        v.addStretch(1)
-        heading = QLabel("Enable LRLC analysis")
-        heading.setObjectName("SectionLabel")
-        v.addWidget(heading, 0, Qt.AlignmentFlag.AlignHCenter)
+        outer = QVBoxLayout(page)
+        outer.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        column = QWidget()
+        column.setFixedWidth(560)
+        v = QVBoxLayout(column)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(12)
+        heading = QLabel("LRLC analysis is off")
+        font = heading.font()
+        font.setPointSizeF(font.pointSizeF() * 1.4)
+        font.setBold(True)
+        heading.setFont(font)
+        heading.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        v.addWidget(heading)
         text = QLabel(PLACEHOLDER_TEXT)
         text.setWordWrap(True)
-        text.setMaximumWidth(560)
-        v.addWidget(text, 0, Qt.AlignmentFlag.AlignHCenter)
+        text.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        set_status(text, "muted")
+        v.addWidget(text)
         self.enable_button = QPushButton("Enable LRLC analysis")
         self.enable_button.setProperty("variant", "primary")
         self.enable_button.clicked.connect(self._on_enable_clicked)
         v.addWidget(self.enable_button, 0, Qt.AlignmentFlag.AlignHCenter)
-        v.addStretch(2)
+        row.addWidget(column)
+        row.addStretch(1)
+        outer.addLayout(row)
+        outer.addStretch(2)
         return page
 
     def _build_content(self) -> QWidget:
