@@ -127,7 +127,8 @@ def test_method_text_content():
     )
     phase_id = re.compile(r"\b(L[1-4]|P[0-9])\b")
     for name, info in METHOD_TEXT.items():
-        text = " ".join([info.title, info.equation, info.assumptions, info.limits])
+        text = " ".join([info.title, info.equation, info.equation_after, info.assumptions,
+                         info.limits] + [" ".join(row) for row in info.criteria])
         assert text.isascii(), name
         assert not phase_id.search(text), name
         assert info.equation and info.assumptions and info.limits, name

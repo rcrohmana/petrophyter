@@ -17,20 +17,27 @@ class MethodInfo:
     assumptions: str
     limits: str
     refs: Tuple[str, ...]
+    # Optional criteria table shown between ``equation`` and ``equation_after``:
+    # rows of (code, condition), numbered from 1 in the box.
+    criteria: Tuple[Tuple[str, str], ...] = ()
+    equation_after: str = ""
 
 
 METHOD_TEXT: Dict[str, MethodInfo] = {
     "screening": MethodInfo(
         title="Low-resistivity low-contrast screening",
-        equation=(
-            "score = number of criteria met (0 to 6)\n"
-            "1 LOW_RT    RT < screen_rt_max\n"
-            "2 HC        GAS_FLAG = 1  or  RT/RS >= 1.0\n"
-            "3 PHI       PHIE > phi_cutoff\n"
-            "4 VSH       VSH < vsh_cutoff\n"
-            "5 CONTRAST  RT/Rsh <= screen_contrast_max\n"
-            "6 SW_HIGH   Sw >= sw_cutoff\n"
-            "flag = 1 when criteria 1, 3 and 6 are met and score >= min(screen_min_score, criteria evaluable)"
+        equation="score = number of criteria met (0 to 6)",
+        criteria=(
+            ("LOW_RT", "RT < screen_rt_max"),
+            ("HC", "GAS_FLAG = 1  or  RT/RS >= 1.0"),
+            ("PHI", "PHIE > phi_cutoff"),
+            ("VSH", "VSH < vsh_cutoff"),
+            ("CONTRAST", "RT/Rsh <= screen_contrast_max"),
+            ("SW_HIGH", "Sw >= sw_cutoff"),
+        ),
+        equation_after=(
+            "flag = 1 when criteria 1, 3 and 6 are met\n"
+            "       and score >= min(screen_min_score, criteria evaluable)"
         ),
         assumptions=(
             "A sample that is porous, low in resistivity and called wet by the conventional Sw is "

@@ -228,6 +228,7 @@ QWidget#ParamsPage QCheckBox::indicator, QWidget#ParamsPage QRadioButton::indica
     background-color: $bg_surface; }
 QWidget#ParamsPage QCheckBox::indicator:checked { background-color: $accent; }
 QLabel#CutoffValue { font-family: "$font_mono"; min-width: 36px; }
+QPlainTextEdit#MethodEquation { font-family: "$font_mono"; }
 QWidget#ParamsFooter { background-color: $bg_base; border-top: 1px solid $border; }
 QWidget#DataBrowser { background-color: $bg_base; }
 QTreeView#DataTree { background-color: $bg_base; border: none; outline: none;
