@@ -830,6 +830,33 @@ _LAS_UNIT_DEFAULTS = {
     "PHID": "V/V",
     "PHIN": "V/V",
     "PHIT": "V/V",
+    # LRLC and later-phase curves; flags and AI stay UNITLESS (AI's real unit
+    # (G/CC)(M/S) is not a legal token for _resolve_las_unit)
+    "RT_SW": "OHMM",
+    "RT_CUT": "OHMM",
+    "RT_SAND": "OHMM",
+    "RT_PYR": "OHMM",
+    "RT_INV": "OHMM",
+    "RT_DECON": "OHMM",
+    "RXO_INV": "OHMM",
+    "BVW": "V/V",
+    "VLAM": "V/V",
+    "VDISP": "V/V",
+    "PHI_SAND": "V/V",
+    "VPYR": "V/V",
+    "SW_BASE": "V/V",
+    "QV_EST": "MEQ/ML",
+    "DI_INV": "IN",
+    "AI": "UNITLESS",
+    "LRLC_FLAG": "UNITLESS",
+    "LRLC_SCORE": "UNITLESS",
+    "WATER_FREE_FLAG": "UNITLESS",
+    "NET_PAY_BASE_FLAG": "UNITLESS",
+    "TS_CLASS": "UNITLESS",
+    "ELASTIC_FLAG": "UNITLESS",
+    "M_VAR": "UNITLESS",
+    "N_VAR": "UNITLESS",
+    "VPVS": "UNITLESS",
 }
 
 
@@ -891,7 +918,8 @@ def _format_las_column(col: pd.Series) -> list:
 
 def export_merged_las(merged_df: pd.DataFrame, 
                       well_info: Dict,
-                      output_path: str = None) -> str:
+                      output_path: str = None,
+                      curve_descriptions: Optional[Dict[str, str]] = None) -> str:
     """
     Export merged DataFrame to LAS format.
     
@@ -899,6 +927,8 @@ def export_merged_las(merged_df: pd.DataFrame,
         merged_df: Merged DataFrame
         well_info: Well information dictionary
         output_path: Output file path
+        curve_descriptions: Optional {column name: description} for the curve
+            lines; other columns keep the column name as description
         
     Returns:
         LAS file content as string
@@ -950,7 +980,10 @@ def export_merged_las(merged_df: pd.DataFrame,
     lines.append(" DEPTH.FT                        : DEPTH")
     for source_col, safe_col in curve_pairs:
         unit = _resolve_las_unit(source_col, safe_col, well_info)
-        description = _safe_las_text(source_col, safe_col)
+        if curve_descriptions and source_col in curve_descriptions:
+            description = _safe_las_text(curve_descriptions[source_col], source_col)
+        else:
+            description = _safe_las_text(source_col, safe_col)
         lines.append(f" {safe_col}.{unit:<12} : {description}")
     lines.append("")
     

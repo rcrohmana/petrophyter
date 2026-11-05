@@ -15,6 +15,7 @@ from contextlib import contextmanager
 import pandas as pd
 
 from modules.las_handler import export_merged_las
+from modules.lrlc.provenance import lrlc_curve_descriptions
 from services.issues import collect_issues, issue_counts
 from version import APP_BUILD, APP_VERSION
 
@@ -381,7 +382,7 @@ def provenance_block(ds, depth_range=None) -> dict:
     recipe, the tops / core hashes and the versions of numpy, scipy, pandas and lasio.
     """
     counts = issue_counts(collect_issues(ds))
-    return {
+    block = {
         "Well": well_label(ds),
         "App version": APP_VERSION,
         "Build": APP_BUILD,
@@ -398,6 +399,12 @@ def provenance_block(ds, depth_range=None) -> dict:
         "Info": counts["info"],
         "Depth interval": depth_interval_label(depth_range),
     }
+    summary = getattr(ds, "summary", None)
+    if isinstance(summary, dict) and isinstance(summary.get("lrlc"), dict):
+        from modules.lrlc.provenance import rt_corrections_text
+
+        block["Rt corrections"] = rt_corrections_text(summary["lrlc"])
+    return block
 
 
 def provenance_lines(block: dict) -> list:
@@ -406,7 +413,7 @@ def provenance_lines(block: dict) -> list:
 
 
 def _las_other_lines(block: dict) -> list:
-    return [
+    lines = [
         f"Exported by Petrophyter {block['App version']} (Build {block['Build']})",
         f"Run time {block['Run time']} (UTC)",
         f"Status {block['Status at export']}",
@@ -420,6 +427,9 @@ def _las_other_lines(block: dict) -> list:
         f"Issues {block['Errors']} errors, {block['Warnings']} warnings, {block['Info']} info",
         f"Depth interval {block.get('Depth interval', ALL_DEPTHS)}",
     ]
+    if "Rt corrections" in block:
+        lines.append(f"Rt corrections {block['Rt corrections']}")
+    return lines
 
 
 def _las_with_provenance(content: str, block: dict) -> str:
@@ -1014,15 +1024,17 @@ class ExportService(QObject):
             return False
 
     def export_las(self, merged_df: pd.DataFrame, well_info: dict, file_path: str,
-                   provenance: dict = None) -> bool:
+                   provenance: dict = None, curve_descriptions: dict = None) -> bool:
         """Export merged data to LAS using UTF-8 and an atomic target.
 
-        With ``provenance`` the file gets a ``~OTHER`` section before the data.
+        With ``provenance`` the file gets a ``~OTHER`` section before the data;
+        ``curve_descriptions`` ({column: text}) replaces the curve descriptions.
         """
         try:
             if not isinstance(merged_df, pd.DataFrame):
                 raise ValueError("merged_df must be a pandas DataFrame")
-            las_content = export_merged_las(merged_df, well_info)
+            las_content = export_merged_las(merged_df, well_info,
+                                            curve_descriptions=curve_descriptions)
             if provenance:
                 las_content = _las_with_provenance(las_content, provenance)
             with _atomic_target(file_path) as temporary_path:
@@ -1092,7 +1104,8 @@ class ExportService(QObject):
             for ds, name in zip(ready, names):
                 las_content = _las_with_provenance(
                     export_merged_las(apply_depth_range(las_frame(ds), depth_range),
-                                      ds.well_info),
+                                      ds.well_info,
+                                      curve_descriptions=lrlc_curve_descriptions(ds) or None),
                     provenance_block(ds, depth_range))
                 with _atomic_target(os.path.join(directory, f"{name}.las")) as tmp:
                     with open(tmp, "w", encoding="utf-8") as handle:

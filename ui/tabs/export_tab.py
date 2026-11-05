@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 import pandas as pd
 from services.uncertainty_service import result_is_stale
+from modules.lrlc.provenance import lrlc_curve_descriptions
 from ..widgets.table_model import PandasTableModel
 from themes.icon_loader import get_icon
 from themes.helpers import set_status
@@ -404,7 +405,8 @@ class ExportTab(QWidget):
         if file_path:
             self._service.export_las(apply_depth_range(las_frame(ds), depth_range),
                                      ds.well_info, file_path,
-                                     provenance_block(ds, depth_range))
+                                     provenance_block(ds, depth_range),
+                                     curve_descriptions=lrlc_curve_descriptions(ds) or None)
 
     def _on_export_definitions(self):
         """Save the rock-type definitions table (project level, no freshness check)."""

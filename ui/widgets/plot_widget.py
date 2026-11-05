@@ -571,6 +571,7 @@ class CompositeLogPlot(PlotWidget):
         hcpv_curves: list = None,
         rt_margin_min: float = 0.05,
         rt_count: int = None,
+        rt_curve: str = "RT",
     ):
         """
         Create a 5-track petrophysics summary log:
@@ -590,6 +591,8 @@ class CompositeLogPlot(PlotWidget):
             rt_margin_min: bands with RT_MARGIN below this are drawn hatched
                 (Rock Type track, only when the results have ROCK_TYPE).
             rt_count: number of rock types in the definitions (colour spacing).
+            rt_curve: mapped resistivity mnemonic; the Resistivity track is drawn
+                only when LRLC columns (RT_SW, RT_CUT, LRLC_FLAG) are present.
         """
         self.figure.clear()
 
@@ -608,9 +611,24 @@ class CompositeLogPlot(PlotWidget):
             mask = np.ones(len(depth), dtype=bool)
 
         # Create 6 tracks, and a seventh for the rock types when the results have them
-        has_rt = "ROCK_TYPE" in filtered.columns
+        has_rock = "ROCK_TYPE" in filtered.columns
         has_resid = "SW_SHF_RESID" in filtered.columns
-        n_axes = 6 + int(has_rt) + int(has_resid)
+        has_lrlc_rt = rt_curve in filtered.columns and any(
+            c in filtered.columns for c in ("RT_SW", "RT_CUT", "LRLC_FLAG")
+        )
+        n_axes = 6 + int(has_rock) + int(has_resid) + int(has_lrlc_rt)
+        # Axis index map; the Resistivity track sits after Sw and shifts the rest
+        idx = {"gr": 0, "phi": 1, "sw": 2}
+        nxt = 3
+        if has_lrlc_rt:
+            idx["rt"] = nxt
+            nxt += 1
+        for key in ("perm", "flags", "hcpv"):
+            idx[key] = nxt
+            nxt += 1
+        if has_rock:
+            idx["rock"] = nxt
+            nxt += 1
         resid_idx = n_axes - 1  # the residual track is last, after Rock Type
         axes = []
         for i in range(n_axes):
@@ -679,23 +697,23 @@ class CompositeLogPlot(PlotWidget):
         for curve in ts.porosity_plot_curves(filtered.columns):
             if ts.curve_spec("porosity", curve).secondary:
                 continue
-            axes[1].plot(
+            axes[idx["phi"]].plot(
                 filtered[curve].values,
                 depth,
                 color=get_plot_color(curve),
                 linewidth=0.8,
                 label=curve,
             )
-        axes[1].set_xlim(por_spec.lo, por_spec.hi)
-        axes[1].set_title(por_spec.title, fontsize=TITLE_SIZE)
-        axes[1].set_xlabel(por_spec.axis_label, fontsize=LABEL_SIZE)
-        axes[1].legend(loc="upper right", fontsize=6)
+        axes[idx["phi"]].set_xlim(por_spec.lo, por_spec.hi)
+        axes[idx["phi"]].set_title(por_spec.title, fontsize=TITLE_SIZE)
+        axes[idx["phi"]].set_xlabel(por_spec.axis_label, fontsize=LABEL_SIZE)
+        axes[idx["phi"]].legend(loc="upper right", fontsize=6)
 
         # Track 3: Water Saturation. SW is the effective (primary) curve, drawn
         # solid; every other SW_* method present is dashed.
         sw_spec = ts.TRACK_SPECS["sw"]
         if "SW" in filtered.columns:
-            axes[2].plot(
+            axes[idx["sw"]].plot(
                 filtered["SW"].values,
                 depth,
                 color=get_plot_color("SW"),
@@ -710,7 +728,7 @@ class CompositeLogPlot(PlotWidget):
             ):
                 continue  # the primary's source column repeats the solid line
             color_key = curve if curve in PLOT_COLORS else "SW_DEFAULT"
-            axes[2].plot(
+            axes[idx["sw"]].plot(
                 filtered[curve].values,
                 depth,
                 color=get_plot_color(color_key),
@@ -721,7 +739,7 @@ class CompositeLogPlot(PlotWidget):
         # Saturation-height Sw: its own dashed curve (not an Sw method); the pay
         # variant, when selected, is a thin dotted line in a muted tone.
         if "SW_SHF" in filtered.columns:
-            axes[2].plot(
+            axes[idx["sw"]].plot(
                 filtered["SW_SHF"].values,
                 depth,
                 color=get_plot_color("SW_SHF"),
@@ -730,7 +748,7 @@ class CompositeLogPlot(PlotWidget):
                 label="Sw SHF",
             )
         if "SW_PAY" in filtered.columns:
-            axes[2].plot(
+            axes[idx["sw"]].plot(
                 filtered["SW_PAY"].values,
                 depth,
                 color=get_plot_color("SW_PAY"),
@@ -738,32 +756,58 @@ class CompositeLogPlot(PlotWidget):
                 linestyle=":",
                 label="Sw SHF (pay)",
             )
-        axes[2].set_xlim(sw_spec.lo, sw_spec.hi)
-        axes[2].set_title(sw_spec.title, fontsize=TITLE_SIZE)
-        axes[2].set_xlabel(sw_spec.axis_label, fontsize=LABEL_SIZE)
-        axes[2].legend(loc="upper right", fontsize=6)
+        axes[idx["sw"]].set_xlim(sw_spec.lo, sw_spec.hi)
+        axes[idx["sw"]].set_title(sw_spec.title, fontsize=TITLE_SIZE)
+        axes[idx["sw"]].set_xlabel(sw_spec.axis_label, fontsize=LABEL_SIZE)
+        axes[idx["sw"]].legend(loc="upper right", fontsize=6)
+
+        # Resistivity track (LRLC): RT, RT_SW (solid) and RT_CUT (dashed), log scale
+        if has_lrlc_rt:
+            rt_spec = ts.TRACK_SPECS["resistivity"]
+            rax_ = axes[idx["rt"]]
+            for col, lbl, style, lw in (
+                (rt_curve, "RT", "-", 0.8),
+                ("RT_SW", "RT_SW", "-", 1.0),
+                ("RT_CUT", "RT_CUT", "--", 0.9),
+            ):
+                if col not in filtered.columns:
+                    continue
+                key = "RT" if col == rt_curve else col
+                rax_.plot(
+                    np.clip(filtered[col].values.astype(float), 1e-3, None),
+                    depth,
+                    color=get_plot_color(key),
+                    linewidth=lw,
+                    linestyle=style,
+                    label=lbl,
+                )
+            rax_.set_xscale("log")
+            rax_.set_xlim(rt_spec.lo, rt_spec.hi)
+            rax_.set_title("Resistivity", fontsize=TITLE_SIZE)
+            rax_.set_xlabel(rt_spec.axis_label, fontsize=LABEL_SIZE)
+            rax_.legend(loc="upper right", fontsize=6)
 
         # Track 4: Permeability (log scale)
         perm_spec = ts.TRACK_SPECS["permeability"]
         for curve in ts.present_curves("permeability", filtered.columns):
             perm_data = np.clip(filtered[curve].values, 0.001, 100000)
-            axes[3].plot(
+            axes[idx["perm"]].plot(
                 perm_data,
                 depth,
                 color=get_plot_color(curve),
                 linewidth=0.8,
                 label=curve.replace("PERM_", ""),
             )
-        axes[3].set_xscale("log")
-        axes[3].set_xlim(perm_spec.lo, perm_spec.hi)
-        axes[3].set_title(perm_spec.title, fontsize=TITLE_SIZE)
-        axes[3].set_xlabel(perm_spec.axis_label, fontsize=LABEL_SIZE)
-        axes[3].legend(loc="upper right", fontsize=6)
+        axes[idx["perm"]].set_xscale("log")
+        axes[idx["perm"]].set_xlim(perm_spec.lo, perm_spec.hi)
+        axes[idx["perm"]].set_title(perm_spec.title, fontsize=TITLE_SIZE)
+        axes[idx["perm"]].set_xlabel(perm_spec.axis_label, fontsize=LABEL_SIZE)
+        axes[idx["perm"]].legend(loc="upper right", fontsize=6)
 
         # Track 5: Pay flags (if available)
         if "NET_PAY_FLAG" in filtered.columns:
             pay = filtered["NET_PAY_FLAG"].values
-            axes[4].fill_betweenx(
+            axes[idx["flags"]].fill_betweenx(
                 depth, 0, pay, color=get_plot_color("PAY"), alpha=0.7, label="Pay"
             )
         if "NET_RES_FLAG" in filtered.columns:
@@ -773,14 +817,32 @@ class CompositeLogPlot(PlotWidget):
             if "NET_PAY_FLAG" in filtered.columns:
                 res_only = res - filtered["NET_PAY_FLAG"].values
                 res_only = np.clip(res_only, 0, 1)
-            axes[4].fill_betweenx(
+            axes[idx["flags"]].fill_betweenx(
                 depth, 0, res_only, color=get_plot_color("RES_FILL"), alpha=0.5, label="Res"
             )
-        axes[4].set_xlim(0, 1)
-        axes[4].set_title("Pay Flags", fontsize=TITLE_SIZE)
-        axes[4].set_xlabel("Flag", fontsize=LABEL_SIZE)
-        if "NET_PAY_FLAG" in filtered.columns or "NET_RES_FLAG" in filtered.columns:
-            axes[4].legend(loc="upper right", fontsize=6)
+        lrlc_flags = [
+            (c, lbl)
+            for c, lbl in (("LRLC_FLAG", "LRLC"), ("WATER_FREE_FLAG", "Water-free"))
+            if c in filtered.columns
+        ]
+        for col, lbl in lrlc_flags:
+            axes[idx["flags"]].fill_betweenx(
+                depth,
+                0,
+                np.nan_to_num(filtered[col].values.astype(float)),
+                color=get_plot_color(col),
+                alpha=0.35,
+                label=lbl,
+            )
+        axes[idx["flags"]].set_xlim(0, 1)
+        axes[idx["flags"]].set_title("Pay Flags", fontsize=TITLE_SIZE)
+        axes[idx["flags"]].set_xlabel("Flag", fontsize=LABEL_SIZE)
+        if (
+            "NET_PAY_FLAG" in filtered.columns
+            or "NET_RES_FLAG" in filtered.columns
+            or lrlc_flags
+        ):
+            axes[idx["flags"]].legend(loc="upper right", fontsize=6)
 
         # Track 6: HCPV (Net Pay by default; the Log Display tab passes its mode)
         if hcpv_curves is None:
@@ -791,7 +853,7 @@ class CompositeLogPlot(PlotWidget):
             if name not in filtered.columns:
                 continue
             cumulative = name.startswith("HCPV_CUM")
-            axes[5].plot(
+            axes[idx["hcpv"]].plot(
                 filtered[name].values,
                 depth,
                 color=color or get_plot_color(name),
@@ -800,17 +862,17 @@ class CompositeLogPlot(PlotWidget):
                 label=name,
             )
             if x_range:
-                axes[5].set_xlim(*x_range)
+                axes[idx["hcpv"]].set_xlim(*x_range)
             hcpv_drawn = True
 
-        axes[5].set_title("HCPV", fontsize=TITLE_SIZE)
-        axes[5].set_xlabel("Volume (ft)", fontsize=LABEL_SIZE)
+        axes[idx["hcpv"]].set_title("HCPV", fontsize=TITLE_SIZE)
+        axes[idx["hcpv"]].set_xlabel("Volume (ft)", fontsize=LABEL_SIZE)
         if hcpv_drawn:
-            axes[5].legend(loc="upper right", fontsize=6)
+            axes[idx["hcpv"]].legend(loc="upper right", fontsize=6)
 
         # Track 7: Rock Type (categorical bands; hatched where weak)
-        if has_rt:
-            self._plot_rock_type_track(axes[6], depth, filtered, rt_margin_min, rt_count)
+        if has_rock:
+            self._plot_rock_type_track(axes[idx["rock"]], depth, filtered, rt_margin_min, rt_count)
 
         # Residual track: Sw - Sw SHF on a fixed range with a zero line
         if has_resid:

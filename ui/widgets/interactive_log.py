@@ -585,6 +585,25 @@ class InteractiveLogPlot(QWidget):
                     vmin, vmax = value_range
                     curve_data = (curve_data - vmin) / (vmax - vmin)
 
+                if opts.get("shade"):
+                    # Flag drawn as a translucent filled band (0 to the flag value)
+                    shade_vals = np.nan_to_num(curve_data, nan=0.0)
+                    qcol = pg.mkColor(color)
+                    qcol.setAlpha(90)
+                    # pyqtgraph's fillLevel fills toward a horizontal line, which
+                    # is wrong for a depth-vertical track, so the band is a
+                    # FillBetweenItem between the flag curve and a zero line.
+                    curve_item = pg.PlotCurveItem(
+                        shade_vals, depth, pen=pg.mkPen(color, width=1.0)
+                    )
+                    base_item = pg.PlotCurveItem(np.zeros_like(shade_vals), depth)
+                    plot.addItem(curve_item)
+                    plot.addItem(
+                        pg.FillBetweenItem(curve_item, base_item, brush=pg.mkBrush(qcol))
+                    )
+                    self.curve_items[curve_name] = curve_item
+                    continue
+
                 style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
                 width = 1.5
                 if opts.get("dotted"):
@@ -712,6 +731,9 @@ class InteractiveLogPlot(QWidget):
             self._spec_curve("resistivity", n)
             for n in ts.present_curves("resistivity", cols)
         ]
+        for entry in track3:
+            if entry[0] == "RT_CUT":
+                entry[4]["dashed"] = True
         perm_label = ts.TRACK_SPECS["permeability"].axis_label
         for c in ts.present_curves("permeability", cols):
             track3.append(
@@ -725,6 +747,12 @@ class InteractiveLogPlot(QWidget):
             track4.append(("NET_PAY_FLAG", get_plot_color("PAY"), False, (0, 1)))
         if "NET_RES_FLAG" in columns:
             track4.append(("NET_RES_FLAG", get_plot_color("RESERVOIR"), False, (0, 1)))
+        for flag, flag_label in (("LRLC_FLAG", "LRLC"), ("WATER_FREE_FLAG", "Water-free")):
+            if flag in columns:
+                track4.append(
+                    (flag, get_plot_color(flag), False, (0, 1),
+                     {"label": flag_label, "shade": True})
+                )
         config[4] = track4
 
         # Track 5: HCPV (dHCPV + HCPV_CUM)

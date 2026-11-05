@@ -669,6 +669,7 @@ class LogDisplayTab(QWidget):
         hcpv_curves = self._get_hcpv_curve_config(self.model.results.columns.tolist())
 
         margin_min, rt_count = self._rock_type_options()
+        rt_curve = (self.model.curve_mapping or {}).get("RT") or "RT"
         self._classic_drawing = True
         try:
             if top < bottom:
@@ -679,6 +680,7 @@ class LogDisplayTab(QWidget):
                     hcpv_curves=hcpv_curves,
                     rt_margin_min=margin_min,
                     rt_count=rt_count,
+                    rt_curve=rt_curve,
                 )
             else:
                 self.classic_log.plot_petrophysics_summary(
@@ -687,6 +689,7 @@ class LogDisplayTab(QWidget):
                     hcpv_curves=hcpv_curves,
                     rt_margin_min=margin_min,
                     rt_count=rt_count,
+                    rt_curve=rt_curve,
                 )
             axes = self.classic_log.figure.axes
             if axes:

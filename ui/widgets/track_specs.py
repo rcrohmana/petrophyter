@@ -79,6 +79,8 @@ TRACK_SPECS: Dict[str, TrackSpec] = {
         curves=(
             CurveSpec("RT", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RS", "ohm·m", 0.2, 2000.0, "log"),
+            CurveSpec("RT_SW", "ohm·m", 0.2, 2000.0, "log"),
+            CurveSpec("RT_CUT", "ohm·m", 0.2, 2000.0, "log"),
         ),
         scale="log", lo=0.2, hi=2000.0, unit="ohm·m", axis_name="RT",
     ),
@@ -153,7 +155,8 @@ def curve_spec(track: str, name: str) -> Optional[CurveSpec]:
 # Residual track (Sw - Sw SHF): title and fixed x range
 SHF_RESID_TITLE = "Sw − Sw SHF"
 SHF_RESID_RANGE = (-0.5, 0.5)
-SHF_NON_METHOD_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY")
+NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY")
+SHF_NON_METHOD_COLUMNS = NON_METHOD_SW_COLUMNS  # old name, kept as an alias
 
 
 def sw_method_columns(columns: Iterable[str]) -> List[str]:
@@ -165,7 +168,7 @@ def sw_method_columns(columns: Iterable[str]) -> List[str]:
     cols = list(columns)
     known = [c for c in SW_COLUMNS.values() if c in cols]
     other = [c for c in cols if c.startswith("SW_") and c not in known
-             and c not in SHF_NON_METHOD_COLUMNS]
+             and c not in NON_METHOD_SW_COLUMNS]
     return known + other
 
 

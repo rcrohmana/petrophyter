@@ -128,6 +128,11 @@ PLOT_COLORS = {
     "SW_SHF": "#D2691E",
     "SW_PAY": "#A0522D",
     "SW_SHF_RESID": "#00796B",
+    "RT_SW": "#C2185B",
+    "RT_CUT": "#6A1B9A",
+    "BVW": "#1565C0",
+    "LRLC_FLAG": "#EF6C00",
+    "WATER_FREE_FLAG": "#26A69A",
     "GROSS_SAND": "#2196F3",
     "NET_RESERVOIR": "#4CAF50",
     "NET_PAY": "#FF9800",
@@ -188,5 +193,10 @@ PLOT_COLOR_OVERRIDES = {
         "SW_SHF": "#E8A04C",
         "SW_PAY": "#C99A7A",
         "SW_SHF_RESID": "#4DB6AC",
+        "RT_SW": "#F06292",
+        "RT_CUT": "#BA68C8",
+        "BVW": "#64B5F6",
+        "LRLC_FLAG": "#FFB74D",
+        "WATER_FREE_FLAG": "#4DB6AC",
     }
 }
