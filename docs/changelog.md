@@ -2,7 +2,37 @@
 
 # Version History
 
-## v1.10.0 (Build 20261021) — Current Release
+## v1.11.0 (Build 20261105) — Current Release
+
+See the [release notes](releases/v1.11.0.md) for details. LRLC analysis is optional: **results do not
+change** until you enable it, and sessions that do not use it are saved as before.
+
+- **Specialized menu** (after Analysis) with **LRLC Workbench…** (`Ctrl+L`) and **Saturation Tools**
+  (**Rt Cutoff Overlay…**, **Saturation-Height (Rt-independent Sw)…**).
+- **LRLC Workbench tab** (after Saturation-Height) with Screening, Diagnosis, Remediation and Validation
+  panels. Settings at project, project-zone, well and well-zone level with the source of each value shown;
+  auxiliary curve roles (RM, RS, RXO, PEF, DTS, high-resolution) auto-detected or assigned.
+- **Screening.** Six criteria per sample (low Rt, hydrocarbon indication, porosity, shale volume, Rt/Rsh
+  contrast, high conventional Sw) give `LRLC_SCORE` and `LRLC_FLAG`; a candidate table per zone with the
+  thickness not counted as pay. Vsh, porosity and Sw reuse the zone's pay cutoffs.
+- **Rt cutoff.** `RT_CUT`, the Rt at which the selected Sw model returns the target Sw, per sample and as
+  one value per zone; drawn dashed on the resistivity track.
+- **Bulk volume water.** `BVW` and `WATER_FREE_FLAG` (net reservoir with Sw at or near Swirr), and a
+  Buckles plot with constant-BVW lines.
+- **Pickett plot** with an automatic wet-point selection, Add box / Remove box, a robust fit of m and
+  a·Rw, and **Apply m** / **Apply m and Rw** to the active well or zone. Nothing is recomputed until you run.
+- **Help → Scientific References…** lists the sources of every method, with **Export BibTeX…**; each
+  tool has a Method & Reference box.
+- **Data Browser.** **Analyze as LRLC candidate** on a formation top opens the Workbench on that zone.
+- **Log display.** RT and `RT_CUT` on a resistivity track (added to the classic log when LRLC results
+  exist) and shaded LRLC and water-free flags, in both log engines. LAS exports describe the LRLC curves
+  and carry an Rt corrections provenance line.
+- **Session format 2.5** when LRLC analysis is used; it opens in v1.10.0 and older without the LRLC
+  settings, with the same Sw and pay. Opening a session from a newer minor version now says that unknown
+  settings were not loaded.
+- 2180 tests.
+
+## v1.10.0 (Build 20261021)
 
 See the [release notes](releases/v1.10.0.md) for details. Saturation-height modelling is optional: **results
 do not change** until you enable it, and sessions that do not use it are saved as before.
