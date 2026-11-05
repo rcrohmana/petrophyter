@@ -13,7 +13,7 @@ Contract:
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, NamedTuple, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -1019,8 +1019,33 @@ def _primary_perm(p):
 SW_DEFAULTED = "default"
 
 
+class SwEffectiveInputs(NamedTuple):
+    """Effective per-sample Sw inputs: ``rw``, ``rsh``, ``rwb`` and the Waxman-Smits ``ws_b``."""
+    rw: object
+    rsh: object
+    rwb: object
+    ws_b: object
+
+
+def _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data):
+    """``(rw_eff, rsh_eff, rwb_eff, ws_b)`` as :func:`_primary_sw` feeds the Sw models.
+
+    Arps temperature correction of Rw / Rsh / Rwb when ``tctx`` carries a formation
+    temperature, and the Juhasz B (``ws_b_auto``) at each sample's temperature.
+    """
+    temp_factor = _factor(tctx)
+    rw_eff = rw if temp_factor is None else rw * temp_factor.loc[data.index]
+    rsh_eff = _rsh_effective(rsh, rsh_auto, p, tctx, data.index)
+    rwb_eff = p["dw_rwb"] if temp_factor is None else p["dw_rwb"] * temp_factor.loc[data.index]
+    ws_b = p["ws_b"]
+    if p.get("ws_b_auto") and tctx is not None:
+        # Juhasz B at each sample's formation temperature with Rw AT that temperature.
+        ws_b = juhasz_b(tctx.temp.loc[data.index], rw_eff)
+    return SwEffectiveInputs(rw_eff, rsh_eff, rwb_eff, ws_b)
+
+
 def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
-                rsh_auto=False, only_primary=False):
+                rsh_auto=False, only_primary=False, rt_values=None):
     """Effective Rw / Rsh / WS B, PHIE / PHIT, the Sw methods and the ``SW`` column.
 
     Returns ``(sw, phie, phit, sw_fallback)``. ``sw`` is the ``SW`` Series (also stored
@@ -1034,14 +1059,7 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
     a, m, n = p["a"], p["m"], p["n"]
-    temp_factor = _factor(tctx)
-    rw_eff = rw if temp_factor is None else rw * temp_factor.loc[data.index]
-    rsh_eff = _rsh_effective(rsh, rsh_auto, p, tctx, data.index)
-    rwb_eff = p["dw_rwb"] if temp_factor is None else p["dw_rwb"] * temp_factor.loc[data.index]
-    ws_b = p["ws_b"]
-    if p.get("ws_b_auto") and tctx is not None:
-        # Juhasz B at each sample's formation temperature with Rw AT that temperature.
-        ws_b = juhasz_b(tctx.temp.loc[data.index], rw_eff)
+    rw_eff, rsh_eff, rwb_eff, ws_b = _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data)
 
     phie = calc.results.get("PHIE")
     if phie is None:
@@ -1064,18 +1082,20 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
                 wanted = [name for name in SW_COLUMN_MAP if name in selected][:1]
             selected = wanted
         if "Archie" in selected:
-            calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n)
+            calc.calculate_sw_archie(rt_curve, phie, rw_eff, a, m, n, rt=rt_values)
         if "Indonesian" in selected:
-            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n)
+            calc.calculate_sw_indonesian(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+                                         rt=rt_values)
         if "Simandoux" in selected:
-            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n)
+            calc.calculate_sw_simandoux(rt_curve, phie, vsh, rw_eff, rsh_eff, a, m, n,
+                                        rt=rt_values)
         if "Waxman-Smits" in selected:
             # Total-porosity models: solved on PHIT, returned as effective Sw on PHIE.
             calc.calculate_sw_waxman_smits(rt_curve, phit, rw_eff, a, m, n, p["ws_qv"], ws_b,
-                                           phie=phie)
+                                           phie=phie, rt=rt_values)
         if "Dual-Water" in selected:
             calc.calculate_sw_dual_water(rt_curve, phit, rw_eff, a, m, n, p["dw_swb"], rwb_eff,
-                                         phie=phie)
+                                         phie=phie, rt=rt_values)
 
         if primary_col in calc.results.columns:
             calc.results["SW"] = calc.results[primary_col]

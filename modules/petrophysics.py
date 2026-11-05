@@ -1148,6 +1148,13 @@ class PetrophysicsCalculator:
             raise ValueError(f"{name} must have one value per data row")
         return values
 
+    def _rt_array(self, rt) -> np.ndarray:
+        """Rt as a float array aligned to the data rows (the Rt twin of _rw_values)."""
+        values = np.asarray(rt, dtype=float)
+        if values.shape != (len(self.data),):
+            raise ValueError("rt array must have one value per data row")
+        return values
+
     @staticmethod
     def _sw_valid_mask(rt, porosity):
         """The one validity rule of every Sw model.
@@ -1197,6 +1204,8 @@ class PetrophysicsCalculator:
         a: float = 0.62,
         m: float = 2.15,
         n: float = 2.0,
+        *,
+        rt=None,
     ) -> pd.Series:
         """
         Calculate water saturation using Archie equation.
@@ -1218,7 +1227,7 @@ class PetrophysicsCalculator:
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
 
-        rt = self.data[rt_curve]
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("a", a)
@@ -1255,6 +1264,8 @@ class PetrophysicsCalculator:
         a: float = 0.62,
         m: float = 2.15,
         n: float = 2.0,
+        *,
+        rt=None,
     ) -> pd.Series:
         """
         Calculate water saturation using Indonesian equation.
@@ -1278,7 +1289,7 @@ class PetrophysicsCalculator:
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
 
-        rt = self.data[rt_curve]
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
@@ -1327,6 +1338,8 @@ class PetrophysicsCalculator:
         a: float = 0.62,
         m: float = 2.15,
         n: float = 2.0,
+        *,
+        rt=None,
     ) -> pd.Series:
         """
         Calculate water saturation using Simandoux equation.
@@ -1350,7 +1363,7 @@ class PetrophysicsCalculator:
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
 
-        rt = self.data[rt_curve]
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rsh", rsh)
@@ -1451,6 +1464,8 @@ class PetrophysicsCalculator:
         qv: float = 0.2,
         B: float = 1.0,
         phie: pd.Series = None,
+        *,
+        rt=None,
     ) -> pd.Series:
         """
         Calculate water saturation using Waxman-Smits equation.
@@ -1484,7 +1499,7 @@ class PetrophysicsCalculator:
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
 
-        rt = self.data[rt_curve]
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("a", a)
@@ -1569,6 +1584,8 @@ class PetrophysicsCalculator:
         swb: float = 0.1,
         rwb: float = 0.2,
         phie: pd.Series = None,
+        *,
+        rt=None,
     ) -> pd.Series:
         """
         Calculate water saturation using Dual-Water model.
@@ -1602,7 +1619,7 @@ class PetrophysicsCalculator:
         if rt_curve not in self.data.columns:
             return self._make_series(np.nan)
 
-        rt = self.data[rt_curve]
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
         self._validate_positive_parameter("rw", rw)
         rw = self._rw_values(rw)
         self._validate_positive_parameter("rwb", rwb)
