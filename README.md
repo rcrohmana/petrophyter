@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.11.0_(Build_20261105)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.12.0_(Build_20261105)-orange.svg)
 
 ![Petrophyter main window with the interactive log display](docs/images/petrophyter-main-window.png)
 
@@ -23,10 +23,11 @@ Key capabilities include:
 - Rock typing from core (RQI/FZI with k-means, or Winland R35), applied to every well through the logs, with permeability, net pay, and HCPV per rock type
 - Capillary pressure import (single and multi-well) and saturation-height modelling: J-function fits per rock type, a free water level per well and zone, a second Sw (`SW_SHF`) with a residual against the resistivity Sw, and an option to use it for net pay and HCPV
 - Low-resistivity low-contrast (LRLC) pay screening in the LRLC Workbench: a candidate score and flag per sample, an Rt cutoff from the selected Sw model, bulk volume water with a water-free flag and Buckles plot, and a Pickett plot whose wet-point fit can be applied to m and Rw
+- Laminated sands, pyrite and clay conductivity in the LRLC Workbench: Thomas-Stieber laminar/dispersed shale split, Hagiwara laminated-sand Rt, a pyrite Rt correction from RHOB and PEF, Qv estimated from shale CEC (calibrated on core CEC), a shoulder-bed guard, a per-zone diagnosis with remedies, and pay before/after the corrections
 - HCPV and configurable net-pay analysis
 - Monte Carlo uncertainty on HCPV and net pay: P90/P50/P10 per field, well, and zone, with histogram, exceedance curve, and tornado
 - Formation-top overlays and quality-control diagnostics
-- Interactive GPU-accelerated six-track log visualization, plus a Rock Type track when rock typing is on and a Sw SHF overlay with a residual track when saturation-height modelling is on, and the Rt cutoff with shaded LRLC flags when LRLC analysis is on
+- Interactive GPU-accelerated six-track log visualization, plus a Rock Type track when rock typing is on and a Sw SHF overlay with a residual track when saturation-height modelling is on, and the Rt cutoff with shaded LRLC flags, the corrected Rt, laminar shale volume and baseline Sw when LRLC analysis is on
 - Excel, CSV, and LAS export, per well or for all wells with a field summary
 - JSON session save and load of the whole multi-well project
 - Light and Dark application themes
@@ -90,7 +91,7 @@ See [Licensing](docs/licensing.md) for the detailed scope, commercial PyQt6 opti
 
 ## Citation
 
-Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.11.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
+Rohmana, R. C. (2026). *Petrophyter: An Application for Petrophysical Analysis* (Version 1.12.0) [Computer software]. Petrophysics TAU Research Group, Petroleum Engineering, Tanri Abeng University. Supported by GeoPangea Research Group (GPRG).
 
 ---
 
