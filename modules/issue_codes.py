@@ -70,6 +70,18 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "SHF_PAY_FALLBACK": ("warning", "diagnostics"),
     "SHF_PAY_REFUSED": ("warning", "diagnostics"),
     "SHF_ZONE_SCOPE_RT": ("info", "diagnostics"),
+    # LRLC (opt-in low-resistivity low-contrast layer)
+    "LRLC_STEP_UNKNOWN": ("warning", None),
+    "LRLC_STEP_INVALID": ("warning", "diagnostics"),
+    "LRLC_STEP_FALLBACK": ("warning", "diagnostics"),
+    "LRLC_NO_RT": ("info", None),
+    "LRLC_AUX_MISSING": ("warning", None),
+    "LRLC_AUX_NONPOSITIVE": ("info", None),
+    "LRLC_CRITERION_UNAVAILABLE": ("info", "diagnostics"),
+    "LRLC_CUT_NO_ROOT": ("info", "diagnostics"),
+    "LRLC_CUT_NO_BASIS": ("info", "diagnostics"),
+    "LRLC_SWIRR_MISSING": ("info", "diagnostics"),
+    "LRLC_SWIRR_COLUMN": ("warning", None),
 }
 
 
