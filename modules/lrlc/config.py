@@ -167,7 +167,9 @@ LRLC_PARAM_DEFAULTS: Dict[str, Any] = {
     "ma_rho": None,
     "ma_pef": 1.81,
     "sh_rho": None,
-    "sh_pef": 3.4,
+    # Average shale Pe 3.42 b/e (effective Z 14.07, density 2.65 g/cc) from the standard
+    # mineral tables; real shales read about 3 to 3.5, higher with iron-bearing minerals.
+    "sh_pef": 3.42,
     "pyr_f": 0.0,
     "pyr_rpy": 0.01,
     # Qv estimate for Waxman-Smits (None = the zone's rho_matrix).
