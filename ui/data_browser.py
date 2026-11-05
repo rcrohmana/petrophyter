@@ -399,6 +399,13 @@ class DataBrowserPanel(QWidget):
             action = self._actions.get(action_key)
             if action is not None:
                 menu.addAction(action)
+        if kind == "top":
+            zone = normalize_zone(index.sibling(index.row(), 0).data(Qt.ItemDataRole.DisplayRole))
+            if zone:
+                lrlc = QAction(get_icon("activity"), "Analyze as LRLC candidate", menu)
+                lrlc.triggered.connect(
+                    lambda _=False, z=zone: self.action_requested.emit(f"lrlc_zone:{z}"))
+                menu.addAction(lrlc)
         return menu
 
     def _show_context_menu(self, pos):

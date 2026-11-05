@@ -63,6 +63,7 @@ from .tabs.petrophysics_tab import PetrophysicsTab
 from .tabs.log_display_tab import LogDisplayTab
 from .tabs.diagnostics_tab import DiagnosticsTab
 from .tabs.rock_typing_tab import RockTypingTab
+from .tabs.lrlc_tab import LrlcTab
 from .tabs.shf_tab import ShfTab
 from .tabs.summary_tab import SummaryTab
 from .tabs.uncertainty_tab import UncertaintyTab
@@ -250,6 +251,7 @@ class MainWindow(QMainWindow):
         self.diag_tab = DiagnosticsTab(self.model)
         self.rock_tab = RockTypingTab(self.model)
         self.shf_tab = ShfTab(self.model)
+        self.lrlc_tab = LrlcTab(self.model)
         self.summary_tab = SummaryTab(self.model)
         self.uncertainty_tab = UncertaintyTab(self.model)
         self.export_tab = ExportTab(self.model)
@@ -260,13 +262,14 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.diag_tab, "Diagnostics")
         self.tab_widget.addTab(self.rock_tab, "Rock Typing")
         self.tab_widget.addTab(self.shf_tab, "Saturation-Height")
+        self.tab_widget.addTab(self.lrlc_tab, "LRLC Workbench")
         self.tab_widget.addTab(self.summary_tab, "Summary")
         self.tab_widget.addTab(self.uncertainty_tab, "Uncertainty")
         self.tab_widget.addTab(self.export_tab, "Export")
         # Plot tabs redraw only while visible; the others are marked dirty
         # and catch up when they become current.
         self._lazy_tabs = (self.qc_tab, self.petro_tab, self.log_tab, self.diag_tab,
-                           self.rock_tab, self.shf_tab)
+                           self.rock_tab, self.shf_tab, self.lrlc_tab)
         self._dirty_tabs = set()
         self.tab_widget.currentChanged.connect(self._refresh_current_tab)
 
@@ -362,6 +365,9 @@ class MainWindow(QMainWindow):
         # Saturation height: Apply fit, Accept and the settings re-check the wells' stale flags.
         self.shf_tab.run_all_requested.connect(self._on_run_all)
         self.shf_tab.stale_requested.connect(lambda keys: self._recompute_stale(keys or None))
+        # LRLC Workbench: settings writes re-check staleness; it never runs the analysis itself.
+        self.lrlc_tab.run_all_requested.connect(self._on_run_all)
+        self.lrlc_tab.stale_requested.connect(lambda keys: self._recompute_stale(keys or None))
 
         # Batch analysis signals
         self.batch_runner.started.connect(self._on_batch_started)
@@ -432,6 +438,11 @@ class MainWindow(QMainWindow):
                        self.model.project.wells_changed):
             if signal is not None:
                 signal.connect(self._mark_shf_tab_dirty)
+        # LRLC results, parameters, scoped values and the wells reach the Workbench when visible.
+        for signal in (self.model.analysis_complete, self.model.parameters_changed,
+                       self.model.scoped_params_changed, self.model.project.active_well_changed,
+                       self.model.project.wells_changed):
+            signal.connect(self._mark_lrlc_tab_dirty)
 
     def _on_about_triggered(self):
         """Show the About dialog."""
@@ -615,12 +626,19 @@ class MainWindow(QMainWindow):
         act("theme_dark", "Dark", "moon", None, lambda: self._set_theme("dark"), checkable=True)
         act("user_guide", "User Guide", "book-open", None, self._open_user_guide)
         act("about", "About Petrophyter", "info", None, self._on_about_triggered)
+        act("references", "Scientific References…", "book-open", None, self._on_references)
+        act("lrlc_workbench", "LRLC Workbench…", "activity", "Ctrl+L",
+            lambda: self.show_lrlc("screening"))
+        act("rt_cutoff_overlay", "Rt Cutoff Overlay…", "scissors", None,
+            lambda: self.show_lrlc("screening", "rt_cutoff"))
+        act("shf_shortcut", "Saturation-Height (Rt-independent Sw)…", "droplets", None,
+            lambda: self.tab_widget.setCurrentWidget(self.shf_tab))
         for key, title, _menu, icon in PAGES:
             act(f"page_{key}", f"{title}…", icon, None,
                 lambda _=False, k=key: self.params_window.open_page(k))
         act("params_window", "Parameters Window", "sliders-horizontal", "Ctrl+P",
             lambda: self.params_window.open_page(self.params_window.current_page()))
-        for key in ("run_analysis", "run_all", "toggle_browser", "params_window"):
+        for key in ("run_analysis", "run_all", "toggle_browser", "params_window", "lrlc_workbench"):
             self.actions_[key].setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.actions_["page_core"].setEnabled(False)
         self.actions_["open_tops_multi"].setEnabled(False)
@@ -668,6 +686,17 @@ class MainWindow(QMainWindow):
         for name in ("Parameters", "Corrections"):
             menus[name] = QMenu(f"&{name}", self)
             bar.insertMenu(view.menuAction(), menus[name])
+        specialized = QMenu("Speciali&zed", self)
+        bar.insertMenu(menus["Parameters"].menuAction(), specialized)
+        self._menus["specialized"] = specialized
+        specialized.addAction(self.actions_["lrlc_workbench"])
+        specialized.addSeparator()
+        saturation_tools = specialized.addMenu("Saturation Tools")
+        self._action_icons["saturation_tools_menu"] = "droplets"
+        self.actions_["saturation_tools_menu"] = saturation_tools.menuAction()
+        saturation_tools.menuAction().setIcon(get_icon("droplets"))
+        saturation_tools.addAction(self.actions_["rt_cutoff_overlay"])
+        saturation_tools.addAction(self.actions_["shf_shortcut"])
         for key, _title, menu, _icon in PAGES:
             if key == "rock":
                 menus[menu].addSeparator()  # Basic | Advanced split (spec §2.2)
@@ -681,6 +710,7 @@ class MainWindow(QMainWindow):
         theme_menu.addAction(self.actions_["theme_dark"])
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.actions_["user_guide"])
+        help_menu.addAction(self.actions_["references"])
         help_menu.addAction(self.actions_["about"])
 
     def _build_toolbar(self):
@@ -992,6 +1022,7 @@ class MainWindow(QMainWindow):
             getattr(self, "diag_tab", None),
             getattr(self, "rock_tab", None),
             getattr(self, "shf_tab", None),
+            getattr(self, "lrlc_tab", None),
             getattr(self, "summary_tab", None),
             getattr(self, "uncertainty_tab", None),
             getattr(self, "export_tab", None),
@@ -1306,6 +1337,7 @@ class MainWindow(QMainWindow):
         self._refresh_uncertainty_actions()
         self.rock_tab.set_batch_running(self.batch_runner.is_running())
         self.shf_tab.set_batch_running(self.batch_runner.is_running())
+        self.lrlc_tab.set_batch_running(self.batch_runner.is_running())
         if self._busy:
             return  # _set_busy(None) refreshes
         project = self.model.project
@@ -1396,6 +1428,7 @@ class MainWindow(QMainWindow):
         self.diag_tab.reset_ui()
         self.rock_tab.reset_ui()
         self.shf_tab.reset_ui()
+        self.lrlc_tab.reset_ui()
         self.summary_tab.reset_ui()
         self.export_tab.reset_ui()
 
@@ -2070,10 +2103,24 @@ class MainWindow(QMainWindow):
             if field and focus is not None:
                 focus(field)
 
+    def show_lrlc(self, panel="screening", section=None, zone=None):
+        """Select the LRLC Workbench tab on a panel (and section / zone)."""
+        self.tab_widget.setCurrentWidget(self.lrlc_tab)
+        self.lrlc_tab.show_panel(panel, section)
+        if zone:
+            self.lrlc_tab.select_zone(zone)
+
+    def _on_references(self):
+        from .widgets.references_dialog import ReferencesDialog
+
+        ReferencesDialog(self).exec()
+
     def _on_browser_action(self, key: str):
-        """Data Browser request: an action key, or ``edit_zone:<ZONE>``."""
+        """Data Browser request: an action key, ``edit_zone:<ZONE>`` or ``lrlc_zone:<ZONE>``."""
         if key.startswith("edit_zone:"):
             self._edit_zone(key.split(":", 1)[1])
+        elif key.startswith("lrlc_zone:"):
+            self.show_lrlc("screening", zone=key.split(":", 1)[1])
         elif key in self.actions_ and self.actions_[key].isEnabled():
             # QAction.trigger() ignores isEnabled(), so honour the busy state here.
             self.actions_[key].trigger()
@@ -2129,6 +2176,11 @@ class MainWindow(QMainWindow):
     def _mark_shf_tab_dirty(self, *_):
         """Pc data or wells changed: the Saturation-Height tab catches up once, when visible."""
         self._dirty_tabs.add(self.shf_tab)
+        self._rock_timer.start()
+
+    def _mark_lrlc_tab_dirty(self, *_):
+        """Results or settings changed: the LRLC Workbench catches up once, when visible."""
+        self._dirty_tabs.add(self.lrlc_tab)
         self._rock_timer.start()
 
     def _refresh_current_tab(self, *_):
@@ -2543,6 +2595,8 @@ class MainWindow(QMainWindow):
             self.model.set_edit_scope("project")
             self.session_service.apply_session_to_model(self.model, session_data)
             notes = session_level_notes(session_data) + list(notes)
+            if getattr(self.session_service, "last_notice", ""):
+                notes.append(self.session_service.last_notice)
             self._bulk_loading = True
             try:
                 notes = self.session_service.install_wells(

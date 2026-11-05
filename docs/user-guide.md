@@ -500,6 +500,7 @@ Sessions store paths, not the data or the results. Restored wells need a run: pr
 | `Esc` | Stop the running analysis (only while a run is active) | **Analysis → Stop analysis** |
 | `Ctrl+P` | Open the Parameters window | **View → Parameters Window** |
 | `Ctrl+B` | Show or hide the Data Browser | **View → Data Browser** |
+| `Ctrl+L` | Open the LRLC Workbench | Specialized → LRLC Workbench… |
 
 `F5`, `Ctrl+P`, and `Ctrl+B` work from any window of the application. Other menu items, including **Open Formation Tops…**, **Open Core Data…**, **Merge LAS Files…**, **Save Merged LAS…**, and **Exit**, have no shortcut. The Export tab buttons have no shortcut either.
 

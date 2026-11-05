@@ -123,7 +123,7 @@ def test_parameter_menus_cover_pages(window):
 
 def test_menu_order(window):
     titles = [a.text().replace("&", "") for a in window.menuBar().actions()]
-    assert titles == ["File", "Session", "Analysis", "Parameters", "Corrections", "View", "Help"]
+    assert titles == ["File", "Session", "Analysis", "Specialized", "Parameters", "Corrections", "View", "Help"]
 
 
 def test_core_matching_needs_core(window):
