@@ -21,7 +21,8 @@ from themes.icon_loader import get_icon
 _ROLES = {
     "tops": [("well", "Well"), ("name", "Formation"), ("top", "Top"), ("bottom", "Bottom")],
     "core": [("well", "Well"), ("depth", "Depth"), ("porosity", "Porosity"),
-             ("permeability", "Permeability"), ("grain_density", "Grain density")],
+             ("permeability", "Permeability"), ("grain_density", "Grain density"),
+             ("cec", "CEC (meq/100 g)")],
     "pc": [("well", "Well"), ("sample", "Sample"), ("depth", "Depth"), ("pc", "Pc"),
            ("sw", "Sw"), ("porosity", "Porosity"), ("permeability", "Permeability")],
 }

@@ -122,6 +122,7 @@ class CoreDataHandler:
                    'horizontal perm', 'hor perm', 'perm (md)', 'permeability (md)']
     GRAIN_DENSITY_ALIASES = ['grain density', 'grain density (g/cm³)', 'grain_density', 
                              'rhog', 'rho_grain', 'matrix density']
+    CEC_ALIASES = ('cec', 'cec (meq/100g)', 'cation exchange capacity', 'cec_meq')
     NUMBER_ALIASES = ['number', 'no', 'sample', 'sample_no', 'id', 'sample id']
     
     # Conversion constants
@@ -133,6 +134,7 @@ class CoreDataHandler:
         self.porosity_col: Optional[str] = None
         self.perm_col: Optional[str] = None
         self.grain_density_col: Optional[str] = None
+        self.cec_col: Optional[str] = None
         self.depth_unit: str = 'M'  # Will be converted to FT to match log data
         self.depth_unit_detected: bool = False
         self.depth_unit_warning: Optional[str] = None
@@ -175,6 +177,7 @@ class CoreDataHandler:
         self.porosity_col = None
         self.perm_col = None
         self.grain_density_col = None
+        self.cec_col = None
         self.depth_unit = 'M'
         self.depth_unit_detected = False
         self.depth_unit_warning = None
@@ -214,7 +217,8 @@ class CoreDataHandler:
         cols = {'depth': pick('depth', self.DEPTH_ALIASES),
                 'porosity': pick('porosity', self.POROSITY_ALIASES),
                 'permeability': pick('permeability', self.PERM_ALIASES),
-                'grain_density': pick('grain_density', self.GRAIN_DENSITY_ALIASES)}
+                'grain_density': pick('grain_density', self.GRAIN_DENSITY_ALIASES),
+                'cec': pick('cec', self.CEC_ALIASES)}
         if 'well' in ov:
             well_col, well_kind = ov['well'], 'name'
             if well_col is not None:
@@ -223,7 +227,7 @@ class CoreDataHandler:
         else:
             well_col, well_kind = find_well_column(df, self._find_column)
         if well_col in (cols['depth'], cols['porosity'], cols['permeability'],
-                        cols['grain_density']):
+                        cols['grain_density'], cols['cec']):
             well_col, well_kind = None, 'name'
         cols['well'], cols['well_kind'] = well_col, well_kind
         return cols
@@ -254,7 +258,7 @@ class CoreDataHandler:
                 'percent' / 'fraction' for every well, or ``{well: scale}``
             sheet: sheet index or name (Excel bytes only)
             columns: explicit column override ``{well|depth|porosity|permeability|
-                grain_density: header name or None}``; names match case-insensitively,
+                grain_density|cec: header name or None}``; names match case-insensitively,
                 None = no such column
 
         Returns:
@@ -331,6 +335,7 @@ class CoreDataHandler:
         self.porosity_col = cols['porosity']
         self.perm_col = cols['permeability']
         self.grain_density_col = cols['grain_density']
+        self.cec_col = cols['cec']
         self.well_col, self.well_kind = cols['well'], cols['well_kind']
 
         # Validate that we have at least one property to validate
@@ -365,6 +370,8 @@ class CoreDataHandler:
                               ('porosity', self.porosity_col),
                               ('permeability', self.perm_col),
                               ('grain_density', self.grain_density_col))}
+        if self.cec_col:  # optional role: listed only when present
+            self.columns_detected['cec'] = original.get(self.cec_col)
         if self.well_col:
             self.fill_down_applicable = merged_cell_pattern_applies(
                 wells_txt, depth_num.tolist())
@@ -398,7 +405,7 @@ class CoreDataHandler:
         if self.well_col:
             df[self.well_col] = wells_txt
         # Convert numeric columns
-        for col in (self.porosity_col, self.perm_col, self.grain_density_col):
+        for col in (self.porosity_col, self.perm_col, self.grain_density_col, self.cec_col):
             if col:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         df['__line__'] = lines
@@ -413,6 +420,10 @@ class CoreDataHandler:
         self._row_lines = df.pop('__line__').tolist()
         if self.porosity_col:
             self._por_raw = df.pop('__por_raw__').to_numpy(dtype=float)
+
+        # Optional CEC (meq/100 g), exposed under a fixed name.
+        if self.cec_col:
+            df['CEC'] = df[self.cec_col].to_numpy(dtype=float)
 
         self.data = df
 
@@ -500,7 +511,7 @@ class CoreDataHandler:
             df.loc[df.index[mask], col] = np.nan
 
         for col, name in ((self.porosity_col, 'porosity'), (self.perm_col, 'permeability'),
-                          (self.grain_density_col, 'grain density')):
+                          (self.grain_density_col, 'grain density'), (self.cec_col, 'CEC')):
             if not col:
                 continue
             values = df[col].to_numpy(dtype=float)
@@ -514,9 +525,14 @@ class CoreDataHandler:
             values = df[self.perm_col].to_numpy(dtype=float)
             blank(self.perm_col, np.isfinite(values) & (values <= 0.0),
                   'nonpositive_perm', "permeability not positive")
+        if self.cec_col:
+            values = df[self.cec_col].to_numpy(dtype=float)
+            blank(self.cec_col, np.isfinite(values) & (values < 0.0),
+                  'negative_cec', "negative CEC")
         labels = {'null_sentinel': "null sentinel value(s)",
                   'negative_porosity': "negative porosity value(s)",
-                  'nonpositive_perm': "non-positive permeability value(s)"}
+                  'nonpositive_perm': "non-positive permeability value(s)",
+                  'negative_cec': "negative CEC value(s)"}
         for reason, n in counts.items():
             self.notes.append(f"{n} {labels[reason]} excluded.")
         return df

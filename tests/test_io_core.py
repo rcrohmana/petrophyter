@@ -248,3 +248,71 @@ def test_i14_validation_statistics_count_gap_cores():
     log_depth = np.array([1000.0, 1001.0, 1002.0, 1003.0, 1100.0])
     result = handler.validate_porosity(log_depth, np.full(5, 0.2), max_dist_ft=2.0)
     assert result.n_points == 4 and result.n_in_log_gaps == 3
+
+
+
+# --------------------------------------------------------------------------- #
+# Optional CEC column
+# --------------------------------------------------------------------------- #
+def _read(text, **kw):
+    h = CoreDataHandler()
+    ok = h.read_core_from_buffer(_buf(text), separator="\t", depth_unit="FT", **kw)
+    return h, ok
+
+
+@pytest.mark.parametrize("name", ["CEC", "CEC (meq/100g)", "Cation Exchange Capacity", "cec_meq"])
+def test_cec_detected_by_alias(name):
+    h, ok = _read(f"Depth\tPorosity\t{name}\n1000\t0.2\t5.5\n1001\t0.21\t6.5\n")
+    assert ok
+    assert h.cec_col == name.lower()
+    assert h.columns_detected["cec"] == name
+    assert list(h.data["CEC"]) == [5.5, 6.5]
+
+
+def test_cec_numeric_cleaning_and_negative_excluded():
+    h, ok = _read("Depth\tPorosity\tCEC\n1000\t0.2\tabc\n1001\t0.2\t-999.25\n"
+                  "1002\t0.2\t-3\n1003\t0.2\t7\n")
+    assert ok
+    cec = h.data["CEC"].to_numpy()
+    assert np.isnan(cec[:3]).all() and cec[3] == 7
+    assert any("negative CEC" in n for n in h.notes)
+    assert any("null sentinel" in n for n in h.notes)
+    assert any("negative CEC" in r for _, r in h.excluded_rows)
+
+
+def test_absent_cec_leaves_other_roles_unchanged():
+    text = "Depth\tPorosity\tPerm\n1000\t0.2\t10\n1001\t0.25\t20\n"
+    h, ok = _read(text)
+    assert ok and h.cec_col is None
+    assert "CEC" not in h.data.columns
+    assert "cec" not in h.columns_detected
+    h2, _ = _read("Depth\tPorosity\tPerm\tCEC\n1000\t0.2\t10\t4\n1001\t0.25\t20\t5\n")
+    for c in ("depth", "porosity", "perm"):
+        assert list(h.data[c]) == list(h2.data[c])
+
+
+def test_cec_override_role():
+    text = "Depth\tPorosity\tClay data\n1000\t0.2\t4\n1001\t0.25\t5\n"
+    h, _ = _read(text)
+    assert "CEC" not in h.data.columns
+    h, ok = _read(text, columns={"cec": "Clay data"})
+    assert ok and list(h.data["CEC"]) == [4, 5]
+    assert h.columns_detected["cec"] == "Clay data"
+    h, ok = _read("Depth\tPorosity\tCEC\n1000\t0.2\t4\n", columns={"cec": None})
+    assert ok and "CEC" not in h.data.columns
+
+
+def test_cec_survives_split_by_well():
+    h, ok = _read("Well\tDepth\tPorosity\tCEC\nA\t1000\t0.2\t4\nB\t1001\t0.2\t5\n")
+    assert ok
+    parts = h.split_by_well()
+    assert [list(p.data["CEC"]) for p in parts.values()] == [[4.0], [5.0]]
+
+
+def test_cec_role_in_import_dialog_and_replay_is_generic():
+    from ui.widgets.well_import_dialog import _ROLES
+    assert ("cec", "CEC (meq/100 g)") in _ROLES["core"]
+    # Session replay stores the mapping as a plain {role: header} dict, so
+    # a recorded cec entry reaches the reader unchanged.
+    h, ok = _read("Depth\tPorosity\tx\n1000\t0.2\t4\n", columns=dict({"cec": "x"}))
+    assert ok and h.data["CEC"].iloc[0] == 4
