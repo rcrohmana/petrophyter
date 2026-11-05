@@ -87,28 +87,52 @@ _ENTRIES = [
        "Genetic mechanisms and identification of low-resistivity pay zones, Pengyang area, "
        "Ordos Basin",
        "Geofluids", doi="10.1155/2022/3299768", status="verified", groups=(G_SCREEN,)),
-    _r("boyd1995", "Boyd et al.", 1995, None, "Oilfield Review", volume="7", number="3",
-       pages="4-18", groups=(G_SCREEN,)),
-    _r("worthington2000", "Worthington", 2000, None, "Petroleum Geoscience", volume="6",
-       number="1", groups=(G_SCREEN,)),
-    _r("zemanek1989", "Zemanek", 1989, None, "SPE Formation Evaluation", volume="4",
-       number="4", groups=(G_SCREEN,)),
-    _r("pickett1966", "Pickett", 1966, None, "JPT", volume="18", number="11",
-       pages="1425-1433", groups=(G_PICKETT,)),
-    _r("buckles1965", "Buckles", 1965, None, "JCPT", volume="4", number="1", pages="42-52",
+    _r("boyd1995", "Boyd, Darling, Tabanou, Davis, Lyon, Flaum, Klein, Sneider, Sibbit and "
+       "Singer", 1995, "The Lowdown on Low-Resistivity Pay", "Oilfield Review", volume="7",
+       number="3", pages="4-18",
+       url="https://www.slb.com/-/media/files/oilfield-review/08950418.pdf",
+       status="verified", groups=(G_SCREEN,)),
+    _r("worthington2000", "Worthington", 2000,
+       "Recognition and evaluation of low-resistivity pay", "Petroleum Geoscience",
+       volume="6", number="1", pages="77-92", doi="10.1144/petgeo.6.1.77",
+       status="verified", groups=(G_SCREEN,)),
+    _r("zemanek1989", "Zemanek", 1989, "Low-Resistivity Hydrocarbon-Bearing Sand Reservoirs",
+       "SPE Formation Evaluation", volume="4", number="4", pages="515-521",
+       doi="10.2118/15713-PA", status="verified", groups=(G_SCREEN,)),
+    _r("pickett1966", "Pickett", 1966,
+       "A Review of Current Techniques for Determination of Water Saturation From Logs",
+       "Journal of Petroleum Technology", volume="18", number="11", pages="1425-1433",
+       doi="10.2118/1446-PA", status="verified", groups=(G_PICKETT,)),
+    _r("buckles1965", "Buckles", 1965, "Correlating and Averaging Connate Water Saturation Data",
+       "Journal of Canadian Petroleum Technology", volume="4", number="1", pages="42-52",
+       doi="10.2118/65-01-07", status="verified", groups=(G_BVW,)),
+    _r("morris1967", "Morris and Biggs", 1967,
+       "Using Log-Derived Values of Water Saturation and Porosity",
+       "SPWLA 8th Annual Logging Symposium", pages="Paper X", kind="inproceedings",
        groups=(G_BVW,)),
-    _r("morris1967", "Morris and Biggs", 1967, None, "SPWLA 8th Annual Logging Symposium",
-       kind="inproceedings", groups=(G_BVW,)),
-    _r("crain_handbook", "Crain", None, "Petrophysical Handbook", None, kind="book",
+    _r("crain_handbook", "Crain", None, "Crain's Petrophysical Handbook",
+       "Accessible Petrophysics Ltd (online)", url="https://www.spec2000.net", kind="misc",
        groups=(G_BVW,)),
-    _r("archie1942", "Archie", 1942, None, "Trans. AIME", groups=(G_PICKETT, G_RTCUT, G_SATMOD)),
-    _r("simandoux1963", "Simandoux", 1963, None, "Revue de l'Institut Francais du Petrole",
+    _r("archie1942", "Archie", 1942,
+       "The Electrical Resistivity Log as an Aid in Determining Some Reservoir "
+       "Characteristics", "Transactions of the AIME", volume="146", number="1", pages="54-62",
+       doi="10.2118/942054-G", status="verified", groups=(G_PICKETT, G_RTCUT, G_SATMOD)),
+    _r("simandoux1963", "Simandoux", 1963,
+       "Mesures dielectriques en milieu poreux, application a la mesure des saturations en "
+       "eau, etude du comportement des massifs argileux",
+       "Revue de l'Institut Francais du Petrole", volume="18 (supplementary issue)",
+       pages="193-215", groups=(G_RTCUT, G_SATMOD)),
+    _r("poupon1971", "Poupon and Leveaux", 1971,
+       "Evaluation of Water Saturation in Shaly Formations",
+       "SPWLA 12th Annual Logging Symposium", kind="inproceedings",
        groups=(G_RTCUT, G_SATMOD)),
-    _r("poupon1971", "Poupon and Leveaux", 1971, None, "The Log Analyst",
-       groups=(G_RTCUT, G_SATMOD)),
-    _r("waxman1968", "Waxman and Smits", 1968, None, "SPE Journal", volume="8", number="2",
-       pages="107-122", groups=(G_RTCUT, G_SATMOD)),
-    _r("clavier1984", "Clavier, Coates and Dumanoir", 1984, None, "SPE Journal",
+    _r("waxman1968", "Waxman and Smits", 1968, "Electrical Conductivities in Oil-Bearing Shaly "
+       "Sands", "Society of Petroleum Engineers Journal", volume="8", number="2",
+       pages="107-122", doi="10.2118/1863-A", status="verified", groups=(G_RTCUT, G_SATMOD)),
+    _r("clavier1984", "Clavier, Coates and Dumanoir", 1984,
+       "Theoretical and Experimental Bases for the Dual-Water Model for Interpretation of "
+       "Shaly Sands", "Society of Petroleum Engineers Journal", volume="24", number="2",
+       pages="153-168", doi="10.2118/6859-PA", status="verified",
        groups=(G_RTCUT, G_SATMOD)),
     _r("ipa1998", "IPA", 1998, None, "Block A-18 JDA study", kind="misc", groups=(G_SCREEN,)),
     _r("thomas1975", "Thomas and Stieber", 1975, None, "SPWLA 16th Annual Logging Symposium",
@@ -177,6 +201,8 @@ def _short_authors(ref: Reference) -> str:
     names = _author_list(ref.authors)
     if len(names) == 1:
         return names[0]
+    if len(names) > 3:
+        return names[0] + " et al."
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 

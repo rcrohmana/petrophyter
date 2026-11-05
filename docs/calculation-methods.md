@@ -459,7 +459,7 @@ Six criteria are tested at each sample, on the measured `RT` (never `RT_SW`):
 | 5 | Contrast to shale | `RT / Rsh ≤ screen_contrast_max` | RT and the effective Rsh (temperature-corrected) are valid and positive |
 | 6 | Sw high | `Sw ≥ sw_cutoff` | Sw is valid |
 
-`phi_cutoff`, `vsh_cutoff` and `sw_cutoff` are the pay cutoffs of the zone (there are no separate LRLC cutoffs). `screen_rt_max` (default 5 ohm.m), `screen_contrast_max` (default 2) and `screen_min_score` (default 5) are **design defaults, not published constants; calibrate them per field**. The 1.0 limit on `RT / RS` is fixed: with fresh mud, deep resistivity at or above shallow indicates hydrocarbons and below it indicates water, but the indicator is weak with saline mud. Boyd et al. (1995) *(to verify)*, Worthington (2000) *(to verify)* and Zemanek (1989) *(to verify)* are the qualitative basis for the criteria, not for the numbers.
+`phi_cutoff`, `vsh_cutoff` and `sw_cutoff` are the pay cutoffs of the zone (there are no separate LRLC cutoffs). `screen_rt_max` (default 5 ohm.m), `screen_contrast_max` (default 2) and `screen_min_score` (default 5) are **design defaults, not published constants; calibrate them per field**. The 1.0 limit on `RT / RS` is fixed: with fresh mud, deep resistivity at or above shallow indicates hydrocarbons and below it indicates water, but the indicator is weak with saline mud. Boyd et al. (1995), Worthington (2000) and Zemanek (1989) are the qualitative basis for the criteria, not for the numbers.
 
 ```
 LRLC_SCORE = number of criteria met (0 to 6; a criterion that cannot be evaluated counts as not met)
@@ -485,7 +485,7 @@ A sample has no cutoff (`RT_CUT` is empty) when its porosity is missing or at mo
 
 **Zone cutoff.** For each zone one cutoff is also given, from the thickness-weighted means of PHIE, PHIT, Vsh, Rw, Rsh and the other inputs over the pay samples, or the net reservoir samples when there is no pay, or the gross sand samples when there is no net reservoir; with none of them, the zone has no value. The table in the Workbench names the basis.
 
-References: Liu et al. (2023); Archie (1942) *(to verify)*; Simandoux (1963) *(to verify)*; Poupon and Leveaux (1971) *(to verify)*; Waxman and Smits (1968) *(to verify)*; Clavier, Coates and Dumanoir (1984) *(to verify)*.
+References: Liu et al. (2023); Archie (1942); Simandoux (1963) *(to verify)*; Poupon and Leveaux (1971) *(to verify)*; Waxman and Smits (1968); Clavier, Coates and Dumanoir (1984).
 
 ### Bulk volume water and the water-free flag
 
@@ -496,7 +496,7 @@ WATER_FREE_FLAG = 1  when NET_RES_FLAG = 1 and SW ≤ SWIRR + movable_tol
 
 `SW` is the effective primary Sw, so for Waxman-Smits and Dual-Water `BVW` is on the same basis as HCPV. `SWIRR` is the column chosen in the Workbench (`SWIRR` by default, the result of the Swirr method in use; or `SWIRR_BUCKLES`, `SWIRR_CLEANZONE`, `SWIRR_STAT`). A chosen column that is missing in a segment falls back to `SWIRR`, with a warning. Hierarchical `SWIRR` is capped at `SW`, so `SW − SWIRR` is the movable water saturation. A sample with a high Sw whose Sw is close to Swirr is at irreducible water (typically fine-grained or micro-porous rock) and can produce water-free; the flag is a screen, not a test result. It is not evaluated, and counted, for net-reservoir samples without a Swirr; `movable_tol` defaults to 0.05.
 
-In the **Buckles** plot, points of one rock type at irreducible water lie on a hyperbola of constant bulk volume water, `Sw = k / PHIE` with `k = BVW`. References: Buckles (1965) *(to verify)*; Morris and Biggs (1967) *(to verify)*; Crain's Petrophysical Handbook *(to verify)*.
+In the **Buckles** plot, points of one rock type at irreducible water lie on a hyperbola of constant bulk volume water, `Sw = k / PHIE` with `k = BVW`. References: Buckles (1965); Morris and Biggs (1967) *(to verify)*; Crain's Petrophysical Handbook *(to verify)*.
 
 ### Pickett plot and the wet-point fit
 
@@ -520,7 +520,7 @@ so water-bearing samples (`Sw = 1`) fall on a line of slope `−m` and intercept
 | `m_outside_range`, `rw_outside_range` | fitted but outside the range: shown, and not applicable |
 | `no_data` | no usable sample |
 
-Limits: the wet points must really be water-bearing (a hydrocarbon-bearing envelope overstates Rw); clay conduction biases m low; Rw is assumed constant over the interval, after the temperature normalisation. References: Pickett (1966) *(to verify)*; Archie (1942) *(to verify)*.
+Limits: the wet points must really be water-bearing (a hydrocarbon-bearing envelope overstates Rw); clay conduction biases m low; Rw is assumed constant over the interval, after the temperature normalisation. References: Pickett (1966); Archie (1942).
 
 ### The Rt array path and the correction chain
 

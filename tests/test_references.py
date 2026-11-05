@@ -43,7 +43,10 @@ def test_statuses_and_kinds_valid():
 
 def test_verified_entries_have_doi_or_url():
     verified = [r for r in REFERENCES.values() if r.status == "verified"]
-    assert {r.key for r in verified} == {"liu2023", "ashfaq_us11709287", "zhao2022"}
+    assert {r.key for r in verified} == {
+        "liu2023", "ashfaq_us11709287", "zhao2022", "boyd1995", "worthington2000",
+        "zemanek1989", "pickett1966", "buckles1965", "archie1942", "waxman1968", "clavier1984",
+    }
     for ref in verified:
         assert ref.doi or ref.url, ref.key
 
@@ -66,7 +69,7 @@ def test_format_short():
 
 
 def test_format_full_marks_unverified_only():
-    assert references.format_full("boyd1995").endswith("(citation details to be confirmed)")
+    assert references.format_full("simandoux1963").endswith("(citation details to be confirmed)")
     full = references.format_full("liu2023")
     assert "to be confirmed" not in full
     assert "10.1515/geo-2022-0520" in full
@@ -181,6 +184,7 @@ def test_method_box_shows_method(qtbot):
     cites = box.citations.text()
     assert "Liu Chenglin et al. (2023)" in cites
     assert "Liu Chenglin et al. (2023) (to verify)" not in cites
-    assert "Archie (1942) (to verify)" in cites
+    assert "Archie (1942); " in cites
+    assert "Simandoux (1963) (to verify)" in cites
     box.set_method(METHOD_TEXT["rt_chain"])
     assert box.citations.isHidden()
