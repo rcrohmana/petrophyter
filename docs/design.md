@@ -393,7 +393,7 @@ Lucide (ISC license, text in `NOTICE`): monochrome stroke SVGs in `icons/lucide/
 `stroke="currentColor"`, stroke width 1.75. `themes.icon_loader.get_icon(name,
 color_token="text_secondary")` recolors per theme, renders 16/18/24px at DPR 1 and 2,
 and caches by `(name, theme, color_token)`. `clear_icon_cache()` runs on every theme
-change. `app_icon.svg` / `.ico` are the application logo and are outside this set.
+change. `app_icon.png` / `.ico` are the application logo and are outside this set.
 
 | Icon | Use |
 |---|---|

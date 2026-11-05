@@ -47,7 +47,7 @@ class AboutDialog(QDialog):
         icon_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             "icons",
-            "app_icon.svg",
+            "app_icon.png",
         )
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)

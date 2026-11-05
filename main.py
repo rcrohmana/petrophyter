@@ -64,8 +64,8 @@ def main():
     app.setApplicationVersion(APP_VERSION)
     configure_logging()
 
-    # Set application icon (rock/stone icon)
-    icon_path = resource_path(os.path.join("icons", "app_icon.svg"))
+    # Application icon (window title bar and taskbar; the exe uses app_icon.ico)
+    icon_path = resource_path(os.path.join("icons", "app_icon.png"))
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
