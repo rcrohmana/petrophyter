@@ -8,7 +8,7 @@ and asks for a stale re-check (stale_requested); it never runs the analysis.
 
 import logging
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QRadioButton,
@@ -96,6 +97,27 @@ CHAIN_SENTENCE = "Rsh and Rw estimators stay on the measured RT."
 RUN_FIRST = "Run the analysis first"
 GUARD_RUN_FIRST = ("Run the analysis with Thomas-Stieber switched on to classify laminated zones; "
                    "the guard cannot block anything before that.")
+
+
+class _CellCheck(QWidget):
+    """A check box centred in a table cell; offers the check box API the table callers use."""
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.box = QCheckBox()
+        self.box.toggled.connect(self.toggled)
+        lay.addWidget(self.box)
+
+    def setChecked(self, on):
+        self.box.setChecked(bool(on))
+
+    def isChecked(self) -> bool:
+        return self.box.isChecked()
 
 
 class LrlcTab(QWidget):
@@ -395,6 +417,8 @@ class LrlcTab(QWidget):
 
     # ---- remediation panel
     def _build_remediation(self) -> QWidget:
+        """The always-visible header (Rt source box, then the form header) above the inner tabs
+        of the form; each tab scrolls on its own."""
         page = QWidget()
         v = QVBoxLayout(page)
         group = QGroupBox("Rt source")
@@ -405,49 +429,58 @@ class LrlcTab(QWidget):
         self.level_combo = QComboBox()
         self.level_combo.addItem("Active well", "well")
         self.level_combo.addItem("Project", "project")
+        self.level_combo.setMaximumWidth(220)
         self.level_combo.currentIndexChanged.connect(lambda _i: self._render_remediation())
         top.addWidget(self.level_combo)
+        top.addSpacing(24)
+        top.addWidget(QLabel("When a step cannot produce a value"))
+        self.fallback_combo = QComboBox()
+        for key, text in FALLBACK_LABELS:
+            self.fallback_combo.addItem(text, key)
+        self.fallback_combo.setMaximumWidth(420)
+        self.fallback_combo.currentIndexChanged.connect(self._on_fallback_changed)
+        top.addWidget(self.fallback_combo)
         top.addStretch(1)
         gl.addLayout(top)
         self.remediation_note = _note("")
         gl.addWidget(self.remediation_note)
         self.rt_source_table = _table(("Zone", "Sw reads"))
-        gl.addWidget(self.rt_source_table)
+        self.rt_source_table.horizontalHeader().setStretchLastSection(False)
+        self.rt_source_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
+        self.rt_source_table.verticalHeader().setDefaultSectionSize(28)
+        gl.addWidget(self.rt_source_table, 0, Qt.AlignmentFlag.AlignLeft)
         self.sw_reads_label = QLabel("")
         gl.addWidget(self.sw_reads_label)
-        self.chain_note = _note(CHAIN_SENTENCE)
-        gl.addWidget(self.chain_note)
-        row = QHBoxLayout()
-        row.addWidget(QLabel("When a step cannot produce a value"))
-        self.fallback_combo = QComboBox()
-        for key, text in FALLBACK_LABELS:
-            self.fallback_combo.addItem(text, key)
-        self.fallback_combo.currentIndexChanged.connect(self._on_fallback_changed)
-        row.addWidget(self.fallback_combo)
-        row.addStretch(1)
-        gl.addLayout(row)
+        checks = QHBoxLayout()
         self.sbc_check = QCheckBox("The mapped RT is shoulder-bed corrected")
         self.sbc_check.setToolTip(
             "Declare the mapped RT curve already shoulder-bed corrected. The laminated-sand "
             "correction is meant for the raw deep RT.")
         self.sbc_check.toggled.connect(self._on_sbc_toggled)
-        gl.addWidget(self.sbc_check)
-        self.sbc_note = _note("")
-        gl.addWidget(self.sbc_note)
+        checks.addWidget(self.sbc_check)
+        checks.addSpacing(24)
         self.guard_check = QCheckBox("Shoulder-bed guard (laminated zones)")
         self.guard_check.toggled.connect(self._on_guard_toggled)
-        gl.addWidget(self.guard_check)
+        checks.addWidget(self.guard_check)
+        checks.addStretch(1)
+        gl.addLayout(checks)
+        self.sbc_note = _note("")
+        gl.addWidget(self.sbc_note)
         self.guard_status = _note("")
         gl.addWidget(self.guard_status)
         v.addWidget(group)
+        self.remediation_form = RemediationForm()
+        v.addWidget(self.remediation_form, 1)
+
+        # The Rt chain tab: the chain sentence and the method box.
+        self.chain_note = _note(CHAIN_SENTENCE)
+        self.remediation_form.set_chain_widget(self.chain_note)
         self.chain_box = MethodReferenceBox()
         self.chain_box.set_method(METHOD_TEXT["rt_chain"])
-        v.addWidget(self.chain_box)
-        self.remediation_form = RemediationForm()
-        v.addWidget(self.remediation_form)
-        v.addStretch(1)
-        self.remediation_scroll = _scroll(page)
-        return self.remediation_scroll
+        self.remediation_form.set_chain_widget(self.chain_box)
+        self.remediation_scroll = page
+        return page
 
     # ---- validation panel
     def _build_validation(self) -> QWidget:
@@ -906,7 +939,7 @@ class LrlcTab(QWidget):
                 table.setItem(r, 1, _item(chain.chain_path(specs)))
                 on = {s.name for s in specs}
                 for c, spec in enumerate(steps):
-                    box = QCheckBox()
+                    box = _CellCheck()
                     box.setChecked(spec.name in on)
                     box.toggled.connect(
                         lambda checked, z=zone, n=spec.name: self._on_step_toggled(z, n, checked))
@@ -921,12 +954,23 @@ class LrlcTab(QWidget):
                 self.level_combo.setCurrentIndex(self.level_combo.findData("project"))
         finally:
             self._updating = was
-        fit_table_height(self.rt_source_table)
+        self._size_rt_source_table()
         self._render_sw_reads()
         self._render_sbc()
         self._render_guard()
         if self._enabled():
             self._render_remediation_form()
+
+    def _size_rt_source_table(self):
+        """Columns to their content; the table is as wide as its columns, not the panel."""
+        table = self.rt_source_table
+        header = table.horizontalHeader()
+        width = 0
+        for c in range(table.columnCount()):
+            table.setColumnWidth(c, max(table.sizeHintForColumn(c), header.sectionSizeHint(c)) + 16)
+            width += table.columnWidth(c)
+        table.setFixedWidth(width + 2 * table.frameWidth() + 4)
+        fit_table_height(table)
 
     def _render_sw_reads(self):
         zone = self.selected_zone()
@@ -1000,7 +1044,8 @@ class LrlcTab(QWidget):
     # ------------------------------------------------------------ navigation
     def show_panel(self, name, section=None):
         """Select a panel ("screening", "diagnosis", "remediation", "validation") and scroll to
-        a section of it: ``"rt_cutoff"`` or ``"curves"`` on Screening; ``"zones"``,
+        a section of it (on Remediation, the matching inner tab; ``"rt_source"`` is the Rt chain
+        tab): ``"rt_cutoff"`` or ``"curves"`` on Screening; ``"zones"``,
         ``"thomas_stieber"``, ``"pickett"`` or ``"buckles"`` on Diagnosis; ``"rt_source"``,
         ``"laminated"``, ``"pyrite"``, ``"clay"``, ``"sw_basis"``, ``"variable_mn"`` or
         ``"invasion"`` on Remediation."""
@@ -1013,19 +1058,11 @@ class LrlcTab(QWidget):
         elif name == "diagnosis" and section in DIAGNOSIS_SECTIONS:
             self.diagnosis_tabs.setCurrentIndex(DIAGNOSIS_SECTIONS.index(section))
         elif name == "remediation" and section in REMEDIATION_SECTIONS:
-            self._scroll_remediation(section)
-            # The page may not be laid out yet (the tab was hidden): scroll again once it is.
-            QTimer.singleShot(0, lambda s=section: self._scroll_remediation(s))
+            self.remediation_form.show_section(section)
 
     def _manual_wet_boxes(self, zone):
         """Manual wet-point boxes of the Pickett panel for the active well and ``zone``."""
         return self.pickett_panel.manual_boxes_for(getattr(self._ds(), "key", ""), zone)
-
-    def _scroll_remediation(self, section):
-        target = (self.rt_source_group if section == "rt_source"
-                  else self.remediation_form.scroll_target(section))
-        if target is not None:
-            self.remediation_scroll.ensureWidgetVisible(target, 0, 0)
 
     def select_zone(self, zone):
         """Select a zone in the zone selectors and the Diagnosis zone table. With LRLC off the

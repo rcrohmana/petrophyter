@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,6 +21,8 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -34,7 +36,7 @@ from modules.lrlc.thomas_stieber import check_endpoints
 from services.lrlc_service import LrlcService
 from themes.helpers import set_status
 
-from .lrlc_common import WHOLE_WELL, fmt, note
+from .lrlc_common import WHOLE_WELL, fmt, note, scroll_area
 from .lrlc_diagnosis import lrlc_summary
 from .lrlc_mn_invasion import NEW_LABELS, MnInvasionMixin, MultiSpin
 from .lrlc_pickett import zone_labels
@@ -44,6 +46,13 @@ from .method_box import MethodReferenceBox
 logger = logging.getLogger(__name__)
 
 SECTIONS = ("laminated", "pyrite", "clay", "sw_basis", "variable_mn", "invasion")
+# Inner tabs of the form: (section key, tab title). "rt_source" is the Rt chain tab.
+SECTION_TABS = (("rt_source", "Rt chain"), ("laminated", "Laminated sand"), ("pyrite", "Pyrite"),
+                ("clay", "Clay Qv"), ("sw_basis", "Sw basis"), ("variable_mn", "Variable m/n"),
+                ("invasion", "Radial invasion"))
+SPIN_MAX_WIDTH = 240
+COMBO_MAX_WIDTH = 420
+PLOT_MIN_WIDTH = 380
 
 # (key, label, lo, hi, decimals, step, text shown when the value is None or "")
 LAMINATED_ROWS = (
@@ -105,12 +114,57 @@ def _spin(lo, hi, decimals, step, none_text) -> QDoubleSpinBox:
     else:
         spin.setRange(lo, hi)
     spin.setKeyboardTracking(False)
+    spin.setMaximumWidth(SPIN_MAX_WIDTH)
     return spin
 
 
+LABEL_MIN_WIDTH = 190
+
+
+class AlignedForm(QFormLayout):
+    """A form whose text labels share one minimum width, so the fields of the separate groups of
+    a section line up."""
+
+    def addRow(self, label, field=None):  # noqa: N802 - Qt name
+        if field is not None and isinstance(label, str):
+            label = QLabel(label)
+            label.setMinimumWidth(LABEL_MIN_WIDTH)
+        if field is None:
+            return super().addRow(label)
+        return super().addRow(label, field)
+
+
+def make_form() -> QFormLayout:
+    """A form whose fields keep their natural width (the inputs carry their own maximum)."""
+    form = AlignedForm()
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setHorizontalSpacing(14)
+    return form
+
+
+def sub_box(title: str, form: Optional[QFormLayout] = None) -> QGroupBox:
+    """A small sub-group of a section tab; ``form`` becomes its layout when given."""
+    box = QGroupBox(title)
+    box.setLayout(form if form is not None else QVBoxLayout())
+    return box
+
+
+def side_by_side(left: QVBoxLayout, right: QWidget) -> QHBoxLayout:
+    """Controls on the left, a plot (or a column of plots) on the right."""
+    row = QHBoxLayout()
+    row.addLayout(left, 1)
+    right.setMinimumWidth(PLOT_MIN_WIDTH)
+    right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    row.addWidget(right, 1)
+    return row
+
+
 class RemediationForm(MnInvasionMixin, QWidget):
-    """The Remediation sections below the Rt source box. Public: ``set_context``, ``prepare``,
-    ``scroll_target``."""
+    """The Remediation sections below the Rt source box. One shared header (zone, scope, Apply,
+    Discard) sits above an inner tab widget with a tab for each section; every tab edits the same
+    scratch copy. Public: ``set_context``, ``prepare``, ``scroll_target``, ``show_section``,
+    ``set_chain_widget``."""
 
     stale_requested = pyqtSignal(list)
     navigate_requested = pyqtSignal(str)
@@ -143,13 +197,35 @@ class RemediationForm(MnInvasionMixin, QWidget):
         root.addLayout(self._build_header())
         self.hint_label = note("", "accent")
         root.addWidget(self.hint_label)
-        root.addWidget(self._build_laminated())
-        root.addWidget(self._build_pyrite())
-        root.addWidget(self._build_clay())
-        root.addWidget(self._build_basis())
-        root.addWidget(self._build_variable_mn())
-        root.addWidget(self._build_invasion())
-        root.addStretch(1)
+        self.section_tabs = QTabWidget()
+        self.chain_page = QWidget()
+        self.chain_layout = QVBoxLayout(self.chain_page)
+        self.chain_layout.addStretch(1)
+        builders = {"laminated": self._build_laminated, "pyrite": self._build_pyrite,
+                    "clay": self._build_clay, "sw_basis": self._build_basis,
+                    "variable_mn": self._build_variable_mn, "invasion": self._build_invasion}
+        for key, title in SECTION_TABS:
+            if key == "rt_source":
+                self.section_tabs.addTab(scroll_area(self.chain_page), title)
+                continue
+            page = QWidget()
+            lay = QVBoxLayout(page)
+            lay.addWidget(builders[key]())
+            lay.addStretch(1)
+            self.section_tabs.addTab(scroll_area(page), title)
+        root.addWidget(self.section_tabs, 1)
+
+    def set_chain_widget(self, widget: QWidget):
+        """Put a widget of the Rt chain tab (the owner's method box and chain sentence)."""
+        self.chain_layout.insertWidget(self.chain_layout.count() - 1, widget)
+
+    def show_section(self, section: str) -> bool:
+        """Select the inner tab of a section key; False for an unknown key."""
+        for i, (key, _title) in enumerate(SECTION_TABS):
+            if key == section:
+                self.section_tabs.setCurrentIndex(i)
+                return True
+        return False
 
     def _build_header(self) -> QVBoxLayout:
         v = QVBoxLayout()
@@ -157,6 +233,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         row.addWidget(QLabel("Zone"))
         self.zone_combo = QComboBox()
         self.zone_combo.setMinimumWidth(140)
+        self.zone_combo.setMaximumWidth(260)
         self.zone_combo.currentIndexChanged.connect(self._on_zone_combo)
         row.addWidget(self.zone_combo)
         row.addWidget(QLabel("Apply to"))
@@ -164,6 +241,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         for key, text in SCOPES:
             self.scope_combo.addItem(text, key)
         self.scope_combo.setCurrentIndex(1)
+        self.scope_combo.setMaximumWidth(260)
         self.scope_combo.currentIndexChanged.connect(lambda _i: self._update_state())
         row.addWidget(self.scope_combo)
         self.apply_button = QPushButton("Apply")
@@ -197,10 +275,14 @@ class RemediationForm(MnInvasionMixin, QWidget):
             self._register(key, spin)
             form.addRow(label, spin)
 
+    def _row_slice(self, rows, *keys):
+        return tuple(r for r in rows if r[0] in keys)
+
     def _combo(self, form: QFormLayout, key, label):
         combo = QComboBox()
         for value, text in COMBOS[key]:
             combo.addItem(text, value)
+        combo.setMaximumWidth(COMBO_MAX_WIDTH)
         self._register(key, combo)
         form.addRow(label, combo)
 
@@ -215,19 +297,33 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self.ts_check = QCheckBox("Compute Thomas-Stieber (laminar shale volume) on the next run")
         self.ts_check.toggled.connect(lambda on: self._setting_touched("ts_enabled", on))
         v.addWidget(self.ts_check)
-        form = QFormLayout()
-        self._combo(form, "vlam_source", "Vlam source")
-        self._rows(form, LAMINATED_ROWS)
-        v.addLayout(form)
+        columns = QHBoxLayout()
+        left = QVBoxLayout()
+        ends = make_form()
+        self._rows(ends, self._row_slice(LAMINATED_ROWS, "phi_max", "phi_sh"))
+        left.addWidget(sub_box("End-points", ends))
+        vlam = make_form()
+        self._combo(vlam, "vlam_source", "Vlam source")
+        self._rows(vlam, self._row_slice(LAMINATED_ROWS, "vlam_const"))
+        left.addWidget(sub_box("Laminar shale volume", vlam))
+        left.addStretch(1)
+        right = QVBoxLayout()
+        limits = make_form()
+        self._rows(limits, self._row_slice(LAMINATED_ROWS, "hag_vsh_max", "s_warn", "s_invalid"))
+        right.addWidget(sub_box("Limits of the correction", limits))
         proposal = QHBoxLayout()
         self.proposal_label = note("")
         proposal.addWidget(self.proposal_label, 1)
         self.use_proposal_button = QPushButton("Use proposal")
         self.use_proposal_button.clicked.connect(self._on_use_proposal)
         proposal.addWidget(self.use_proposal_button)
-        v.addLayout(proposal)
+        right.addLayout(proposal)
         self.applied_label = note("")
-        v.addWidget(self.applied_label)
+        right.addWidget(self.applied_label)
+        right.addStretch(1)
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        v.addLayout(columns)
         self.laminated_box = MethodReferenceBox()
         self.laminated_box.set_method(METHOD_TEXT["laminated"])
         v.addWidget(self.laminated_box)
@@ -239,14 +335,23 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self.vpyr_check = QCheckBox("Compute the VPYR column on the next run")
         self.vpyr_check.toggled.connect(lambda on: self._setting_touched("vpyr_enabled", on))
         v.addWidget(self.vpyr_check)
-        form = QFormLayout()
-        self._combo(form, "pyr_method", "Pyrite volume")
-        self._rows(form, PYRITE_ROWS)
-        v.addLayout(form)
+        left = QVBoxLayout()
+        vol = make_form()
+        self._combo(vol, "pyr_method", "Pyrite volume")
+        self._rows(vol, self._row_slice(PYRITE_ROWS, "pyr_vpyr"))
+        left.addWidget(sub_box("Pyrite volume", vol))
+        pyr = make_form()
+        self._rows(pyr, self._row_slice(PYRITE_ROWS, "pyr_rho", "pyr_pef", "pyr_f", "pyr_rpy"))
+        left.addWidget(sub_box("Pyrite", pyr))
+        mat = make_form()
+        self._rows(mat, self._row_slice(PYRITE_ROWS, "ma_rho", "ma_pef", "sh_rho", "sh_pef"))
+        left.addWidget(sub_box("Matrix and shale end-points", mat))
         self.vpyr_label = note("")
-        v.addWidget(self.vpyr_label)
+        left.addWidget(self.vpyr_label)
+        left.addStretch(1)
         self.pef_plot = PefRhobPlot()
-        v.addWidget(self.pef_plot)
+        self.pef_plot.setMinimumHeight(320)
+        v.addLayout(side_by_side(left, self.pef_plot))
         self.pyrite_box = MethodReferenceBox()
         self.pyrite_box.set_method(METHOD_TEXT["pyrite"])
         v.addWidget(self.pyrite_box)
@@ -255,10 +360,10 @@ class RemediationForm(MnInvasionMixin, QWidget):
     def _build_clay(self) -> QGroupBox:
         group = self._group("clay", "Clay (Qv)")
         v = QVBoxLayout(group)
-        form = QFormLayout()
+        form = make_form()
         self._combo(form, "qv_source", "Qv source")
         self._rows(form, CLAY_ROWS)
-        v.addLayout(form)
+        v.addWidget(sub_box("Qv", form))
         row = QHBoxLayout()
         self.cec_label = note("")
         row.addWidget(self.cec_label, 1)
@@ -276,9 +381,9 @@ class RemediationForm(MnInvasionMixin, QWidget):
     def _build_basis(self) -> QGroupBox:
         group = self._group("sw_basis", "Sw basis")
         v = QVBoxLayout(group)
-        form = QFormLayout()
+        form = make_form()
         self._combo(form, "sw_basis", "Sw basis")
-        v.addLayout(form)
+        v.addWidget(sub_box("Basis", form))
         self.basis_label = note("")
         v.addWidget(self.basis_label)
         self.suggestion_label = note("")

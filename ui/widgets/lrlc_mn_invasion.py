@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -38,6 +39,10 @@ from .lrlc_common import item as table_item
 from .lrlc_invasion_plot import InvasionProfilePlot, TornadoPlot
 from .lrlc_mn_plot import MnFitPlot
 from .method_box import MethodReferenceBox
+
+SPIN_MAX_WIDTH = 240
+COMBO_MAX_WIDTH = 420
+PLOT_MIN_WIDTH = 380
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +108,13 @@ class MultiSpin(QWidget):
             spin.setDecimals(decimals)
             spin.setSingleStep(step)
             spin.setKeyboardTracking(False)
+            spin.setMaximumWidth(110)
             spin.valueChanged.connect(lambda v: self.valueChanged.emit(float(v)))
             col.addWidget(spin)
             row.addLayout(col)
             self.spins.append(spin)
+        row.addStretch(1)
+        self.setMaximumWidth(110 * len(self.labels) + 12 * len(self.labels))
 
     def set(self, value):
         """Write a list (or dict) of values without emitting."""
@@ -147,6 +155,24 @@ def parse_header_mud(info) -> Optional[Dict[str, Any]]:
     return {"rmf": prop["rmf"], "rmf_temp": prop.get("rmf_temp"), "note": "; ".join(notes)}
 
 
+def _make_form() -> QFormLayout:
+    from .lrlc_remediation import make_form
+
+    return make_form()
+
+
+def _sub_box(title, layout=None) -> QGroupBox:
+    from .lrlc_remediation import sub_box
+
+    return sub_box(title, layout)
+
+
+def _side_by_side(left, right) -> QHBoxLayout:
+    from .lrlc_remediation import side_by_side
+
+    return side_by_side(left, right)
+
+
 class MnInvasionMixin:
     """Builds and refreshes the Variable m/n and Radial invasion sections."""
 
@@ -155,6 +181,7 @@ class MnInvasionMixin:
         combo = QComboBox()
         for value, text in MN_COMBOS[key]:
             combo.addItem(text, value)
+        combo.setMaximumWidth(COMBO_MAX_WIDTH)
         self._register(key, combo)
         form.addRow(label, combo)
         return combo
@@ -171,6 +198,7 @@ class MnInvasionMixin:
             else:
                 spin.setRange(lo, hi)
             spin.setKeyboardTracking(False)
+            spin.setMaximumWidth(SPIN_MAX_WIDTH)
             self._register(key, spin)
             form.addRow(label, spin)
 
@@ -184,35 +212,40 @@ class MnInvasionMixin:
     def _build_variable_mn(self) -> QGroupBox:
         group = self._group("variable_mn", "Variable m/n")
         v = QVBoxLayout(group)
-        form = QFormLayout()
-        self._add_combo(form, "mn_mode", "Mode")
-        self._add_combo(form, "m_model", "m model")
+        left = QVBoxLayout()
+        mform = _make_form()
+        self._add_combo(mform, "mn_mode", "Mode")
+        self._add_combo(mform, "m_model", "m model")
         coef = MultiSpin(MN_COEF_LABELS, LRLC_LISTS["m_coef"], 3, 0.05)
         self._register("m_coef", coef)
-        form.addRow("m coefficients", coef)
+        mform.addRow("m coefficients", coef)
         self.shell_check = QCheckBox("Use Shell in this zone although the preset is not Carbonate")
         self._register("shell_confirm", self.shell_check)
-        form.addRow("", self.shell_check)
-        self._add_combo(form, "n_model", "n model")
+        mform.addRow("", self.shell_check)
+        left.addWidget(_sub_box("m", mform))
+        nform = _make_form()
+        self._add_combo(nform, "n_model", "n model")
         ncoef = MultiSpin(N_COEF_LABELS, LRLC_LISTS["n_coef"], 3, 0.05)
         self._register("n_coef", ncoef)
-        form.addRow("n coefficients", ncoef)
-        self._add_combo(form, "phi_source", "Porosity")
-        v.addLayout(form)
+        nform.addRow("n coefficients", ncoef)
+        self._add_combo(nform, "phi_source", "Porosity")
+        left.addWidget(_sub_box("n", nform))
         row = QHBoxLayout()
         self.scoped_m_label = note("")
         row.addWidget(self.scoped_m_label, 1)
         self.set_c0_button = QPushButton("Set c0 to the zone m")
         self.set_c0_button.clicked.connect(self._on_set_c0)
         row.addWidget(self.set_c0_button)
-        v.addLayout(row)
+        left.addLayout(row)
         self.shell_badge = note("")
-        v.addWidget(self.shell_badge)
+        left.addWidget(self.shell_badge)
         self.clip_label = note("")
-        v.addWidget(self.clip_label)
+        left.addWidget(self.clip_label)
         self.mn_last_label = note("")
-        v.addWidget(self.mn_last_label)
+        left.addWidget(self.mn_last_label)
+        left.addStretch(1)
 
+        fit = QVBoxLayout()
         fit_row = QHBoxLayout()
         self.mn_fit_button = QPushButton("Fit m to the wet points")
         self.mn_fit_button.clicked.connect(self._on_mn_fit)
@@ -222,19 +255,27 @@ class MnInvasionMixin:
         self.mn_apply_fit_button.clicked.connect(self._on_mn_apply_fit)
         fit_row.addWidget(self.mn_apply_fit_button)
         fit_row.addStretch(1)
-        v.addLayout(fit_row)
+        fit.addLayout(fit_row)
         self.mn_fit_inputs = note("")
-        v.addWidget(self.mn_fit_inputs)
+        fit.addWidget(self.mn_fit_inputs)
         self.mn_fit_status = note("")
-        v.addWidget(self.mn_fit_status)
+        fit.addWidget(self.mn_fit_status)
         self.mn_fit_table = make_table(("Coefficient", "Value", "Standard error (approximate)"))
         self.mn_fit_table.setMaximumHeight(150)
         self.mn_fit_table.horizontalHeader().setStretchLastSection(False)
-        v.addWidget(self.mn_fit_table)
+        fit.addWidget(self.mn_fit_table)
         self.mn_fit_stats = note("")
-        v.addWidget(self.mn_fit_stats)
+        fit.addWidget(self.mn_fit_stats)
         self.mn_plot = MnFitPlot()
-        v.addWidget(self.mn_plot)
+        self.mn_plot.setMinimumHeight(300)
+        fit.addWidget(self.mn_plot, 1)
+        fit_box = _sub_box("Fit to wet points", fit)
+        fit_box.setMinimumWidth(PLOT_MIN_WIDTH)
+        fit_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        columns = QHBoxLayout()
+        columns.addLayout(left, 1)
+        columns.addWidget(fit_box, 1)
+        v.addLayout(columns)
         self.mn_box = MethodReferenceBox()
         self.mn_box.set_method(METHOD_TEXT["variable_mn"])
         v.addWidget(self.mn_box)
@@ -462,33 +503,42 @@ class MnInvasionMixin:
         v.addWidget(self.inv_step_label)
         self.inv_curves_label = note("")
         v.addWidget(self.inv_curves_label)
-        form = QFormLayout()
-        tool = self._add_combo(form, "inv_tool", "Tool")
+
+        left = QVBoxLayout()
+        tform = _make_form()
+        tool = self._add_combo(tform, "inv_tool", "Tool")
         tool.currentIndexChanged.connect(self._on_tool_changed)
         self.generic_badge = QLabel(GENERIC_LABEL)
         set_status(self.generic_badge, "warning")
-        form.addRow("", self.generic_badge)
+        tform.addRow("", self.generic_badge)
         r50 = MultiSpin(("Deep (in)", "Medium (in)", "Shallow (in)"), INV_R50_RANGE, 1, 1.0,
                         as_dict=True)
         self._register("inv_r50", r50)
-        form.addRow("Investigation diameters", r50)
-        self._add_combo(form, "inv_rxo_mode", "RXO")
-        self._add_spins(form, INVASION_ROWS)
-        v.addLayout(form)
+        tform.addRow("Investigation diameters", r50)
+        self._add_combo(tform, "inv_rxo_mode", "RXO")
+        left.addWidget(_sub_box("Tool", tform))
+        fform = _make_form()
+        self._add_spins(fform, tuple(r for r in INVASION_ROWS if r[0] in (
+            "inv_p", "inv_di_min", "inv_di_max", "inv_min_contrast", "inv_max_rms")))
+        left.addWidget(_sub_box("Fit limits", fform))
+        mud = QVBoxLayout()
+        mform = _make_form()
+        self._add_spins(mform, tuple(r for r in INVASION_ROWS if r[0] in ("rmf", "rmf_temp")))
+        mud.addLayout(mform)
         row = QHBoxLayout()
         self.header_label = note("")
         row.addWidget(self.header_label, 1)
         self.header_button = QPushButton("Use header Rmf")
         self.header_button.clicked.connect(self._on_use_header_rmf)
         row.addWidget(self.header_button)
-        v.addLayout(row)
+        mud.addLayout(row)
+        mud_box = _sub_box("Mud filtrate", mud)
+        left.addWidget(mud_box)
         self.inv_tool_label = note("")
-        v.addWidget(self.inv_tool_label)
+        left.addWidget(self.inv_tool_label)
+        left.addStretch(1)
 
-        self.inv_counts = make_table(COUNT_COLUMNS)
-        self.inv_counts.setMaximumHeight(150)
-        v.addWidget(self.inv_counts)
-
+        right = QVBoxLayout()
         depth_row = QHBoxLayout()
         depth_row.addWidget(QLabel("Profile at depth"))
         self.depth_spin = QDoubleSpinBox()
@@ -496,15 +546,24 @@ class MnInvasionMixin:
         self.depth_spin.setDecimals(2)
         self.depth_spin.setSingleStep(1.0)
         self.depth_spin.setKeyboardTracking(False)
+        self.depth_spin.setMaximumWidth(SPIN_MAX_WIDTH)
         self.depth_spin.valueChanged.connect(lambda _v: self._draw_invasion_profile())
         depth_row.addWidget(self.depth_spin)
         depth_row.addStretch(1)
-        v.addLayout(depth_row)
+        right.addLayout(depth_row)
         self.profile_plot = InvasionProfilePlot()
-        v.addWidget(self.profile_plot)
+        right.addWidget(self.profile_plot, 1)
         self.tornado_plot = TornadoPlot()
         self.tornado_plot.depth_picked.connect(self._on_depth_picked)
-        v.addWidget(self.tornado_plot)
+        right.addWidget(self.tornado_plot, 1)
+        plots = QWidget()
+        plots.setLayout(right)
+        right.setContentsMargins(0, 0, 0, 0)
+        v.addLayout(_side_by_side(left, plots))
+
+        self.inv_counts = make_table(COUNT_COLUMNS)
+        self.inv_counts.setMaximumHeight(150)
+        v.addWidget(self.inv_counts)
         self.inv_box = MethodReferenceBox()
         self.inv_box.set_method(METHOD_TEXT["invasion"])
         v.addWidget(self.inv_box)

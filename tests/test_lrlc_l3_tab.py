@@ -27,6 +27,7 @@ from ui.main_window import MainWindow
 from ui.widgets import track_specs as ts
 from ui.widgets.interactive_log import InteractiveLogPlot
 from ui.widgets.lrlc_invasion_plot import CONTRASTS, forward_loci, profile_steps
+from ui.tabs.lrlc_tab import REMEDIATION_SECTIONS
 from ui.widgets.lrlc_mn_invasion import parse_header_mud
 from ui.widgets.lrlc_mn_plot import fitted_curves
 from ui.widgets.plot_widget import CompositeLogPlot
@@ -233,6 +234,44 @@ def test_sections_exist_and_are_scroll_targets(window, qtbot):
     assert SHIPPED_METHODS["variable_mn"] == ("archie1942", "borai1987", "guo2023")
     assert SHIPPED_METHODS["invasion"] == ("doll1949", "thadani1981", "anderson2001", "arps1953")
     assert METHOD_TEXT["invasion"].refs == SHIPPED_METHODS["invasion"]
+
+REMEDIATION_TABS = {"rt_source": "Rt chain", "laminated": "Laminated sand", "pyrite": "Pyrite",
+                    "clay": "Clay Qv", "sw_basis": "Sw basis", "variable_mn": "Variable m/n",
+                    "invasion": "Radial invasion"}
+
+
+def test_show_panel_selects_the_inner_remediation_tab(window, qtbot):
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    tabs = tab.remediation_form.section_tabs
+    assert [tabs.tabText(i) for i in range(tabs.count())] == list(REMEDIATION_TABS.values())
+    for key, title in REMEDIATION_TABS.items():
+        tab.show_panel("diagnosis")
+        tab.show_panel("remediation", key)
+        assert tab.panels.currentIndex() == 2
+        assert tabs.tabText(tabs.currentIndex()) == title
+    assert set(REMEDIATION_TABS) == set(REMEDIATION_SECTIONS)
+
+
+def test_pending_change_on_one_tab_shows_in_the_shared_header(window, qtbot):
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    tab.show_panel("remediation", "variable_mn")
+    combo = form.controls["m_model"]
+    combo.setCurrentIndex(1 - combo.currentIndex())
+    assert form.apply_button.isEnabled()
+    assert "m model" in form.pending_label.text()
+    tab.show_panel("remediation", "invasion")
+    spin = form.controls["inv_p"]
+    spin.setValue(spin.value() + 0.1)
+    text = form.pending_label.text()
+    assert "m model" in text and "Shape exponent" in text
+    tab.show_panel("remediation", "rt_source")
+    assert form.apply_button.isEnabled() and form.pending_label.isVisibleTo(form)
+    form.discard_button.click()
+    assert not form.apply_button.isEnabled()
+
 
 
 def test_controls_change_nothing_until_apply(window, qtbot):

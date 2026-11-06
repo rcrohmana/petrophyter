@@ -148,11 +148,10 @@ def test_show_panel_sections(window, qtbot, run_result):
     window.show()
     window.resize(1400, 900)
     window.show_lrlc("remediation", "pyrite")
-    qtbot.waitUntil(lambda: tab.remediation_scroll.verticalScrollBar().value() > 0, timeout=3000)
-    pyrite_at = tab.remediation_scroll.verticalScrollBar().value()
+    tabs = tab.remediation_form.section_tabs
+    assert tabs.tabText(tabs.currentIndex()) == "Pyrite"
     window.show_lrlc("remediation", "laminated")
-    qtbot.waitUntil(
-        lambda: tab.remediation_scroll.verticalScrollBar().value() < pyrite_at, timeout=3000)
+    assert tabs.tabText(tabs.currentIndex()) == "Laminated sand"
     window.show_lrlc("diagnosis", zone="UPPER")
     assert tab.panels.currentIndex() == 1
     assert tab.zones_panel.selected_row_zone() == "UPPER"
