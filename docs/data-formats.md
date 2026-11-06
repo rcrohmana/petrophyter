@@ -28,7 +28,24 @@ The [LRLC Workbench](user-guide.md#lrlc-workbench) can read up to six curves bes
 | `DTS` | Shear slowness *(v1.11.0)* | `DTS`, `DTSM`, `DTSH`, `DT2`, `DTSD` |
 | `HIRES` | High-resolution resistivity | none: chosen by hand |
 
-`RXOZ` stays under `RS`, as before. `RS` is used by the screening and `PEF` by the pyrite volume (**From RHOB and PEF**, together with the mapped density curve); the other roles are saved with the well for later tools. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+`RXOZ` stays under `RS`, as before. `RS` is used by the screening and `PEF` by the pyrite volume (**From RHOB and PEF**, together with the mapped density curve). The radial invasion step *(v1.13.0)* reads `RM`, `RS` and `RXO` as its medium, shallow and micro-resistivity observations; the other roles are saved with the well for later tools. The `RM` role is the medium resistivity curve, not the mud resistivity of the header. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+
+## Mud values in the LAS header *(v1.13.0)*
+
+The radial invasion step can use the mud-filtrate resistivity `Rmf` as a lower bound for the flushed-zone resistivity. When the LAS header holds these values, they are read at load and offered as a proposal in the Workbench (**Header: Rmf 0.35 ohm.m at 68 degF.**, with **Use header Rmf**); nothing is applied until you use the button and press Apply. The header is searched in the well section and then in the parameter section.
+
+| Value | Header mnemonics | Unit |
+|---|---|---|
+| Mud-filtrate resistivity | `RMF` | ohm.m |
+| Temperature of the filtrate sample | `MFST`, `MFT`, `RMFT`, `RMF_TEMP` | °F or °C |
+| Mud resistivity | `RM` (header entry only) | ohm.m |
+| Temperature of the mud sample | `MST` | °F or °C |
+| Bottom-hole temperature | `BHT`, `MRT` | °F or °C |
+
+- **Units.** A resistivity must be in ohm.m (`OHMM`, `OHM.M`, `OHM-M` and similar spellings). A temperature in °C is converted to °F. A value with no unit is taken as ohm.m or °F and the Workbench says so. A value in any other unit is shown as not offered.
+- **Plausible range.** `Rmf` from 0.005 to 20 ohm.m and temperatures from 32 to 400 °F; a value outside it is not offered.
+- **`RM` in the header is the mud, not the curve.** The parser reads `RM` only from the header section. The `RM` *curve* (medium resistivity) is a different thing and is found from the curve names as before.
+- The mud resistivity and its temperature are read and kept with the well information, but no calculation uses them in this version. The header values are not part of the parameter hash, so loading a file never marks a well out of date.
 
 ## Reading tops and core tables
 
@@ -129,6 +146,11 @@ These columns are added to the results table, and so to the CSV, Excel and LAS e
 | `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
 | `RT_SAND` | ohm.m | laminated-sand resistivity | the laminated-sand step is active |
 | `RT_PYR` | ohm.m | pyrite-corrected resistivity | the pyrite step is active |
+| `RT_INV` | ohm.m | invasion-corrected resistivity | the invasion step is active |
+| `RXO_INV` | ohm.m | flushed-zone resistivity from the invasion step (fitted, or the `RXO` curve when it is used) | same |
+| `DI_INV` | in | invasion diameter from the invasion step; empty where the sample is non-unique or invalid | same |
+| `M_VAR` | unitless | cementation exponent per sample | a zone is in variable m/n Curve mode; written for every segment of that well |
+| `N_VAR` | unitless | saturation exponent per sample | same |
 | `SW_BASE` | v/v | Sw with no LRLC correction | a correction is active somewhere in the well |
 | `NET_PAY_BASE_FLAG` | unitless | net pay flag from `SW_BASE` (0 or 1) | same |
 

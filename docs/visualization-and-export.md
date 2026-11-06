@@ -44,12 +44,14 @@ Present only when the results hold LRLC columns (LRLC analysis on, and a run mad
 
 - **Resistivity track (Classic).** The Classic display gains a **Resistivity** track right after the Sw track, so the Permeability, Pay Flags, HCPV, Rock Type and residual tracks each move one place to the right. It draws the measured Rt, `RT_SW` (solid), `RT_SAND` (solid), `RT_PYR` (dashed) and `RT_CUT` (dashed) on a log axis from 0.2 to 2000 ohm·m. It appears when `RT_SW`, `RT_CUT`, `RT_SAND`, `RT_PYR` or `LRLC_FLAG` is in the results; `RT_SW`, `RT_SAND` and `RT_PYR` exist only where an Rt correction step is active, so without one the track shows Rt and `RT_CUT`.
 - **Resistivity track (Interactive).** The existing resistivity track lists `RT_SW`, `RT_SAND`, `RT_PYR` and `RT_CUT` with the other resistivity curves when the columns exist; `RT_CUT` and `RT_PYR` are dashed. The cursor readout includes them.
+- **Invasion curves** *(v1.13.0)*. When the invasion step has run, `RT_INV` (solid) and `RXO_INV` (dotted) are added to the resistivity track in both displays, on the same log axis. In the Classic display they also make the track appear.
 - **Laminar shale volume.** `VLAM` is drawn dotted on the Vsh axis of the gamma ray track, in both displays, when the results hold it. In the Classic display a gamma ray track with `VLAM` but no `VSH` still gets the Vsh axis.
 - **Baseline Sw.** `SW_BASE`, the Sw without the LRLC corrections, is drawn in the Sw track as a thin dashed line, so it can be compared with the corrected Sw. It is not one of the Sw methods and has no entry among them.
 - **Readout only.** `VPYR` (v/v) and `QV_EST` (meq/mL) are not drawn. The Interactive display shows them in the cursor readout; the Classic display does not show them.
+- **Readout only** *(v1.13.0)*. `M_VAR` and `N_VAR` (unitless) and `DI_INV` (in) are not drawn. The Interactive display shows them in the cursor readout; the Classic display does not.
 - **Shaded flags.** The Pay Flags track shades the depth intervals flagged by `LRLC_FLAG` (**LRLC**) and `WATER_FREE_FLAG` (**Water-free**) with a translucent fill, in the legend of the track. In the Interactive display the readout gives the flag values at the cursor depth.
 
-The **LRLC Workbench** tab has its own plots: Pickett, Buckles, the Thomas-Stieber crossplot of `PHIT` against `Vsh` coloured by class, the PEF against RHOB crossplot of the pyrite tool and the Sw before and after plot of the Validation panel. See the [User Guide](user-guide.md#lrlc-workbench).
+The **LRLC Workbench** tab has its own plots: Pickett, Buckles, the Thomas-Stieber crossplot of `PHIT` against `Vsh` coloured by class, the PEF against RHOB crossplot of the pyrite tool, the Sw before and after plot of the Validation panel, and, from v1.13.0, the plots of the Remediation panel: the fitted against observed `m` and `m` against porosity of the variable m/n fit, and the invasion profile at a depth and the RS/RT against RM/RT crossplot of the radial invasion tool. See the [User Guide](user-guide.md#lrlc-workbench).
 
 ## Uncertainty Tab *(v1.9.0)*
 
@@ -109,7 +111,7 @@ A well named *SHF* gets a numbered sheet name such as *SHF (2)*. The *Rock Types
 
 Added only when the LRLC analysis is on and has run; without it, the files are as before.
 
-- **Columns.** The results table of CSV, Excel and LAS gains `LRLC_SCORE`, `LRLC_FLAG`, `BVW` and `WATER_FREE_FLAG`; `RT_CUT` when the Rt cutoff is on; `RT_SW` when an Rt correction step is active; and the columns of the corrections that are in use, `VLAM`, `VDISP`, `PHI_SAND`, `TS_CLASS`, `VPYR`, `QV_EST`, `RT_SAND`, `RT_PYR`, `SW_BASE` and `NET_PAY_BASE_FLAG` (see [Data Formats](data-formats.md#lrlc-result-columns)). The flags and `TS_CLASS` are integers. There is no separate LRLC sheet.
+- **Columns.** The results table of CSV, Excel and LAS gains `LRLC_SCORE`, `LRLC_FLAG`, `BVW` and `WATER_FREE_FLAG`; `RT_CUT` when the Rt cutoff is on; `RT_SW` when an Rt correction step is active; and the columns of the corrections that are in use, `VLAM`, `VDISP`, `PHI_SAND`, `TS_CLASS`, `VPYR`, `QV_EST`, `RT_SAND`, `RT_PYR`, `SW_BASE` and `NET_PAY_BASE_FLAG`, and from v1.13.0 `RT_INV`, `RXO_INV`, `DI_INV`, `M_VAR` and `N_VAR` (see [Data Formats](data-formats.md#lrlc-result-columns)). The flags and `TS_CLASS` are integers. There is no separate LRLC sheet.
 - **LAS curves.** The LRLC curves are written with a plain-text description and a unit instead of the column name. Derived curves are marked `MODELLED`; the text has no colon and is ASCII.
 
 | Curve | Unit | Description |
@@ -123,6 +125,11 @@ Added only when the LRLC analysis is on and has run; without it, the files are a
 | `RT_SAND` | OHMM | `MODELLED LAMINATED-SAND RT (HAGIWARA), FROM RT` |
 | `RT_PYR` | OHMM | `MODELLED PYRITE-CORRECTED RT, FROM RT_SAND`, or `FROM RT` where the laminated-sand step did not run (`RT_SAND OR RT` when both occur) |
 | `VLAM` | V/V | `MODELLED LAMINAR SHALE VOLUME (THOMAS-STIEBER)` |
+| `RT_INV` | OHMM | `MODELLED INVASION-CORRECTED RT (step profile), FROM RT` |
+| `RXO_INV` | OHMM | `MODELLED FLUSHED-ZONE RESISTIVITY (step profile)` |
+| `DI_INV` | IN | `MODELLED INVASION DIAMETER (step profile)` |
+| `M_VAR` | UNITLESS | `MODELLED CEMENTATION EXPONENT (variable m, zone formula)` |
+| `N_VAR` | UNITLESS | `MODELLED SATURATION EXPONENT (variable n)` |
 | `VDISP` | V/V | `MODELLED DISPERSED SHALE VOLUME (THOMAS-STIEBER)` |
 | `PHI_SAND` | V/V | `MODELLED SAND POROSITY (THOMAS-STIEBER)` |
 | `TS_CLASS` | UNITLESS | `THOMAS-STIEBER CLASS CODE 0 TO 5` |
@@ -132,4 +139,5 @@ Added only when the LRLC analysis is on and has run; without it, the files are a
 | `NET_PAY_BASE_FLAG` | UNITLESS | `NET PAY FLAG FROM SW_BASE` |
 
 - **Provenance.** The block gains a line **Rt corrections** after **Depth interval**, saying which resistivity the Sw models read in each zone, for example `RT_SW = RT_SAND <- RT (zones: UPPER); RT_SW = RT (zones: other)`, or `none (RT_SW not written)` when no correction step ran. It appears on the Excel **Provenance** sheet, in the CSV `.provenance.txt` file and as the line `Rt corrections` in the LAS `~OTHER INFORMATION` section. Runs without LRLC have no such line. When the run used Thomas-Stieber end-points, the Qv estimate, the pyrite step or the laminated-sand step, a second line **LRLC inputs** follows it, in the same three places (the LAS line reads `LRLC inputs`). It names the Thomas-Stieber end-points of each zone (`phi_max` and `phi_sh`), the shale CEC of the Qv estimate, the pyrite method with the connected fraction and `Rpy`, the Sw basis (sand, bulk or both) and whether the shoulder-bed guard was on, for example `Thomas-Stieber UPPER phi_max 0.3 phi_sh 0.12; Qv estimate cec_shale 25; Sw basis sand; guard on`. A run that used none of them has no such line.
+- **Provenance, variable m/n and invasion** *(v1.13.0)*. `RT_INV` is listed in the **Rt corrections** line like any other step (for example `RT_SW = RT_SAND <- RT_INV <- RT`), and the LAS text of a later step names its real source. Two more lines are added, in the same three places, only when they apply. **Variable m/n** appears when a zone is in Curve mode and names the models, the zones and the share of values that were clipped, for example `M_VAR = f(PHIE, VSH) formula, N_VAR = constant (zones: Upper); clipped 0.4 %`. **Invasion tool** appears when the step ran and names the tool for each zone, marking an unchanged preset as unconfirmed, for example `generic_induction (generic, unconfirmed)`. The Uncertainty sheet header lists *m/n curve shape (coefficients; only a whole-curve offset is varied)* and *invasion-corrected Rt (frozen)* among the inputs not varied when they apply.
 - **Excel zone columns.** On the Zones sheet, a run with an active correction adds **Net pay (before)**, **Avg Sw (before)** and **HCPV (before)** (the pay without the corrections, from `SW_BASE`), and a run with a diagnosis adds **LRLC probable cause** (the primary cause, or *none*) and **LRLC level** (*probable* when there is a primary cause; otherwise the diagnosis status, *ok* when no cause is probable and *insufficient* when the zone has too few net reservoir samples). The Uncertainty sheet header lists the corrected inputs among those not varied, and adds the line *Rsh also varies the laminated-sand Rt* when it applies.

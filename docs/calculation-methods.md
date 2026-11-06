@@ -100,6 +100,10 @@ primary model for every model *(v1.7.2)*.
 
 With saturation-height modelling on, `SW_SHF` is a second saturation from the height above the free water level; it can optionally replace `SW` for pay and HCPV. See [Saturation-height modelling](#saturation-height-modelling-v1100).
 
+### Per-sample m and n *(v1.13.0)*
+
+In every equation above `m` and `n` can be one value per sample instead of one value per zone. The values come from the curves `M_VAR` and `N_VAR` that [Variable m and n](#variable-m-and-n-v1130) writes; the models are otherwise unchanged. A sample then reads `φ^m_i` and `Sw^n_i` with its own exponents. Archie, Indonesian, Waxman-Smits and Dual-Water take the exponent array directly. Simandoux is solved per sample: where `n_i = 2` (to within 1e-9) the quadratic above is used, and where `n_i` has any other value the root is found numerically. An array filled with one constant gives the scalar result exactly. The exponents must be finite and positive; a length that does not match the data is an error. With no variable m/n in use, the models are called with the single zone values, as before.
+
 ### Valid samples and bounds *(v1.7.2)*
 
 One rule for all five models:
@@ -444,7 +448,7 @@ References:
 
 ## LRLC screening and diagnostics *(v1.11.0)*
 
-Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and none of the corrections below in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. The corrections (the laminated-sand and pyrite Rt steps, the Qv estimate and the sand basis) are chosen per zone and change Sw, pay and HCPV only where you switch them on. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
+Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and none of the corrections below in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. The corrections (the invasion, laminated-sand and pyrite Rt steps, the Qv estimate, the sand basis and, from v1.13.0, variable m and n) are chosen per zone and change Sw, pay and HCPV only where you switch them on. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
 
 ### Screening criteria and flag
 
@@ -532,7 +536,7 @@ A correction step is a function that takes the resistivity of the previous step 
 RT (measured, never modified) → step 1 → step 2 → …  ⇒  RT_SW (what every Sw model reads)
 ```
 
-`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. Two steps ship: **laminated sand** (`RT_SAND`) and **pyrite** (`RT_PYR`), run in that order. Each writes its own column, so the output of every step stays visible. With no step selected, Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
+`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. Three steps ship: **radial invasion** (`RT_INV`), **laminated sand** (`RT_SAND`) and **pyrite** (`RT_PYR`), run in that order, so the laminated-sand step reads `RT_INV` where the invasion step is on and the measured `RT` otherwise. Each writes its own column, so the output of every step stays visible. With no step selected, Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
 
 ### Thomas-Stieber decomposition
 
@@ -686,7 +690,7 @@ When a correction is active in a well (an Rt step, a Qv estimate or the sand bas
 
 ### Monte Carlo with the corrections
 
-The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `Rsh` is varied as before, and because it also enters the laminated-sand correction, a changed `Rsh` recomputes `RT_SAND` and so `Sw`; the uncertainty page and the export say so with the note **Rsh also varies the laminated-sand Rt**. The following are held at the values of the analysis and are added to the **Not varied** list when they are in use: the Thomas-Stieber `Vlam` (with the sand basis values), the pyrite volume and correction, and the estimated Qv. The end-points, `f`, `Rpy` and `cec_shale` are not among the varied parameters.
+The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `Rsh` is varied as before, and because it also enters the laminated-sand correction, a changed `Rsh` recomputes `RT_SAND` and so `Sw`; the uncertainty page and the export say so with the note **Rsh also varies the laminated-sand Rt**. The following are held at the values of the analysis and are added to the **Not varied** list when they are in use: the Thomas-Stieber `Vlam` (with the sand basis values), the pyrite volume and correction, and the estimated Qv. The end-points, `f`, `Rpy` and `cec_shale` are not among the varied parameters. With variable m and n, `m` and `n` move the whole curve by one additive offset, and the coefficients are held (see [Variable m and n](#variable-m-and-n-v1130)). The invasion-corrected Rt is also held, and the run adds *invasion-corrected Rt (frozen)* to the **Not varied** list.
 
 ### Results added
 
@@ -706,10 +710,169 @@ The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `
 | `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
 | `RT_SAND` | ohm.m | resistivity of the sand laminae | the laminated-sand step is active |
 | `RT_PYR` | ohm.m | resistivity after the pyrite correction | the pyrite step is active |
+| `RT_INV` | ohm.m | invasion-corrected resistivity | the invasion step is active |
+| `RXO_INV` | ohm.m | flushed-zone resistivity of the invasion step | same |
+| `DI_INV` | in | invasion diameter of the invasion step | same |
+| `M_VAR` | unitless | cementation exponent per sample | a zone is in curve mode for m and n |
+| `N_VAR` | unitless | saturation exponent per sample | same |
 | `SW_BASE` | v/v | Sw without any LRLC correction | a correction is active somewhere in the well |
 | `NET_PAY_BASE_FLAG` | 0/1 | net pay flag computed from `SW_BASE` | same |
 
 The summary gains an **LRLC** block with the resolved settings per zone, the candidate table, the cutoff table, the movable-water table, the correction steps that ran, the Thomas-Stieber end-points and class counts, the shoulder-bed guard decisions, the diagnosis per zone and the before-and-after validation. The Zones table of the summary and of the Excel export adds the pay before the corrections when a baseline exists.
+
+## Variable m and n *(v1.13.0)*
+
+A zone normally has one cementation exponent `m` and one saturation exponent `n`. Clay-bearing, fine-grained sands, the usual host of low-resistivity pay, often do not follow one pair. **Variable m/n** lets the exponents of a zone depend on porosity and shale volume, one value per sample, and gives those values to every Sw model. It is optional and set per zone. With every zone in the default **Scalar** mode, a run gives the results of v1.12.0.
+
+### Formulas
+
+With `φ` the porosity as a fraction (PHIE or PHIT, the **Porosity** setting; PHIE by default) and `Vsh` the shale volume:
+
+```
+m = c0 + c1 × φ + c2 × Vsh + c3 / φ          (formula)
+m = 1.87 + 0.019 / φ                          (Shell)
+n = d0 + d1 × Vsh                             (n from Vsh)   or   n = the n of the zone
+```
+
+The coefficients are `m_coef = [c0, c1, c2, c3]` and `n_coef = [d0, d1]`. Their defaults are `[2.15, 0, 0, 0]` and `[2.0, 0]`, so switching a zone to **Curve** with the defaults gives the constant 2.15 and 2.0 and changes nothing until you enter or apply coefficients. The default `c0` does not follow the `m` of the zone; **Set c0 to the zone m** copies it. Allowed ranges: `c0` 0.5 to 5, `c1` −10 to 10, `c2` −3 to 3, `c3` −0.5 to 0.5, `d0` 1 to 4, `d1` −3 to 3.
+
+The porosity-and-clay form `c0 + c1 × φ + c2 × Vsh` is attributed to Guo et al. (2023) *(to verify)*. No published coefficients are shipped: you enter them or take them from the wet-point fit below. The `c3 / φ` term is there so that the Shell form can be written in the same formula.
+
+**Shell formula.** `m = 1.87 + 0.019 / φ` gives m = 2.25 at φ = 0.05, 2.06 at 0.10 and 1.965 at 0.20: m rises as porosity falls. It is meant for low-porosity carbonates and is evaluated only in zones whose lithology preset is **Carbonate**. In any other zone it is refused, the zone keeps its constant `m`, and the run warns, unless you tick **Use Shell in this zone although the preset is not Carbonate**; the formula is then used and the run notes that you confirmed it. **Caveat.** Borai (1987) discusses this formula and its limits, and reports that in the tight, low-porosity carbonates he studied offshore Abu Dhabi `m` *decreases* as porosity decreases, the opposite trend. Check the Shell formula against core before relying on it.
+
+Worked check: `m_coef = [1.9, 0.5, 0.3, 0]`, φ = 0.20 and Vsh = 0.30 give m = 1.9 + 0.10 + 0.09 = 2.09.
+
+### Clipping and fallback
+
+| Sample | Result |
+|---|---|
+| φ or Vsh missing, or φ below 0.02 | the constant `m` and `n` of the zone are used, and the samples are counted |
+| the curve gives a value outside the clip range | the value is clipped to the range and the samples are counted, with the unclipped range |
+| Shell in a zone that is not Carbonate, not confirmed | the constant `m` is used for `m`; `n` follows its own model |
+| the stored coefficients are malformed, or a model is unknown | the zone is treated as Scalar and a warning is given |
+
+The clip range is 1.0 to 4.0 for both exponents (the project settings `clip_m` and `clip_n`, the same as the Monte Carlo limits). The clipped value is stored; the count is reported per zone, as information below 5 % of the samples and as a warning above. Samples that fall back to the constant values are reported the same way. `M_VAR` and `N_VAR` are therefore always finite where Sw is computed, and a zone in curve mode never gives an empty Sw because of the curve alone.
+
+### Where the curves are read
+
+`M_VAR` and `N_VAR` are evaluated once per run for each sample, from the porosity and shale volume **the Sw model of that sample reads**: in a zone that uses the sand basis (see [Sand basis for Sw](#sand-basis-for-sw)) these are the sand-lamina porosity and shale volume, not the bulk ones. They are then read by every Sw model and by `RT_CUT`, so the cutoff is the resistivity at which the primary model, with the same exponents, returns the target Sw. Two things keep the constant `m` and `n` of the zone:
+
+- **Automatic Rw and Rsh.** The estimators read the measured Rt and the constant exponents. A fit of `m` from wet points needs an Rw, so letting the curve feed the Rw estimate would make Rw depend on the curve it is used to fit. With an automatic Rw, a fitted `m` is therefore conditional on an Rw estimated with the constant `m`.
+- **The baseline.** `SW_BASE` is the Sw with no LRLC correction, so it uses the constant exponents, and the comparison on the Validation panel includes the effect of variable m and n.
+
+`M_VAR` and `N_VAR` are written for every segment of a well when at least one of its zones is in curve mode (a zone in Scalar mode carries its constant values), and not at all otherwise.
+
+### Wet-point fit
+
+At a water-bearing sample Archie gives `Rt = a × Rw / φ^m`, so `ln(a × Rw / Rt) = m × ln φ`. With `m = c0 + c1 × φ + c2 × Vsh` this is linear in the coefficients:
+
+`e_i = ln(a × Rw_i / Rt_i) − (c0 + c1 × φ_i + c2 × Vsh_i) × ln φ_i`
+
+The fit minimises `e_i` with a robust (soft L1) loss with scale 0.1, about 10 % in Rt, so a few non-wet points do not move it much. The residual is taken in `ln Rt`; the observed `m_i = ln(a × Rw_i / Rt_i) / ln φ_i` is used only for the plots, because it is unstable as φ approaches 1. `c3` is fixed at 0. The inputs are:
+
+- the **wet points** of the Pickett selection (the automatic proposal plus the boxes you added or removed on the Pickett tab; the boxes are not saved, so after a restart the fit starts from the automatic proposal);
+- `Rt` is `RT_SW` of the last run (the resistivity the Sw models read), or `RT` when there is none, so the fit moves when the Rt chain changes;
+- `Rw` per sample at formation temperature, and the `a` of the zone;
+- `φ` per the **Porosity** setting and `Vsh` from the last run; in a zone that reads the sand basis, the sand-lamina values, rebuilt from the result columns.
+
+Points outside the porosity window 0.03 to 0.60, with missing values, or with `Rt` not positive are left out and counted. Which coefficients are free depends on the data:
+
+| Free coefficients | Needs |
+|---|---|
+| `c0` only | at least 15 points; the result equals a constant-m Pickett fit |
+| `c0`, `c1` | porosity spread (P95 − P05) of at least 0.05, and 30 points |
+| `c0`, `c2` | Vsh spread of at least 0.10, and 30 points |
+| `c0`, `c1`, `c2` | both spreads, and 45 points |
+
+That is 15 points for each free coefficient. A coefficient whose normal equation is singular is fixed at 0 and the status says so. The coefficients are kept inside their allowed ranges. The standard errors are approximate (from the final robust weights). The result reports the points used and left out, the free coefficients, the RMSE in `ln Rt`, the RMSE, bias and R² of the fitted against the observed `m` (points with φ up to 0.5), the porosity, Vsh and `m` ranges, and a status: **ok**, **insufficient points**, **phi range too small, c1 fixed**, **vsh range too small, c2 fixed** or **implausible m**. If more than 5 % of the wet points get a fitted `m` outside the clip range, the status is **implausible m** and the fit cannot be applied. The fit is a proposal: nothing is stored until you press **Apply fit**, which writes Curve mode, the formula model, the coefficients and the porosity source to the scope you chose, and never changes the `n` model.
+
+### Monte Carlo
+
+In a run with `m` and `n` curves, the offset drawn for `m` (or `n`) is added to every sample of the curve and is bounded sample by sample to the Monte Carlo limits of 1.0 to 4.0. The offset is additive; a relative distribution for `m` or `n` is refused with *m and n are curves in this well: use additive offsets*. The coefficients, the clip range and the curve shape are not varied, and the run lists *m/n curve shape (coefficients; only a whole-curve offset is varied)* among the inputs not varied. At zero offset the run reproduces the deterministic result.
+
+### Limits
+
+- The formula is a statistical form, not a physical law. Check the fitted curve against core measurements of the formation factor, where there are any, and against the Pickett plot.
+- The saturation exponent has no fit: wet points do not constrain `n`.
+- Below 2 % porosity, or where porosity or Vsh is missing, the constant values apply.
+- Wet points that are not water-bearing bias the fit toward high `m`; clay conduction biases `m` low.
+- A fit on bulk wet points is applied to the sand-lamina values in a zone that reads the sand basis; check that the two are consistent.
+- Core-derived `m` and `n` are not read; there is no import for them.
+
+References: Archie (1942); Pickett (1966); Borai (1987); Guo et al. (2023) *(to verify)*.
+
+## Radial invasion correction *(v1.13.0)*
+
+Drilling mud filtrate pushes the formation fluid away from the hole. A deep resistivity curve then reads a mixture of the flushed zone (`Rxo`) and the undisturbed formation (`Rt`). With a medium and a shallow resistivity curve, and optionally a micro-resistivity curve, the **invasion** step fits a one-step radial profile to each sample and returns `Rt`, `Rxo` and the invasion diameter. It is an Rt correction step like the laminated-sand and pyrite steps: its output is `RT_INV`, and where the step is on the Sw models read `RT_INV`. It is optional and off by default; with it off, a run is unchanged.
+
+### Model
+
+Work in conductivity. The unknowns of a sample are `Ct = 1/Rt`, `Cxo = 1/Rxo` and the invasion diameter `di` (in). A tool `i` has a 50 percent investigation diameter `r_i` (in) and a shape exponent `p`. Its **pseudo-geometric factor** is the share of its signal that comes from inside the invaded cylinder:
+
+```
+J_i(di) = 1 / (1 + (r_i / di)^p)
+Ca_i    = J_i × Cxo + (1 − J_i) × Ct          Ra_i = 1 / Ca_i
+```
+
+`J_i` is 0.5 when `di = r_i`, tends to 1 when `di` is much larger than `r_i` and to 0 when it is much smaller. The three observations are the deep curve (the Rt the step receives), `RM` (medium) and `RS` (shallow), read from the auxiliary curve roles (see [Auxiliary curve roles](data-formats.md#auxiliary-curve-roles-v1110)). Three curves fix three unknowns exactly. If `RXO` is mapped and **Use RXO as the flushed-zone resistivity** is selected, `Rxo` is taken from the micro-resistivity curve and the unknowns are `Rt` and `di`, so two curves are enough: the deep curve and `RM` or `RS`. With the deep curve, `RM`, `RS` and `RXO` together the fit has one more observation than unknowns, which allows the fit-quality check below. If the minimum set is not mapped, the step is skipped in that zone and the run says so.
+
+The tool constants are generic placeholders, not specifications of any tool. **Confirm the diameters and the exponent against the chart book of the tool that was run.** The presets are:
+
+| Preset | deep `r` (in) | medium `r` (in) | shallow `r` (in) | `p` |
+|---|---|---|---|---|
+| Generic induction | 80 | 45 | 20 | 2.5 |
+| Generic laterolog | 70 | 35 | 25 | 2.5 |
+| Custom radii | your values | your values | your values | your value |
+
+Worked check (Generic induction, `di` = 40 in): `J` = 0.15022, 0.42691, 0.84978 for the deep, medium and shallow curve. With `Rt` = 20 and `Rxo` = 2 ohm.m the apparent resistivities are 8.5034, 4.1303 and 2.3127 ohm.m, and fitting those three values returns `Rt` = 20, `Rxo` = 2 and `di` = 40.
+
+### Fit
+
+The fit is done for all samples at once; there is no loop over samples. For a fixed `di` the model is linear in `(Ct, Cxo)` (or in `Ct` alone with `Rxo` fixed), so:
+
+1. **Start (variable projection).** A grid of 48 diameters, spaced logarithmically between the smallest and the largest diameter, is tried. For each sample and each diameter the weighted linear least squares for `Ct` and `Cxo` is solved in closed form, with each observation weighted by its relative error in conductivity. Combinations with a non-positive conductivity are rejected, and the diameter with the smallest misfit gives the start.
+2. **Refinement.** A Levenberg-Marquardt iteration in log space, with `x = (ln Rt, ln Rxo, ln di)` and residuals `f_i = ln Ra_i(x) − ln Ra_i(measured)`, so every decade weighs the same. With `q_i = (r_i/di)^p`, the derivatives are
+   `∂f_i/∂ln Rt = (1 − J_i) × Ct / Ca_i`,
+   `∂f_i/∂ln Rxo = J_i × Cxo / Ca_i`,
+   `∂f_i/∂ln di = −(Cxo − Ct) × p × q_i × J_i² / Ca_i`.
+   Each iteration solves the damped normal equations of every sample, keeps the parameters inside their bounds (`Rt` 0.05 to 20 000 ohm.m, `di` between the smallest and largest diameter, and `Rxo` not below `Rmf` at formation temperature when `Rmf` is set), and stops when no parameter moves by more than 1e-6, or after 40 iterations.
+
+### Classification of each sample
+
+| Class | Condition | `RT_INV` | Valid |
+|---|---|---|---|
+| Non-unique | the largest apparent conductivity is less than the **minimum curve contrast** (default 1.15) times the smallest, counting a fixed `Rxo` | the input Rt, unchanged | yes |
+| Failed | the iteration did not converge | empty | no |
+| Diameter at upper bound | `di` ≥ 0.99 × the largest diameter: every tool reads mostly flushed zone and `Rt` is an extrapolation | empty | no |
+| Diameter at lower bound | `di` ≤ 1.01 × the smallest diameter: little invasion, `Rt` is well constrained | fitted | yes |
+| Poor fit | only when there is a redundant observation: the rms of the log residual is above the **maximum rms** (default 0.15) | empty | no |
+| Missing input | the deep curve or a needed curve is empty or not positive | empty | no |
+| Fitted | otherwise | fitted | yes |
+
+A non-unique sample is flat: the curves agree, so any correction is smaller than the tool tolerance. `DI_INV` is empty where the sample is non-unique or invalid. `RXO_INV` is the fitted `Rxo`, or the micro-resistivity reading when it is used as fixed; at a non-unique sample without a micro-resistivity curve it is empty. A sample with no valid output follows the setting **When a step cannot produce a value** (empty, or the previous Rt), as for the other Rt steps. The run counts every class per zone and gives a message for each. Non-unique samples give a warning when they are more than 25 % of the valid samples; a diameter at the upper bound gives a warning, at the lower bound information.
+
+### Rmf at formation temperature
+
+`Rmf`, with the temperature at which it was measured, is optional. It is used as a **bound and a check**, never as an input of the fit. It is brought to the temperature of each sample with Arps' equation (see [Formation temperature](#formation-temperature)):
+
+`Rmf(T) = Rmf × (T_ref + 6.77) / (T + 6.77)`, temperatures in °F.
+
+Because `Rxo = F × Rmf / Sxo^n` with `F ≥ 1` and `Sxo ≤ 1`, the flushed-zone resistivity cannot be below `Rmf(T)`; the fit keeps `Rxo` at or above it, and counts the samples where the observed or fitted `Rxo` was below it (information). The formation temperature comes from the surface temperature, gradient and datum of the temperature settings and the TVD of the sample, as in [Formation temperature](#formation-temperature), whether or not the temperature correction is on. When these settings are still the defaults, the run says so and gives the temperature range used. Measured resistivities are not temperature-corrected here: they are already at formation temperature. With no `Rmf`, `Rxo` has no lower bound and the run notes it.
+
+### Inputs you must correct, and limits
+
+- `RT`, `RM`, `RS` and `RXO` must already be corrected by you for borehole, mud and shoulder-bed effects. The step does not correct them.
+- The profile is a single step: no annulus, no transition zone, no flushing gradient.
+- When `Rt` is close to `Rxo` the result is not unique and the sample keeps the measured Rt.
+- The result depends on the diameters and the exponent of the preset.
+- Thin beds and shoulder beds make the three curves differ for reasons other than invasion; the correction is not valid there. In laminated sands the assumption of a homogeneous invaded zone is weaker.
+- It is not a substitute for service-company tornado charts. Do not use it on resistivity that is already corrected for invasion.
+- If the deep curve was changed by a vertical-resolution step, the medium and shallow curves are used as measured and have a different vertical resolution; the run warns.
+- The pseudo-geometric function is a design choice, not a published fit. Doll (1949) gives the physical basis.
+- The invasion step is not blocked by the shoulder-bed guard, which acts on vertical corrections only.
+- In a Monte Carlo run the invasion-corrected Rt is held at its value; the tool constants and `Rmf` are not varied.
+
+References: Doll (1949); Thadani and Hall (1981); Anderson (2001); Arps (1953).
 
 ## Uncertainty (Monte Carlo) *(v1.9.0)*
 
