@@ -7,6 +7,7 @@ boxes, is built many times (in the test suite hundreds of times).
 """
 
 import io
+import re
 from collections import OrderedDict
 from typing import Iterable, Tuple
 
@@ -19,10 +20,17 @@ from PyQt6.QtGui import QImage, QPainter, QPixmap
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from themes.colors import get_color
+from themes.tokens import TYPOGRAPHY
 
-EQUATION_PT = 13.5   # compact strips; fractions shrink their terms, so above body text
-PANEL_PT = 15.0      # the Methods panel
-LEGEND_PT = 13.0     # symbols in a legend table
+# Sizes follow the body text (TYPOGRAPHY["font_body"], 9 pt): mathtext at the body size reads
+# the same height as the labels around it; fractions shrink their terms, so a little above it.
+BODY_PT = float(TYPOGRAPHY["font_body"])
+EQUATION_PT = round(BODY_PT * 1.15, 1)  # compact strips under the tools
+PANEL_PT = round(BODY_PT * 1.3, 1)      # the Methods panel, a reading page
+LEGEND_PT = round(BODY_PT * 1.15, 1)    # symbols in a legend table
+# Fractions are drawn in display style (\dfrac): an inline \frac shrinks its terms to script
+# size, which at body-text size makes the subscripts unreadable.
+_INLINE_FRAC = re.compile(r"\\frac(?=\{)")
 LINE_GAP_EM = 0.6    # space between stacked lines, in em
 PAD_PT = 3.0         # padding on every side of a rendered line: subscripts are never clipped
 _BASE_DPI = 96.0     # Qt logical pixels per inch
@@ -41,12 +49,13 @@ def render_tex(tex: str, color: str, dpr: float = 1.0, size_pt: float = EQUATION
         return hit
     buf = io.BytesIO()
     prop = FontProperties(size=size_pt)
+    shown = _INLINE_FRAC.sub(lambda _m: r"\dfrac", tex)
     with rc_context({"mathtext.fontset": "stix"}):
         # math_to_image writes an opaque white page; the same steps with a transparent one.
-        width, height, depth, _, _ = MathTextParser("path").parse(tex, dpi=72, prop=prop)
+        width, height, depth, _, _ = MathTextParser("path").parse(shown, dpi=72, prop=prop)
         full_w, full_h = width + 2 * PAD_PT, height + 2 * PAD_PT
         fig = Figure(figsize=(full_w / 72.0, full_h / 72.0))
-        fig.text(PAD_PT / full_w, (depth + PAD_PT) / full_h, tex, fontproperties=prop,
+        fig.text(PAD_PT / full_w, (depth + PAD_PT) / full_h, shown, fontproperties=prop,
                  color=color)
         fig.savefig(buf, dpi=_BASE_DPI * key[2], format="png", transparent=True)
     image = QImage.fromData(buf.getvalue(), "PNG")

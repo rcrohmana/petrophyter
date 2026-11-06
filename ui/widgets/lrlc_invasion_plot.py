@@ -10,6 +10,7 @@ from typing import Dict, Optional, Sequence, Tuple
 
 import numpy as np
 from matplotlib import colormaps as _colormaps
+from matplotlib.ticker import FuncFormatter
 from PyQt6.QtCore import pyqtSignal
 
 from modules.lrlc.invasion import forward_ra
@@ -20,6 +21,33 @@ from .lrlc_ts_plot import _PlotBase
 CONTRASTS = (0.05, 0.1, 0.3, 3.0, 10.0, 30.0)
 MAX_POINTS = 4000
 TOOL_NAMES = ("Deep", "Medium", "Shallow")
+
+
+def _plain_major(value, _pos=None) -> str:
+    return f"{value:g}"
+
+
+def _plain_minor(value, _pos=None) -> str:
+    """Label the 2 and 5 multiples of a decade; the others stay unlabelled."""
+    if value <= 0:
+        return ""
+    lead = value / 10 ** np.floor(np.log10(value))
+    return f"{value:g}" if round(lead, 6) in (2.0, 5.0) else ""
+
+
+def _plain_log_axis(axis) -> None:
+    """Plain numbers (20, 50, 100) on a log axis instead of 2 x 10^1, which is wide enough
+    to push the axis label off the figure."""
+    axis.set_major_formatter(FuncFormatter(_plain_major))
+    axis.set_minor_formatter(FuncFormatter(_plain_minor))
+
+
+def _fit_layout(figure) -> None:
+    """Keep tick and axis labels inside the canvas."""
+    try:
+        figure.tight_layout(pad=0.8)
+    except (ValueError, RuntimeError):     # a canvas too small to lay out; draw as it is
+        pass
 
 
 def forward_loci(r50: Sequence[float], p: float, di_min: float, di_max: float,
@@ -99,6 +127,8 @@ class InvasionProfilePlot(_PlotBase):
         ax.set_title(title, fontsize=9)
         ax.grid(True, alpha=0.3, which="both")
         ax.legend(loc="best", fontsize=7)
+        _plain_log_axis(ax.yaxis)
+        _fit_layout(self.plot.figure)
         self.plot.canvas.draw_idle()
 
 
@@ -182,4 +212,7 @@ class TornadoPlot(_PlotBase):
         ax.set_ylabel("RS / RT")
         ax.grid(True, alpha=0.3, which="both")
         ax.legend(loc="upper left", fontsize=7, ncol=2)
+        _plain_log_axis(ax.xaxis)
+        _plain_log_axis(ax.yaxis)
+        _fit_layout(self.plot.figure)
         self.plot.canvas.draw_idle()
