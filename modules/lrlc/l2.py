@@ -287,8 +287,9 @@ def register_derives() -> None:
 
 
 def register_all() -> None:
-    """Register the laminated and pyrite steps and the three segment derives (idempotent)."""
-    from modules.lrlc import laminated, pyrite
+    """Register the invasion, laminated and pyrite steps and the three segment derives (idempotent)."""
+    from modules.lrlc import invasion, laminated, pyrite
+    invasion.register_step()
     laminated.register_step()
     pyrite.register_step()
     register_derives()

@@ -90,6 +90,7 @@ def test_unzoned_constant_comes_from_param_scopes():
 
 
 def test_available_steps_sorted_by_order(register_test_steps, monkeypatch):
+    monkeypatch.delitem(chain.STEPS, "invasion", raising=False)
     monkeypatch.delitem(chain.STEPS, "laminated")
     monkeypatch.delitem(chain.STEPS, "pyrite")
     assert [s.name for s in available_steps()] == [

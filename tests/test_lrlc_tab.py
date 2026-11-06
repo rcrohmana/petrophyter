@@ -136,6 +136,7 @@ def test_remediation_note_with_empty_registry(window, qtbot, monkeypatch):
 
 def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_test_steps,
                                                        monkeypatch):
+    monkeypatch.delitem(chain.STEPS, "invasion", raising=False)
     monkeypatch.delitem(chain.STEPS, "laminated")
     monkeypatch.delitem(chain.STEPS, "pyrite")
     _well(window)

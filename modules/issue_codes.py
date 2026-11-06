@@ -113,6 +113,16 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "LRLC_QV_NO_CORE_PAIRS": ("info", None),
     "LRLC_DIAG_INSUFFICIENT": ("info", "diagnostics"),
     "LRLC_BASE_SHF_HELD": ("info", "diagnostics"),
+    "LRLC_INV_CURVES_MISSING": ("warning", None),
+    "LRLC_INV_TOOL_GENERIC": ("info", None),
+    "LRLC_INV_NONUNIQUE": ("info", "diagnostics"),
+    "LRLC_INV_DI_BOUND": ("info", "diagnostics"),
+    "LRLC_INV_POOR_FIT": ("warning", "diagnostics"),
+    "LRLC_INV_FAIL": ("warning", "diagnostics"),
+    "LRLC_INV_RXO_BELOW_RMF": ("info", "diagnostics"),
+    "LRLC_INV_RMF_MISSING": ("info", None),
+    "LRLC_INV_DECON_MISMATCH": ("warning", None),
+    "LRLC_INV_TEMP_DEFAULT": ("info", None),
 }
 
 
