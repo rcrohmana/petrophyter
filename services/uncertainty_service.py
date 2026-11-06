@@ -169,15 +169,16 @@ class UncertaintyRunner(QObject):
 
     def start(self, model) -> Optional[str]:
         """Start a run on the project's wells; returns an error text instead of starting."""
-        from modules.uncertainty import validate_config
+        from modules.uncertainty import curve_mn_in_params, validate_config
 
         cfg = model.project.uncertainty
-        errors = validate_config(cfg)
+        wells = [ds for ds in model.project.wells if self._has_rt_data(model, ds)]
+        curve_mn = any(curve_mn_in_params(model.params_for_well(ds)) for ds in wells)
+        errors = validate_config(cfg, curve_mn=curve_mn)
         if errors:
             return " ".join(errors)
         if self._running:
             return "Monte Carlo is already running."
-        wells = [ds for ds in model.project.wells if self._has_rt_data(model, ds)]
         if not wells:
             return "No well has data with a resistivity (RT) curve."
         snapshots = [snapshot_well(model, ds, model.well_params_hash(ds)) for ds in wells]

@@ -35,7 +35,9 @@ class SwInputs:
     Mirrors the arguments ``modules.pipeline._primary_sw`` hands to the five models:
     ``rw_eff``, ``rsh_eff``, ``rwb_eff`` and ``ws_b`` are the effective values of
     ``_sw_effective_inputs`` (scalar or one value per sample); ``phie``, ``phit``, ``vsh``
-    are per-sample arrays; ``a``, ``m``, ``n``, ``ws_qv``, ``dw_swb`` are scalars.
+    are per-sample arrays; ``a`` and ``dw_swb`` are scalars. ``m``, ``n`` and ``ws_qv`` are scalars
+    or, where a zone uses variable exponents or an estimated Qv, one value per sample (the same
+    arrays the primary Sw model read), so the cutoff is computed with exactly the inputs of ``SW``.
     """
 
     phie: Any
@@ -46,13 +48,16 @@ class SwInputs:
     rwb_eff: Any
     ws_b: Any
     a: float
-    m: float
-    n: float
-    ws_qv: float
+    m: Any
+    n: Any
+    ws_qv: Any
     dw_swb: float
 
 
 _PER_SAMPLE = ("phie", "phit", "vsh", "rw_eff", "rsh_eff", "rwb_eff", "ws_b")
+# Inputs that are a scalar or one value per sample, with the neutral value that stands in for an
+# ineligible sample.
+_OPTIONAL_ARRAYS = (("m", 2.0), ("n", 2.0), ("ws_qv", 0.0))
 
 
 def _broadcast(value, size):
@@ -89,13 +94,30 @@ def _sw_function(model, inputs, index):
         eligible &= np.isfinite(arr[key])
     # The production validators reject non-finite / non-positive parameters, so neutral
     # values stand in for the ineligible samples (their result is discarded).
+    optional = {}
+    for key, fill in _OPTIONAL_ARRAYS:
+        value = getattr(inputs, key)
+        if np.ndim(value) == 0:
+            optional[key] = value
+            continue
+        values = _broadcast(value, size)
+        if key == "ws_qv":
+            if model == "Waxman-Smits":
+                eligible &= np.isfinite(values)
+        else:
+            eligible &= np.isfinite(values) & (values > 0)
+        optional[key] = np.where(np.isfinite(values), values, fill)
+    # The ineligible rows of the safe arrays carry the neutral value.
+    for key, fill in _OPTIONAL_ARRAYS:
+        if np.ndim(optional[key]) != 0:
+            optional[key] = np.where(eligible, optional[key], fill)
     safe = {}
     for key in _PER_SAMPLE:
         fill = 0.2 if key in ("phie", "phit", "vsh") else 1.0
         safe[key] = pd.Series(np.where(eligible & np.isfinite(arr[key]), arr[key], fill),
                               index=index)
     scratch = PetrophysicsCalculator(pd.DataFrame({"RT_TRIAL": np.ones(size)}, index=index))
-    a, m, n = inputs.a, inputs.m, inputs.n
+    a, m, n, ws_qv = inputs.a, optional["m"], optional["n"], optional["ws_qv"]
 
     def sw_at(log_rt):
         rt = np.power(10.0, np.asarray(log_rt, dtype=float))
@@ -112,7 +134,7 @@ def _sw_function(model, inputs, index):
                 safe["rsh_eff"].values, a, m, n, rt=rt)
         elif model == "Waxman-Smits":
             sw = scratch.calculate_sw_waxman_smits(
-                "RT_TRIAL", safe["phit"], safe["rw_eff"].values, a, m, n, inputs.ws_qv,
+                "RT_TRIAL", safe["phit"], safe["rw_eff"].values, a, m, n, ws_qv,
                 safe["ws_b"].values, phie=safe["phie"], rt=rt)
         else:
             sw = scratch.calculate_sw_dual_water(
@@ -192,8 +214,12 @@ def zone_scalar(model: str, inputs: SwInputs, target: float, *, zone_mask, dz,
         value = np.asarray(getattr(inputs, key), dtype=float)
         means[key] = (float(value) if value.ndim == 0
                       else _weighted_mean(value.reshape(-1)[mask], weights))
-    one = SwInputs(a=inputs.a, m=inputs.m, n=inputs.n, ws_qv=inputs.ws_qv,
-                   dw_swb=inputs.dw_swb, **means)
+    scalars = {}
+    for key, _ in _OPTIONAL_ARRAYS:
+        value = np.asarray(getattr(inputs, key), dtype=float)
+        scalars[key] = (getattr(inputs, key) if value.ndim == 0
+                        else _weighted_mean(value.reshape(-1)[mask], weights))
+    one = SwInputs(a=inputs.a, dw_swb=inputs.dw_swb, **scalars, **means)
     cut, _, _ = rt_cutoff(model, one, target, pd.RangeIndex(1))
     return {
         "zone": zone, "sw_target": float(target), "rt_cut": float(cut[0]), "basis": label,

@@ -21,10 +21,13 @@ import pandas as pd
 from modules.issue_codes import ISSUE_CODES, IssueLog  # noqa: F401  (re-exported)
 from modules.las_utils import mask_nonpositive
 from modules.lrlc import l2
-from modules.lrlc.chain import apply_rt_chain, chain_active_anywhere
+from modules.lrlc.chain import DERIVES, apply_rt_chain, chain_active_anywhere
+from modules.lrlc.config import LRLC_DEFAULTS
+from modules.lrlc.invasion import invasion_count_issues, temperature_needed
 from modules.lrlc.rt_cutoff import SwInputs
 from modules.lrlc.stage import (
-    LrlcRun, apply_lrlc_stage, build_aux, lrlc_summary, zone_keys_for)
+    LrlcRun, apply_lrlc_stage, build_aux, lrlc_summary, resolved_for, zone_keys_for)
+from modules.lrlc.variable_mn import build_mn_curves, curve_percentiles, mn_issues
 from modules.param_scopes import (
     GR_MANUAL, OPTIONAL_SOURCE_PARAMS, PROJECT, PROJECT_ZONE, SPECS, UNZONED,
     ZONE_AUTO_MIN_FT, ZONE_AUTO_MIN_SAMPLES, arps_factor, flat_value, formation_temperature,
@@ -884,6 +887,9 @@ class SegmentBasis:
     # LRLC: per-sample Qv for Waxman-Smits and the sand basis for the Sw models (None: bulk).
     qv_values: Optional[np.ndarray] = None
     sand_basis: Optional["SandBasis"] = None
+    # LRLC variable m / n: the per-sample exponents the Sw models read (None: scalar).
+    m_values: Optional[np.ndarray] = None
+    n_values: Optional[np.ndarray] = None
 
 
 def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_quality, pay,
@@ -900,6 +906,8 @@ def _capture_basis(capture, zone, positions, sp, rw, rsh, rsh_auto, tctx, rw_qua
         chain_replay=pay.get("chain_replay"),
         qv_values=None if pay.get("qv_values") is None else np.array(pay["qv_values"], dtype=float),
         sand_basis=pay.get("sand_basis"),
+        m_values=None if pay.get("m_values") is None else np.array(pay["m_values"], dtype=float),
+        n_values=None if pay.get("n_values") is None else np.array(pay["n_values"], dtype=float),
     ))
 
 
@@ -1179,8 +1187,97 @@ def _lrlc_setup(p, labels, data, curve_mapping, has_rt, warnings):
         lrlc=lrlc, aux=aux, aux_names=aux_names,
         force_rt_sw=chain_active_anywhere(lrlc, keys.to_numpy(dtype=object)),
         well_labels=keys, well_derived={}, has_labels=labels is not None)
+    run.mn_active = mn_curve_anywhere(lrlc, keys.to_numpy(dtype=object))
+    if temperature_needed(lrlc, keys.to_numpy(dtype=object)) and "formation_temperature" in DERIVES:
+        tvd = _tvd_source(data, p, curve_mapping, noun="temperatures").at(
+            data["DEPTH"].to_numpy(dtype=float))
+        found = []
+        derived = DERIVES["formation_temperature"].fn(
+            tvd=tvd, params=p, zone_keys=keys.to_numpy(dtype=object), lrlc=lrlc, issues=found)
+        run.well_derived = {name: pd.Series(np.asarray(values, dtype=float), index=data.index)
+                            for name, values in derived.items()}
+        _issues_to_log(found, warnings)
     run.plan = l2.make_plan(lrlc, keys.to_numpy(dtype=object), curve_mapping.get("RT", "RT"))
     return run
+
+
+def mn_curve_anywhere(lrlc, zone_keys) -> bool:
+    """True when any zone present evaluates variable m / n (``mn_mode`` is ``"curve"``)."""
+    if not lrlc or "resolved" not in lrlc:
+        return False
+    return any(resolved_for(lrlc, key).get("mn_mode") == "curve"
+               for key in dict.fromkeys(np.asarray(zone_keys, dtype=object)))
+
+
+def _mn_settings(prm: dict) -> dict:
+    return {k: prm.get(k) for k in ("mn_mode", "m_model", "m_coef", "shell_confirm", "n_model",
+                                    "n_coef", "phi_source")}
+
+
+def apply_mn_curves(calc, p, lrlc_run, zone, index, vsh, sand_basis, warnings):
+    """``M_VAR`` / ``N_VAR`` of one saturation segment; None when no zone of the well uses curves.
+
+    The zone settings are expanded per sample from the zone labels, so a segment holding several
+    zones needs no special handling. The porosity and shale volume are the ones the Sw models
+    read: the sand-lamina arrays where a zone reads the sand basis, else the bulk ones. Both
+    columns are written for every segment of a well that has a curve zone (scalar zones carry the
+    segment's ``m`` / ``n``). Issues go to ``warnings``; the per-zone rows to ``lrlc_run``.
+    """
+    if lrlc_run is None or not lrlc_run.mn_active:
+        return None
+    lrlc = lrlc_run.lrlc
+    keys = zone_keys_for(index, zone)
+    n = len(index)
+    res = calc.results
+
+    def column(name):
+        series = res.get(name)
+        return np.full(n, np.nan) if series is None else series.to_numpy(dtype=float)
+
+    if sand_basis is None:
+        phie, phit, vsh_eff = column("PHIE"), column("PHIT"), np.asarray(vsh, dtype=float)
+    else:
+        phie = np.asarray(sand_basis.phie, dtype=float)
+        phit = np.asarray(sand_basis.phit, dtype=float)
+        vsh_eff = np.asarray(sand_basis.vsh, dtype=float)
+    settings = {key: resolved_for(lrlc, key) for key in dict.fromkeys(keys)}
+    phi = phie.copy()
+    for key, prm in settings.items():
+        if str(prm.get("phi_source", "phie")).lower() == "phit":
+            mask = keys == key
+            phi[mask] = phit[mask]
+    blk = {**LRLC_DEFAULTS["variable_mn"], **(lrlc.get("variable_mn") or {})}
+    out = build_mn_curves(phi, vsh_eff, keys, settings, p["m"], p["n"], blk["clip_m"],
+                          blk["clip_n"], p.get("lithology_preset"))
+    res["M_VAR"] = out.m
+    res["N_VAR"] = out.n
+    for issue in mn_issues(out, float(blk["clip_warn_fraction"])):
+        key = issue["zone"]
+        text = issue["text"].replace(f"zone {UNZONED}", "the well")
+        warnings.add(issue["code"], text, severity=issue["severity"],
+                     zone=None if key == UNZONED else key)
+    pct = curve_percentiles(out, keys)
+    for key, cnt in out.counts.items():
+        if cnt["mode"] != "curve":
+            continue
+        prm = _mn_settings(settings[key])
+        lrlc_run.mn_rows.append({
+            "zone": "WELL" if key == UNZONED else key,
+            "mode": "curve", "m_model": cnt["m_model"], "m_coef": list(prm["m_coef"] or []),
+            "n_model": cnt["n_model"], "n_coef": list(prm["n_coef"] or []),
+            "phi_source": str(prm["phi_source"] or "phie").lower(),
+            **pct.get(key, {}),
+            "n_samples": cnt["n_samples"], "n_eval": cnt["n_eval"],
+            "n_fallback": cnt["n_fallback"], "n_clipped_m": cnt["n_clipped_m"],
+            "n_clipped_n": cnt["n_clipped_n"]})
+    return out
+
+
+def _mn_arrays(mn):
+    """``(m_values, n_values)`` for ``_primary_sw``: an array only where a curve was evaluated."""
+    if mn is None:
+        return None, None
+    return (mn.m if mn.m_valid.any() else None), (mn.n if mn.n_valid.any() else None)
 
 
 def _lrlc_segment_name(zone, lrlc_run) -> str:
@@ -1263,6 +1360,7 @@ def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone
                          segment=_lrlc_segment_name(zone, lrlc_run))
     _issues_to_log(out.issues, warnings)
     _issues_to_log(l2.chain_count_issues(out.records), warnings)
+    _issues_to_log(invasion_count_issues(out.records), warnings)
     if out.write_rt_sw:
         calc.results["RT_SW"] = out.rt_sw
     for name, values in out.columns.items():
@@ -1309,6 +1407,7 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
     """
     rt_values, chain_out, eff = None, None, None
     qv_values, sand_basis, l2_env = None, None, None
+    mn, m_values, n_values = None, None, None
     if lrlc_run is not None:
         eff = _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data)
         l2_env = _lrlc_env(calc, data, curve_mapping, p, vsh, zone, lrlc_run)
@@ -1327,9 +1426,12 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
         lrlc_run.rw_eff_parts.append(pd.Series(
             np.broadcast_to(np.asarray(eff.rw, dtype=float), (len(data),)), index=data.index))
         _issues_to_log(l2_env.issues, warnings)
+        mn = apply_mn_curves(calc, p, lrlc_run, zone, data.index, vsh, sand_basis, warnings)
+        m_values, n_values = _mn_arrays(mn)
     sw_new, phie, phit, sw_fallback = _primary_sw(
         calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings, rsh_auto,
-        rt_values=rt_values, qv_values=qv_values, basis=sand_basis)
+        rt_values=rt_values, qv_values=qv_values, basis=sand_basis,
+        m_values=m_values, n_values=n_values)
 
     swirr_method = p["swirr_method"]
     k_buckles = p["k_buckles"]
@@ -1381,18 +1483,29 @@ def _saturation_to_pay(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warning
             calc, data, curve_mapping, p, vsh, phie, rw, rsh, tctx, rsh_auto, sw_for_pay, sw_hold,
             zone_key_array, lrlc_run)
         _vpyr_bias_note(calc.results, zone_key_array, warnings)
+        # RT_CUT reads exactly what the primary Sw read: the sand basis, the variable exponents
+        # and the per-sample Qv where a zone uses them.
+        if sand_basis is None:
+            cut_phie, cut_phit, cut_vsh = phie, phit, vsh
+        else:
+            cut_phie, cut_phit, cut_vsh = sand_basis.phie, sand_basis.phit, sand_basis.vsh
         sw_inputs = SwInputs(
-            phie=phie, phit=phit, vsh=vsh, rw_eff=eff.rw, rsh_eff=eff.rsh, rwb_eff=eff.rwb,
-            ws_b=eff.ws_b, a=p["a"], m=p["m"], n=p["n"], ws_qv=p["ws_qv"], dw_swb=p["dw_swb"])
+            phie=cut_phie, phit=cut_phit, vsh=cut_vsh, rw_eff=eff.rw, rsh_eff=eff.rsh,
+            rwb_eff=eff.rwb, ws_b=eff.ws_b, a=p["a"],
+            m=p["m"] if m_values is None else m_values,
+            n=p["n"] if n_values is None else n_values,
+            ws_qv=p["ws_qv"] if qv_values is None else qv_values, dw_swb=p["dw_swb"])
         apply_lrlc_stage(
             calc, data, p, lrlc_run, rt_curve=curve_mapping.get("RT", "RT"),
             zone_keys=zone_keys_for(data.index, zone), sw_inputs=sw_inputs,
-            sw_model=_sw_model_cut(p, sw_fallback), dz=_sample_dz(data), warnings=warnings)
+            sw_model=_sw_model_cut(p, sw_fallback), dz=_sample_dz(data), warnings=warnings,
+            bulk=(phie, vsh))
     return {"vsh": vsh, "phie": phie, "sw": sw_for_pay, "swirr": swirr, "summary": pay,
             "phit": phit, "sw_fallback": sw_fallback, "has_rt": sw_new is not None,
             "shf": shf_out, "sw_hold": sw_hold, "rt_sw": rt_values,
             "chain_replay": None if chain_out is None else chain_out.replay,
-            "qv_values": qv_values, "sand_basis": sand_basis, "sw_base_pay": sw_base_pay}
+            "qv_values": qv_values, "sand_basis": sand_basis, "sw_base_pay": sw_base_pay,
+            "m_values": m_values, "n_values": n_values}
 
 
 def _lrlc_baseline(calc, data, curve_mapping, p, vsh, phie, rw, rsh, tctx, rsh_auto,

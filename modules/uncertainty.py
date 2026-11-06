@@ -87,6 +87,9 @@ RSH_LAMINATED_NOTE = "Rsh also varies the laminated-sand Rt"
 LRLC_TV_VLAM = "Thomas-Stieber Vlam"
 LRLC_PYRITE = "pyrite volume and correction"
 LRLC_QV = "estimated Qv"
+LRLC_MN_CURVE = "m/n curve shape (coefficients; only a whole-curve offset is varied)"
+LRLC_INVASION = "invasion-corrected Rt (frozen)"
+CURVE_RELATIVE_ERROR = "m and n are curves in this well: use additive offsets"
 
 
 def not_varied_text(shf_pay: bool = False, lrlc: Tuple[str, ...] = ()) -> str:
@@ -105,15 +108,18 @@ def lrlc_not_varied(frozen_wells) -> Tuple[Tuple[str, ...], bool]:
     step is active (Rsh then also moves the laminated-sand Rt).
 
     Read from each well's base summary chain and the frozen segments: Vlam when a laminated step
-    ran or a sand basis is in use, pyrite when a pyrite step ran, Qv when per-sample Qv is carried.
+    ran or a sand basis is in use, pyrite when a pyrite step ran, Qv when per-sample Qv is carried,
+    the m / n curve shape when a segment carries exponent curves, and the invasion-corrected Rt
+    when the invasion step ran (it is part of the frozen chain output).
     """
-    steps, qv, basis = set(), False, False
+    steps, qv, basis, curves = set(), False, False, False
     for fw in frozen_wells:
         block = (fw.base_summary or {}).get("lrlc") or {}
         steps.update(rec.get("step") for rec in block.get("chain") or [])
         for seg in fw.segments:
             qv = qv or seg.qv_values is not None
             basis = basis or seg.sand_basis is not None
+            curves = curves or seg.m_values is not None or seg.n_values is not None
     laminated = "laminated" in steps
     items = []
     if laminated or basis:
@@ -122,7 +128,19 @@ def lrlc_not_varied(frozen_wells) -> Tuple[Tuple[str, ...], bool]:
         items.append(LRLC_PYRITE)
     if qv:
         items.append(LRLC_QV)
+    if curves:
+        items.append(LRLC_MN_CURVE)
+    if "invasion" in steps:
+        items.append(LRLC_INVASION)
     return tuple(items), laminated
+
+
+def curve_mn_in_params(params) -> bool:
+    """True when the LRLC settings of a well put any zone in variable m / n curve mode."""
+    lrlc = (params or {}).get("lrlc") or {}
+    res = lrlc.get("resolved") or {}
+    levels = [res.get("default") or {}] + list((res.get("zones") or {}).values())
+    return any((level or {}).get("mn_mode") == "curve" for level in levels)
 
 
 @dataclass
@@ -199,8 +217,12 @@ def _is_pd(r: np.ndarray) -> bool:
         return False
 
 
-def validate_config(cfg: UncertaintyConfig) -> List[str]:
-    """Return a list of human-readable errors; empty when the configuration can run."""
+def validate_config(cfg: UncertaintyConfig, curve_mn: bool = False) -> List[str]:
+    """Return a list of human-readable errors; empty when the configuration can run.
+
+    ``curve_mn`` is True when a well evaluated with the configuration has m / n curves: the
+    exponents are then varied as whole-curve additive offsets only.
+    """
     errors: List[str] = []
     names = cfg.enabled_names()
     if not names:
@@ -220,6 +242,8 @@ def validate_config(cfg: UncertaintyConfig) -> List[str]:
             errors.append(f"{name}: unknown distribution kind '{d.kind}'.")
         if d.mode not in MODES:
             errors.append(f"{name}: unknown mode '{d.mode}'.")
+        elif curve_mn and name in ("m", "n") and d.mode != "additive":
+            errors.append(f"{name}: {CURVE_RELATIVE_ERROR}.")
         if not ok_kind:
             continue
         vals = (d.low, d.mid, d.high, d.sd)
@@ -539,6 +563,8 @@ class _Segment:
     chain_replay: Any = None              # ChainReplay when a step that ran has varied parameters
     qv_values: Optional[np.ndarray] = None  # frozen per-sample Qv for Waxman-Smits
     sand_basis: Any = None                # frozen SandBasis the Sw models read
+    m_values: Optional[np.ndarray] = None   # frozen M_VAR (None: scalar m)
+    n_values: Optional[np.ndarray] = None   # frozen N_VAR (None: scalar n)
 
 
 @dataclass
@@ -563,10 +589,12 @@ class FrozenWell:
 
 
 def _primary_sw_values(seg: _Segment, frozen_mapping, sp, rw, rsh, warn,
-                       rt_values=None, qv_values=None, basis=None) -> np.ndarray:
+                       rt_values=None, qv_values=None, basis=None,
+                       m_values=None, n_values=None) -> np.ndarray:
     sw, _, _, _ = _primary_sw(seg.calc, seg.data, frozen_mapping, sp, seg.vsh_s, rw, rsh,
                               seg.tctx, warn, seg.rsh_auto, only_primary=True,
-                              rt_values=rt_values, qv_values=qv_values, basis=basis)
+                              rt_values=rt_values, qv_values=qv_values, basis=basis,
+                              m_values=m_values, n_values=n_values)
     return np.asarray(sw, dtype=float)
 
 
@@ -621,14 +649,17 @@ def freeze_well(key, name, data, curve_mapping, params, formation_tops=None) -> 
             rt_sw=(None if b.rt_sw is None else np.asarray(b.rt_sw, dtype=float)),
             chain_replay=b.chain_replay,
             qv_values=(None if b.qv_values is None else np.asarray(b.qv_values, dtype=float)),
-            sand_basis=b.sand_basis)
+            sand_basis=b.sand_basis,
+            m_values=(None if b.m_values is None else np.asarray(b.m_values, dtype=float)),
+            n_values=(None if b.n_values is None else np.asarray(b.n_values, dtype=float)))
         vsh_all[seg.positions] = seg.vsh
         phie_all[seg.positions] = seg.phie
         if seg.has_rt:
             sp = seg.params
             seg.sw_base = _primary_sw_values(seg, curve_mapping, sp, seg.rw, seg.rsh, IssueLog(),
                                              rt_values=seg.rt_sw, qv_values=seg.qv_values,
-                                             basis=seg.sand_basis)
+                                             basis=seg.sand_basis, m_values=seg.m_values,
+                                             n_values=seg.n_values)
         segments.append(seg)
 
     zones = [row["zone"] for row in summary.get("zones") or []]
@@ -676,7 +707,7 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
 
     def apply(name, base):
         value, was = apply_offset(name, base, theta[name], mode_of[name])
-        if was:
+        if np.any(was):
             clipped[name] = True
         return value
 
@@ -699,6 +730,12 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
             for nm in ("a", "m", "n"):
                 if nm in theta:
                     p2[nm] = apply(nm, sp[nm])
+            # Exponent curves: the same offset moves the whole curve, bounded per sample.
+            m_values, n_values = seg.m_values, seg.n_values
+            if "m" in theta and m_values is not None:
+                m_values = apply("m", m_values)
+            if "n" in theta and n_values is not None:
+                n_values = apply("n", n_values)
             rw = apply("rw", seg.rw) if "rw" in theta else seg.rw
             rsh = apply("rsh", seg.rsh) if "rsh" in theta else seg.rsh
             rt_values = seg.rt_sw
@@ -707,7 +744,8 @@ def evaluate(frozen: FrozenWell, theta: Dict[str, float],
                 rt_values = rerun_chain(seg.chain_replay, {"rsh": eff.rsh, "rw": eff.rw})
             sw = _primary_sw_values(seg, frozen.curve_mapping, p2, rw, rsh, warn,
                                     rt_values=rt_values, qv_values=seg.qv_values,
-                                    basis=seg.sand_basis)
+                                    basis=seg.sand_basis, m_values=m_values,
+                                    n_values=n_values)
         if seg.sw_hold is not None:
             sw = np.where(np.isfinite(seg.sw_hold), seg.sw_hold, sw)
         pos = seg.positions
@@ -842,10 +880,12 @@ def run_monte_carlo(frozen_wells, cfg: UncertaintyConfig, progress=None, cancel=
     invalid configuration or an empty well list.
     """
     t0 = time.perf_counter()
-    errors = validate_config(cfg)
+    frozen_wells = list(frozen_wells)
+    curve_mn = any(seg.m_values is not None or seg.n_values is not None
+                   for fw in frozen_wells for seg in fw.segments)
+    errors = validate_config(cfg, curve_mn=curve_mn)
     if errors:
         raise ValueError("; ".join(errors))
-    frozen_wells = list(frozen_wells)
     if not frozen_wells:
         raise ValueError("No wells to evaluate.")
     draws = sample_parameters(cfg)

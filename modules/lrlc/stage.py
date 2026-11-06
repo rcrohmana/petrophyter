@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 from modules.lrlc import l2
-from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, LRLC_PARAM_DEFAULTS
+from modules.lrlc.invasion import GENERIC_LABEL, resolve_tool
+from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, LRLC_DEFAULTS, LRLC_PARAM_DEFAULTS
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
@@ -57,6 +58,8 @@ class LrlcRun:
     guard_decisions: Dict[Any, Any] = field(default_factory=dict)
     rw_eff_parts: List[pd.Series] = field(default_factory=list)
     shf_held: int = 0                                               # pay Sw held on SHF values
+    mn_active: bool = False                     # any zone of the well evaluates variable m / n
+    mn_rows: List[dict] = field(default_factory=list)               # per-zone variable m / n rows
 
     def aux_array(self, role: str, index) -> Optional[np.ndarray]:
         series = self.aux.get(role)
@@ -125,21 +128,23 @@ def _array(value, n) -> np.ndarray:
 
 
 def apply_lrlc_stage(calc, data, p, run: LrlcRun, *, rt_curve, zone_keys, sw_inputs, sw_model,
-                     dz, warnings) -> None:
+                     dz, warnings, bulk=None) -> None:
     """Write BVW, WATER_FREE_FLAG, LRLC_SCORE, LRLC_FLAG and RT_CUT on ``calc.results``.
 
-    Reads ``SW``, ``SWIRR``, ``NET_*`` flags, ``GAS_FLAG``, ``PHIE`` and ``VSH`` (the latter
-    two via ``sw_inputs``); writes only new columns. ``sw_inputs`` is the segment's one
-    ``SwInputs`` record (the inputs ``_primary_sw`` used), ``sw_model`` the model that ended
-    up as ``SW`` (None when none did).
+    Reads ``SW``, ``SWIRR``, ``NET_*`` flags, ``GAS_FLAG``, ``PHIE`` and ``VSH``; writes only new
+    columns. ``sw_inputs`` is the segment's one ``SwInputs`` record: exactly the inputs
+    ``_primary_sw`` gave the Sw model (sand basis, variable exponents and per-sample Qv where a
+    zone uses them), and the only source of the ``RT_CUT`` inputs. ``bulk`` is ``(phie, vsh)``,
+    the bulk arrays screening and BVW read; None means ``sw_inputs`` holds them. ``sw_model`` is
+    the model that ended up as ``SW`` (None when none did).
     """
     lrlc = run.lrlc
     res = calc.results
     index = data.index
     n = len(index)
     sw = _array(res["SW"].to_numpy(dtype=float) if "SW" in res.columns else np.nan, n)
-    phie = _array(sw_inputs.phie, n)
-    vsh = _array(sw_inputs.vsh, n)
+    phie = _array(sw_inputs.phie if bulk is None else bulk[0], n)
+    vsh = _array(sw_inputs.vsh if bulk is None else bulk[1], n)
     rt = pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float)
 
     # ---- screening ----------------------------------------------------------
@@ -230,6 +235,67 @@ def _clean(value):
     return value
 
 
+def _variable_mn_block(run: LrlcRun) -> Optional[dict]:
+    """``summary["lrlc"]["variable_mn"]``: clip ranges and one row per zone in curve mode."""
+    if not run.mn_rows:
+        return None
+    blk = {**LRLC_DEFAULTS["variable_mn"], **(run.lrlc.get("variable_mn") or {})}
+    rows, seen = [], set()
+    for row in run.mn_rows:
+        if row["zone"] in seen:
+            continue
+        seen.add(row["zone"])
+        rows.append(row)
+    return {"clip_m": list(blk["clip_m"]), "clip_n": list(blk["clip_n"]), "zones": rows}
+
+
+def _median(values) -> Optional[float]:
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    return float(np.median(values)) if values.size else None
+
+
+def _invasion_block(run: LrlcRun, chain, results, rt, n) -> Optional[dict]:
+    """``summary["lrlc"]["invasion"]``: tool values and counts per zone (None: no zone ran the step)."""
+    records = [r for r in chain if r.get("step") == "invasion"]
+    if not records or "RT_INV" not in results.columns:
+        return None
+    keys = run.well_labels.reindex(results.index).to_numpy(dtype=object)
+    rt_inv = results["RT_INV"].to_numpy(dtype=float)
+    rxo = results["RXO_INV"].to_numpy(dtype=float) if "RXO_INV" in results.columns else np.full(n, np.nan)
+    di = results["DI_INV"].to_numpy(dtype=float) if "DI_INV" in results.columns else np.full(n, np.nan)
+    rt = np.asarray(rt, dtype=float)
+    rows: Dict[Any, dict] = {}
+    for rec in records:
+        zone = rec.get("zone")
+        key = UNZONED if zone is None else zone
+        params = rec.get("params") or {}
+        r50, p_exp, generic, _ = resolve_tool(params)
+        counts = rec.get("counts") or {}
+        row = rows.get(key)
+        if row is None:
+            mask = keys == key
+            with np.errstate(invalid="ignore", divide="ignore"):
+                ratio = rt_inv[mask] / rt[mask]
+            row = rows[key] = {
+                "zone": WELL_ZONE if zone is None else zone,
+                "tool": params.get("inv_tool"), "generic": bool(generic),
+                "badge": GENERIC_LABEL if generic else None,
+                "r50": {"deep": r50[0], "medium": r50[1], "shallow": r50[2]}, "p": p_exp,
+                "rxo_mode": params.get("inv_rxo_mode"), "rmf": params.get("rmf"),
+                "rmf_temp": params.get("rmf_temp"),
+                "n_valid": 0, "n_ok": 0, "n_nonunique": 0, "n_di_lower": 0, "n_di_upper": 0,
+                "n_poor_fit": 0, "n_failed": 0, "n_missing": 0, "n_rxo_below_rmf": 0,
+                "rt_ratio_p50": _median(ratio), "rxo_p50": _median(rxo[mask]),
+                "di_p50": _median(di[mask]),
+            }
+        row["n_valid"] += int(rec.get("n_valid", 0))
+        for name in ("ok", "nonunique", "di_lower", "di_upper", "poor_fit", "failed", "missing",
+                     "rxo_below_rmf"):
+            row[f"n_{name}"] += int(counts.get(name, 0))
+    return {"zones": list(rows.values())}
+
+
 def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz, p, summary,
                  param_sources, warnings) -> dict:
     """``summary["lrlc"]`` from the merged results (screening table built after the concat).
@@ -311,6 +377,12 @@ def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz,
             "rt_sw_written": bool("RT_SW" in cols),
         },
     }
+    mn_block = _variable_mn_block(run)
+    if mn_block is not None:
+        out["variable_mn"] = mn_block
+    inv_block = _invasion_block(run, chain, results, rt, n)
+    if inv_block is not None:
+        out["invasion"] = inv_block
     if cut_on:
         out["rt_cutoff"] = {"model": run.cut_model, "zones": run.cut_rows,
                             "no_root": int(run.cut_no_root), "eligible": int(run.cut_eligible)}
