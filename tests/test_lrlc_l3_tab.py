@@ -687,3 +687,19 @@ def test_check_boxes_are_registered_controls(window, qtbot):
     form = tab.remediation_form
     assert isinstance(form.controls["shell_confirm"], QCheckBox)
     assert isinstance(form.controls["phi_source"], QComboBox)
+
+def test_remediation_inner_tabs_fit_the_selected_section(window, qtbot):
+    """No inner scroll: the tab widget is as tall as the selected section, so a short section
+    leaves no empty space and a long one is shown whole in the page scroll."""
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    window.show_lrlc("remediation", "clay")
+    tabs = tab.remediation_form.section_tabs
+    width = 1200
+    short = tabs.heightForWidth(width)
+    window.show_lrlc("remediation", "invasion")
+    tall = tabs.heightForWidth(width)
+    assert tall > short + 300
+    assert tabs.currentWidget().parent() is not None
+    from PyQt6.QtWidgets import QScrollArea
+    assert not any(isinstance(tabs.widget(i), QScrollArea) for i in range(tabs.count()))

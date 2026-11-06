@@ -36,7 +36,7 @@ from modules.lrlc.thomas_stieber import check_endpoints
 from services.lrlc_service import LrlcService
 from themes.helpers import set_status
 
-from .lrlc_common import WHOLE_WELL, fmt, note, scroll_area
+from .lrlc_common import WHOLE_WELL, fmt, note
 from .lrlc_diagnosis import lrlc_summary
 from .lrlc_mn_invasion import NEW_LABELS, MnInvasionMixin, MultiSpin
 from .lrlc_pickett import zone_labels
@@ -160,6 +160,30 @@ def side_by_side(left: QVBoxLayout, right: QWidget) -> QHBoxLayout:
     return row
 
 
+class _FitTabWidget(QTabWidget):
+    """A tab widget as tall as the selected page (QTabWidget sizes to its tallest page)."""
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        page = self.currentWidget()
+        if page is None:
+            return hint
+        height = page.sizeHint().height() + self.tabBar().sizeHint().height() + 4
+        hint.setHeight(max(height, self.minimumSizeHint().height()))
+        return hint
+
+    def heightForWidth(self, width):
+        # QTabWidget answers with the tallest page when a page wraps text; use the selected one.
+        page = self.currentWidget()
+        if page is None:
+            return super().heightForWidth(width)
+        inner = max(width - 4, 0)
+        height = (page.heightForWidth(inner) if page.hasHeightForWidth()
+                  else page.sizeHint().height())
+        height = max(height, page.minimumSizeHint().height())
+        return height + self.tabBar().sizeHint().height() + 4
+
+
 class RemediationForm(MnInvasionMixin, QWidget):
     """The Remediation sections below the Rt source box. One shared header (zone, scope, Apply,
     Discard) sits above an inner tab widget with a tab for each section; every tab edits the same
@@ -197,7 +221,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         root.addLayout(self._build_header())
         self.hint_label = note("", "accent")
         root.addWidget(self.hint_label)
-        self.section_tabs = QTabWidget()
+        self.section_tabs = _FitTabWidget()
         self.chain_page = QWidget()
         self.chain_layout = QVBoxLayout(self.chain_page)
         self.chain_layout.addStretch(1)
@@ -206,14 +230,33 @@ class RemediationForm(MnInvasionMixin, QWidget):
                     "variable_mn": self._build_variable_mn, "invasion": self._build_invasion}
         for key, title in SECTION_TABS:
             if key == "rt_source":
-                self.section_tabs.addTab(scroll_area(self.chain_page), title)
+                self.section_tabs.addTab(self.chain_page, title)
                 continue
             page = QWidget()
             lay = QVBoxLayout(page)
             lay.addWidget(builders[key]())
             lay.addStretch(1)
-            self.section_tabs.addTab(scroll_area(page), title)
-        root.addWidget(self.section_tabs, 1)
+            self.section_tabs.addTab(page, title)
+        # The tab widget is as tall as the selected section, not the tallest one: the panel
+        # scrolls as one page and shows the whole section.
+        self.section_tabs.currentChanged.connect(self._fit_section_height)
+        self._fit_section_height(self.section_tabs.currentIndex())
+        root.addWidget(self.section_tabs)
+
+    def _fit_section_height(self, index: int):
+        for i in range(self.section_tabs.count()):
+            policy = (QSizePolicy.Policy.Preferred if i == index
+                      else QSizePolicy.Policy.Ignored)
+            self.section_tabs.widget(i).setSizePolicy(QSizePolicy.Policy.Preferred, policy)
+        # Drop the cached size hints up the chain (updateGeometry alone is skipped while the
+        # panel is hidden), so the scrolled page shrinks or grows with the section.
+        self.section_tabs.updateGeometry()
+        widget = self
+        while widget is not None:
+            if widget.layout() is not None:
+                widget.layout().invalidate()
+            widget.updateGeometry()
+            widget = widget.parentWidget()
 
     def set_chain_widget(self, widget: QWidget):
         """Put a widget of the Rt chain tab (the owner's method box and chain sentence)."""

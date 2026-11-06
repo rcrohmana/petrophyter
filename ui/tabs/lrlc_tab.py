@@ -22,7 +22,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
-    QSplitter,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -474,19 +473,10 @@ class LrlcTab(QWidget):
         gl.addWidget(self.sbc_note)
         self.guard_status = _note("")
         gl.addWidget(self.guard_status)
-        # The Rt source box and the form share a splitter: on a short window the box scrolls
-        # (or is dragged smaller) instead of being squeezed under its own content.
-        self.rt_source_scroll = _scroll(group)
-        self.rt_source_scroll.setMinimumHeight(60)
+        v.addWidget(group)
         self.remediation_form = RemediationForm()
-        self.remediation_splitter = QSplitter(Qt.Orientation.Vertical)
-        self.remediation_splitter.setChildrenCollapsible(False)
-        self.remediation_splitter.addWidget(self.rt_source_scroll)
-        self.remediation_splitter.addWidget(self.remediation_form)
-        self.remediation_splitter.setStretchFactor(0, 0)
-        self.remediation_splitter.setStretchFactor(1, 1)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.addWidget(self.remediation_splitter, 1)
+        v.addWidget(self.remediation_form)
+        v.addStretch(1)
 
         # The Rt chain tab: the chain sentence and the method box.
         self.chain_note = _note(CHAIN_SENTENCE)
@@ -494,8 +484,9 @@ class LrlcTab(QWidget):
         self.chain_box = MethodReferenceBox()
         self.chain_box.set_method(METHOD_TEXT["rt_chain"])
         self.remediation_form.set_chain_widget(self.chain_box)
-        self.remediation_scroll = page
-        return page
+        # The whole panel scrolls as one page; the inner tabs are as tall as their content.
+        self.remediation_scroll = _scroll(page)
+        return self.remediation_scroll
 
     # ---- validation panel
     def _build_validation(self) -> QWidget:
@@ -985,10 +976,14 @@ class LrlcTab(QWidget):
             table.setColumnWidth(c, max(table.sizeHintForColumn(c), header.sectionSizeHint(c)) + 16)
             width += table.columnWidth(c)
         table.setFixedWidth(width + 2 * table.frameWidth() + 4)
+        # The table is exactly as wide as its columns: no horizontal scrollbar, so no empty strip
+        # reserved for one under the last row.
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         fit_table_height(table)
-        # The Rt source box never takes more height than its content.
-        scroll = self.rt_source_scroll
-        scroll.setMaximumHeight(self.rt_source_group.sizeHint().height() + 2 * scroll.frameWidth() + 2)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        header_h = max(header.height(), header.sizeHint().height())
+        rows_h = sum(table.rowHeight(r) for r in range(table.rowCount()))
+        table.setFixedHeight(header_h + rows_h + 2 * table.frameWidth() + 2)
 
     def _render_sw_reads(self):
         zone = self.selected_zone()
