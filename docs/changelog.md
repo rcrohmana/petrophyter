@@ -2,7 +2,28 @@
 
 # Version History
 
-## v1.12.0 (Build 20261105) — Current Release
+## v1.13.0 (Build 20261106) — Current Release
+
+See the [release notes](releases/v1.13.0.md) for details. **Results do not change** unless you switch
+Variable m/n to curve mode or add the invasion step, and sessions that use neither are saved as before.
+
+- **Variable m and n**: `M_VAR` and `N_VAR` per sample from a formula in porosity and Vsh, the Shell formula
+  for carbonates, or n from Vsh, read by every Sw model and by the Rt cutoff; values are clipped and counted.
+- **Variable-m fit** to the Pickett wet points (robust, with standard errors); a proposal until applied.
+- **Radial invasion correction**: the `invasion` Rt step fits a step profile to deep, medium and shallow
+  resistivity and writes `RT_INV`, `RXO_INV` and `DI_INV`, with generic tool presets, non-unique and bound
+  detection, and Rmf at formation temperature (Arps).
+- **Mud filtrate from the LAS header** (Rmf and its temperature) as a proposal; formation temperature for
+  the invasion step.
+- The Rt cutoff now uses exactly the per-sample inputs of the primary Sw (sand basis, estimated Qv,
+  variable exponents).
+- **Workbench Remediation sections** Variable m/n and Radial invasion with plots; **Specialized** menu
+  entries; `RT_INV` and `RXO_INV` on the resistivity track.
+- **Monte Carlo** varies m and n as whole-curve offsets in curve mode; the invasion step is held fixed.
+- LAS descriptions and provenance lines for the new curves; **session format 2.7** when the new features are
+  used.
+
+## v1.12.0 (Build 20261105)
 
 See the [release notes](releases/v1.12.0.md) for details. The new corrections are optional: **results do
 not change** until you switch one on, and sessions that do not use them are saved as before.
