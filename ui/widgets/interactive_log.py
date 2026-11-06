@@ -751,6 +751,8 @@ class InteractiveLogPlot(QWidget):
         for entry in track3:
             if entry[0] in ("RT_CUT", "RT_PYR"):
                 entry[4]["dashed"] = True
+            elif entry[0] == "RXO_INV":
+                entry[4]["dotted"] = True
         perm_label = ts.TRACK_SPECS["permeability"].axis_label
         for c in ts.present_curves("permeability", cols):
             track3.append(

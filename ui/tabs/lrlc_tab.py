@@ -51,7 +51,8 @@ logger = logging.getLogger(__name__)
 
 PANELS = ("screening", "diagnosis", "remediation", "validation")
 DIAGNOSIS_SECTIONS = ("zones", "thomas_stieber", "pickett", "buckles")
-REMEDIATION_SECTIONS = ("rt_source", "laminated", "pyrite", "clay", "sw_basis")
+REMEDIATION_SECTIONS = ("rt_source", "laminated", "pyrite", "clay", "sw_basis", "variable_mn",
+                        "invasion")
 PANEL_TITLES = {"screening": "Screening", "diagnosis": "Diagnosis",
                 "remediation": "Remediation", "validation": "Validation"}
 
@@ -124,6 +125,7 @@ class LrlcTab(QWidget):
         self.remediation_form.stale_requested.connect(self.stale_requested.emit)
         self.remediation_form.navigate_requested.connect(self.navigate_requested.emit)
         self.remediation_form.zone_changed.connect(self._on_form_zone)
+        self.remediation_form.manual_provider = self._manual_wet_boxes
         self.zone_changed.connect(lambda _z: self._render_zone_views())
         self.update_display()
         for signal in (model.analysis_complete, model.project.well_updated,
@@ -1000,7 +1002,8 @@ class LrlcTab(QWidget):
         """Select a panel ("screening", "diagnosis", "remediation", "validation") and scroll to
         a section of it: ``"rt_cutoff"`` or ``"curves"`` on Screening; ``"zones"``,
         ``"thomas_stieber"``, ``"pickett"`` or ``"buckles"`` on Diagnosis; ``"rt_source"``,
-        ``"laminated"``, ``"pyrite"``, ``"clay"`` or ``"sw_basis"`` on Remediation."""
+        ``"laminated"``, ``"pyrite"``, ``"clay"``, ``"sw_basis"``, ``"variable_mn"`` or
+        ``"invasion"`` on Remediation."""
         if name in PANELS:
             self.panels.setCurrentIndex(PANELS.index(name))
         if name == "screening" and section:
@@ -1013,6 +1016,10 @@ class LrlcTab(QWidget):
             self._scroll_remediation(section)
             # The page may not be laid out yet (the tab was hidden): scroll again once it is.
             QTimer.singleShot(0, lambda s=section: self._scroll_remediation(s))
+
+    def _manual_wet_boxes(self, zone):
+        """Manual wet-point boxes of the Pickett panel for the active well and ``zone``."""
+        return self.pickett_panel.manual_boxes_for(getattr(self._ds(), "key", ""), zone)
 
     def _scroll_remediation(self, section):
         target = (self.rt_source_group if section == "rt_source"

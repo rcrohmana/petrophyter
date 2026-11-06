@@ -45,7 +45,13 @@ def test_specialized_menu_has_rt_corrections_and_guard(window):
     assert acts[2] is window.actions_["saturation_tools_menu"]
     sub = window.actions_["rt_corrections_menu"]
     assert acts[3] is sub and sub.text() == "Rt Corrections"
-    assert sub.menu().actions() == [window.actions_["rt_laminated"], window.actions_["rt_pyrite"]]
+    assert sub.menu().actions() == [window.actions_["rt_laminated"], window.actions_["rt_pyrite"],
+                                    window.actions_["rt_invasion"]]
+    tools = window.actions_["saturation_tools_menu"].menu().actions()
+    assert tools == [window.actions_["rt_cutoff_overlay"], window.actions_["shf_shortcut"],
+                     window.actions_["variable_mn"]]
+    assert window.actions_["variable_mn"].text() == "Variable m/n…"
+    assert window.actions_["rt_invasion"].text() == "Radial Invasion Correction…"
     assert window.actions_["rt_laminated"].text() == "Laminated Sand Rt (Hagiwara)…"
     assert window.actions_["rt_pyrite"].text() == "Pyrite Correction…"
     assert acts[4].isSeparator()
@@ -54,7 +60,7 @@ def test_specialized_menu_has_rt_corrections_and_guard(window):
     assert guard.text() == "Shoulder-bed Guard (laminated zones)"
     assert guard.icon().isNull() and "lrlc_guard" not in window._action_icons
     expected = {"rt_corrections_menu": "waves-horizontal", "rt_laminated": "layers",
-                "rt_pyrite": "hexagon"}
+                "rt_pyrite": "hexagon", "variable_mn": "calculator", "rt_invasion": "move"}
     for key, icon in expected.items():
         assert window._action_icons[key] == icon
         assert not window.actions_[key].icon().isNull()
@@ -72,7 +78,10 @@ def test_rt_corrections_actions_route_to_the_remediation_panel(window, monkeypat
     monkeypatch.setattr(window, "show_lrlc", lambda *a, **k: seen.append((a, k)))
     window.actions_["rt_laminated"].trigger()
     window.actions_["rt_pyrite"].trigger()
-    assert seen == [(("remediation", "laminated"), {}), (("remediation", "pyrite"), {})]
+    window.actions_["rt_invasion"].trigger()
+    window.actions_["variable_mn"].trigger()
+    assert seen == [(("remediation", "laminated"), {}), (("remediation", "pyrite"), {}),
+                    (("remediation", "invasion"), {}), (("remediation", "variable_mn"), {})]
 
 
 # ---- guard action -------------------------------------------------------------------------

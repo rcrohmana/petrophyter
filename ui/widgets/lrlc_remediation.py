@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 
 from modules.lrlc import chain
 from modules.lrlc.config import LRLC_RANGES, resolve_lrlc
+from modules.lrlc.invasion import GENERIC_TOOLS
 from modules.lrlc.l2 import resolve_basis
 from modules.lrlc.methods import METHOD_TEXT
 from modules.lrlc.thomas_stieber import check_endpoints
@@ -35,13 +36,14 @@ from themes.helpers import set_status
 
 from .lrlc_common import WHOLE_WELL, fmt, note
 from .lrlc_diagnosis import lrlc_summary
+from .lrlc_mn_invasion import NEW_LABELS, MnInvasionMixin, MultiSpin
 from .lrlc_pickett import zone_labels
 from .lrlc_ts_plot import PefRhobPlot
 from .method_box import MethodReferenceBox
 
 logger = logging.getLogger(__name__)
 
-SECTIONS = ("laminated", "pyrite", "clay", "sw_basis")
+SECTIONS = ("laminated", "pyrite", "clay", "sw_basis", "variable_mn", "invasion")
 
 # (key, label, lo, hi, decimals, step, text shown when the value is None or "")
 LAMINATED_ROWS = (
@@ -67,7 +69,7 @@ CLAY_ROWS = (
     ("cec_shale", "Shale CEC (meq/100 g)", 1, 1.0, ""),
     ("qv_rho_g", "Grain density for Qv (g/cc)", 3, 0.01, "zone matrix"),
 )
-NULLABLE = ("phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g")
+NULLABLE = ("phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g", "rmf")
 
 COMBOS = {
     "vlam_source": (("ts", "Thomas-Stieber split"), ("constant", "Constant value")),
@@ -81,6 +83,7 @@ KEY_LABELS = {r[0]: r[1] for r in LAMINATED_ROWS + PYRITE_ROWS + CLAY_ROWS}
 KEY_LABELS.update({
     "vlam_source": "Vlam source", "pyr_method": "Pyrite method", "qv_source": "Qv source",
     "sw_basis": "Sw basis", "rt_steps": "Rt steps"})
+KEY_LABELS.update(NEW_LABELS)
 
 SCOPES = (("zone", "Zone of this well"), ("well", "Well default"), ("project", "Project default"))
 SETTING_KEYS = {"ts_enabled": ("thomas_stieber", "enabled"), "vpyr_enabled": ("pyrite", "enabled")}
@@ -105,7 +108,7 @@ def _spin(lo, hi, decimals, step, none_text) -> QDoubleSpinBox:
     return spin
 
 
-class RemediationForm(QWidget):
+class RemediationForm(MnInvasionMixin, QWidget):
     """The Remediation sections below the Rt source box. Public: ``set_context``, ``prepare``,
     ``scroll_target``."""
 
@@ -127,6 +130,8 @@ class RemediationForm(QWidget):
         self._models_hint: List[str] = []
         self._proposal = None
         self._cec = None
+        self._mn_proposal = None
+        self.manual_provider = None     # callable(zone) -> manual wet-point boxes
         self.controls: Dict[str, QWidget] = {}
         self.groups: Dict[str, QGroupBox] = {}
         self._build()
@@ -142,6 +147,8 @@ class RemediationForm(QWidget):
         root.addWidget(self._build_pyrite())
         root.addWidget(self._build_clay())
         root.addWidget(self._build_basis())
+        root.addWidget(self._build_variable_mn())
+        root.addWidget(self._build_invasion())
         root.addStretch(1)
 
     def _build_header(self) -> QVBoxLayout:
@@ -301,6 +308,10 @@ class RemediationForm(QWidget):
             self._models_hint = []
             self.result_label.setText("")
             self._load_values()
+        fit_key = (target, id(getattr(ds, "results", None)))
+        if getattr(self, "_mn_fit_for", None) != fit_key:
+            self._mn_fit_for = fit_key
+            self._reset_mn_fit()
         self._refresh_info()
         self._update_state()
 
@@ -374,7 +385,7 @@ class RemediationForm(QWidget):
         self._loading = True
         try:
             for key, widget in self.controls.items():
-                self._write_widget(key, widget, resolved.get(key))
+                self._write_widget(key, widget, self._display_value(key, resolved))
             lrlc = self.model.project.lrlc
             self.ts_check.setChecked(bool((lrlc.get("thomas_stieber") or {}).get("enabled")))
             self.vpyr_check.setChecked(bool((lrlc.get("pyrite") or {}).get("enabled")))
@@ -386,6 +397,10 @@ class RemediationForm(QWidget):
         if isinstance(widget, QComboBox):
             i = widget.findData(value)
             widget.setCurrentIndex(max(i, 0))
+        elif isinstance(widget, MultiSpin):
+            widget.set(value)
+        elif isinstance(widget, QCheckBox):
+            widget.setChecked(bool(value))
         elif value is None:
             widget.setValue(widget.minimum())
         else:
@@ -395,6 +410,16 @@ class RemediationForm(QWidget):
         widget = self.controls[key]
         if isinstance(widget, QComboBox):
             return widget.currentData()
+        if isinstance(widget, QCheckBox):
+            return widget.isChecked()
+        if isinstance(widget, MultiSpin):
+            values = widget.get()
+            if key == "inv_r50":
+                preset = GENERIC_TOOLS.get(self.controls["inv_tool"].currentData())
+                if preset is not None and all(
+                        abs(values[k] - preset[k]) < 1e-9 for k in values):
+                    return None
+            return values
         if key in NULLABLE and widget.value() <= widget.minimum() + 1e-12:
             return None
         return float(widget.value())
@@ -462,6 +487,8 @@ class RemediationForm(QWidget):
         self.controls["vlam_const"].setEnabled(vconst)
         manual = self._read_widget("pyr_method") == "manual"
         self.controls["pyr_vpyr"].setEnabled(manual)
+        self._state_variable_mn()
+        self._state_invasion()
         pending = [KEY_LABELS.get(k, k) for k in sorted(self._dirty)] + [
             SETTING_LABELS[k] for k in sorted(self._settings)]
         self.apply_button.setEnabled(bool(pending) and self.model is not None)
@@ -565,6 +592,8 @@ class RemediationForm(QWidget):
         self._info_pyrite()
         self._info_clay()
         self._info_basis()
+        self._info_variable_mn()
+        self._info_invasion()
 
     def _zone_key(self):
         return self.zone
@@ -731,6 +760,7 @@ class RemediationForm(QWidget):
 
     def refresh_theme(self):
         self.pef_plot.refresh_theme()
+        self.refresh_new_themes()
 
 
 def resolve_lrlc_steps(prm: dict) -> List[str]:

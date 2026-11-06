@@ -310,7 +310,7 @@ def test_specialized_menu_entries_and_order(window):
     sub = window.actions_["saturation_tools_menu"]
     assert acts[2] is sub and sub.text() == "Saturation Tools"
     assert sub.menu().actions() == [window.actions_["rt_cutoff_overlay"],
-                                    window.actions_["shf_shortcut"]]
+                                    window.actions_["shf_shortcut"], window.actions_["variable_mn"]]
     help_actions = [a for a in window.menuBar().actions() if a.text() == "&Help"][0].menu().actions()
     assert window.actions_["references"] in help_actions
     for key in ("lrlc_workbench", "rt_cutoff_overlay", "shf_shortcut", "saturation_tools_menu",

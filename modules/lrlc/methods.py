@@ -221,4 +221,66 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
         ),
         refs=SHIPPED_METHODS["qv"],
     ),
+    "variable_mn": MethodInfo(
+        title="Variable m and n",
+        equation=(
+            "m = c0 + c1 * PHI + c2 * Vsh + c3 / PHI        (PHI as a fraction)\n"
+            "n = d0 + d1 * Vsh        or the constant n of the zone\n"
+            "Shell: m = 1.87 + 0.019 / PHI\n"
+            "Fit on wet points (Sw = 1): ln(a * Rw / Rt) = m * ln(PHI)"
+        ),
+        assumptions=(
+            "Every Sw model reads one m and one n per sample instead of the single zone values; "
+            "with the default coefficients (c0 = the zone m) the curve is a constant and nothing "
+            "changes. The fit uses the wet points of the Pickett plot, the Rt that the Sw models "
+            "read and the zone Rw, solves for the coefficients the data can support, and is a "
+            "proposal until you apply it. Values are clipped to the range shown and the number "
+            "clipped is reported. "
+            "Shell model: m = 1.87 + 0.019 / phi (phi as a fraction). m rises as porosity falls: "
+            "2.25 at 5 percent, 2.06 at 10 percent, 1.965 at 20 percent. It is meant for "
+            "carbonates and is only evaluated in zones whose lithology preset is Carbonate, "
+            "unless you confirm it for the zone. Borai (1987) discusses this formula and its "
+            "limits and reports that in tight, low-porosity carbonates offshore Abu Dhabi m "
+            "decreases as porosity decreases, the opposite trend; check against core before "
+            "relying on it. The linear porosity-and-clay form of the user formula is attributed "
+            "to Guo et al. (2023); no published coefficients are shipped."
+        ),
+        limits=(
+            "The formula is not evaluated below 2 percent porosity or where PHI or Vsh is "
+            "missing; those samples keep the zone m and n and are counted. With an automatic Rw "
+            "the fitted m depends on an Rw estimated with the constant m. A fit on bulk wet "
+            "points is applied to the sand-lamina values in zones that read the sand basis. "
+            "Wet points that are not water-bearing bias the fit, and the Rt that the fit reads "
+            "moves when the Rt chain changes. The saturation exponent n has no fit."
+        ),
+        refs=SHIPPED_METHODS["variable_mn"],
+    ),
+    "invasion": MethodInfo(
+        title="Radial invasion correction",
+        equation=(
+            "J_i = 1 / (1 + (r_i / di)^p)\n"
+            "    share of tool i inside the invaded cylinder\n"
+            "1 / Ra_i = J_i / Rxo + (1 - J_i) / Rt\n"
+            "Unknowns: Rt, Rxo, di from the deep, medium\n"
+            "    and shallow readings (Rxo fixed if RXO is mapped)\n"
+            "Rxo >= Rmf at formation temperature (Arps)"
+        ),
+        assumptions=(
+            "A one-step profile: a flushed cylinder of diameter di with resistivity Rxo around "
+            "the hole and the undisturbed formation beyond it. The geometric factor is a generic "
+            "function of the 50 percent investigation diameter r_i of each curve. The tool "
+            "presets are generic placeholders, not specifications of any tool: confirm the radii "
+            "and the exponent against the chart book of the tool that was run. RT, RM, RS and "
+            "RXO must already be corrected by you for borehole, mud and shoulder-bed effects."
+        ),
+        limits=(
+            "Step profile only: no annulus, no transition zone, no flushing gradient. The result "
+            "is not unique when Rt is close to Rxo (those samples keep the measured Rt). It is "
+            "sensitive to the radii and the exponent of the preset, and invalid in thin beds "
+            "and near shoulder beds. It is not a substitute for service-company tornado charts: "
+            "do not use it on vendor-corrected Rt. The pseudo-geometric function is a design "
+            "choice, not a published fit; Doll (1949) is the physical basis."
+        ),
+        refs=SHIPPED_METHODS["invasion"],
+    ),
 }

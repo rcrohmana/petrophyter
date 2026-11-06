@@ -122,7 +122,7 @@ def test_method_text_refs_exist_and_match_shipped():
             assert info.refs == SHIPPED_METHODS[name], name
     assert set(METHOD_TEXT) == {
         "screening", "rt_cutoff", "bvw", "buckles", "pickett", "rt_chain", "thomas_stieber",
-        "laminated", "pyrite", "qv"}
+        "laminated", "pyrite", "qv", "variable_mn", "invasion"}
 
 
 def test_method_text_content():

@@ -633,6 +633,10 @@ class MainWindow(QMainWindow):
             lambda: self.show_lrlc("screening"))
         act("rt_cutoff_overlay", "Rt Cutoff Overlay…", "scissors", None,
             lambda: self.show_lrlc("screening", "rt_cutoff"))
+        act("variable_mn", "Variable m/n…", "calculator", None,
+            lambda: self.show_lrlc("remediation", "variable_mn"))
+        act("rt_invasion", "Radial Invasion Correction…", "move", None,
+            lambda: self.show_lrlc("remediation", "invasion"))
         act("rt_laminated", "Laminated Sand Rt (Hagiwara)…", "layers", None,
             lambda: self.show_lrlc("remediation", "laminated"))
         act("rt_pyrite", "Pyrite Correction…", "hexagon", None,
@@ -706,12 +710,14 @@ class MainWindow(QMainWindow):
         saturation_tools.menuAction().setIcon(get_icon("droplets"))
         saturation_tools.addAction(self.actions_["rt_cutoff_overlay"])
         saturation_tools.addAction(self.actions_["shf_shortcut"])
+        saturation_tools.addAction(self.actions_["variable_mn"])
         rt_corrections = specialized.addMenu("Rt Corrections")
         self._action_icons["rt_corrections_menu"] = "waves-horizontal"
         self.actions_["rt_corrections_menu"] = rt_corrections.menuAction()
         rt_corrections.menuAction().setIcon(get_icon("waves-horizontal"))
         rt_corrections.addAction(self.actions_["rt_laminated"])
         rt_corrections.addAction(self.actions_["rt_pyrite"])
+        rt_corrections.addAction(self.actions_["rt_invasion"])
         specialized.addSeparator()
         specialized.addAction(self.actions_["lrlc_guard"])
         for key, _title, menu, _icon in PAGES:
@@ -2109,6 +2115,11 @@ class MainWindow(QMainWindow):
         third part, when the window can focus fields, the field.
         """
         parts = (target or "").split(".")
+        if parts[0] == "lrlc":
+            # "lrlc.<panel>[.<section>]": the LRLC Workbench panel and section
+            panel = parts[1] if len(parts) > 1 else "screening"
+            self.show_lrlc(panel, parts[2] if len(parts) > 2 else None)
+            return
         if parts[0] == "params" and len(parts) > 1:
             section = parts[1]
             field = parts[2] if len(parts) > 2 else None

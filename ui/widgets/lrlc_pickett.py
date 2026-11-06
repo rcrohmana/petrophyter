@@ -310,6 +310,10 @@ class PickettPanel(QWidget):
     def manual_boxes(self) -> List[tuple]:
         return list(self._manual.get(self._manual_key, []))
 
+    def manual_boxes_for(self, well_key: str, zone: Optional[str]) -> List[tuple]:
+        """The manual boxes held for a well and zone (what the fit of the m curve shares)."""
+        return list(self._manual.get((well_key, zone or ALL_ZONES_KEY), []))
+
     def add_manual_box(self, kind: str, phi_lo, phi_hi, rt_lo, rt_hi):
         """Add an 'add' or 'remove' box in plot coordinates (what the selector calls)."""
         if kind not in ("add", "remove"):

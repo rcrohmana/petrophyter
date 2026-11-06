@@ -10,7 +10,8 @@ from ui.widgets import track_specs as ts
 def test_tracks_and_curve_order():
     assert set(ts.TRACK_SPECS) == {"gr_vsh", "resistivity", "porosity", "sw", "permeability"}
     assert ts.TRACK_SPECS["gr_vsh"].curve_names == ("GR", "VSH", "VLAM")
-    assert ts.TRACK_SPECS["resistivity"].curve_names == ("RT", "RS", "RT_SW", "RT_SAND", "RT_PYR", "RT_CUT")
+    assert ts.TRACK_SPECS["resistivity"].curve_names == ("RT", "RS", "RT_SW", "RT_SAND", "RT_PYR", "RT_INV",
+                                                                  "RXO_INV", "RT_CUT")
     assert ts.TRACK_SPECS["porosity"].curve_names[:2] == ("PHIT", "PHIE")
     assert ts.TRACK_SPECS["sw"].curve_names == ("SW",)
     assert ts.TRACK_SPECS["permeability"].curve_names == ("PERM_TIMUR", "PERM_WR")
