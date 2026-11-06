@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from modules.lrlc import l2
-from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, LRLC_PARAM_DEFAULTS
+from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, LRLC_PARAM_DEFAULTS
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
@@ -203,13 +203,14 @@ def apply_lrlc_stage(calc, data, p, run: LrlcRun, *, rt_curve, zone_keys, sw_inp
 
 
 def _summary_params(resolved: dict) -> dict:
-    """The resolved ladder for the summary: 2.6 keys only where they differ from built-in.
+    """The resolved ladder for the summary: 2.6 and 2.7 keys only where they differ from built-in.
 
     Keeps the summary of a run that uses none of them as it was before they existed.
     """
     def level(values):
         return {k: v for k, v in values.items()
-                if k not in L2_PARAM_KEYS or v != LRLC_PARAM_DEFAULTS[k]}
+                if (k not in L2_PARAM_KEYS and k not in L3_PARAM_KEYS)
+                or v != LRLC_PARAM_DEFAULTS[k]}
     return {"default": level(resolved.get("default") or {}),
             "zones": {z: level(v) for z, v in (resolved.get("zones") or {}).items()}}
 

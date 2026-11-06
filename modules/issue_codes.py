@@ -123,6 +123,10 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "LRLC_INV_RMF_MISSING": ("info", None),
     "LRLC_INV_DECON_MISMATCH": ("warning", None),
     "LRLC_INV_TEMP_DEFAULT": ("info", None),
+    "LRLC_MN_CLIPPED": ("info", "lrlc.remediation.variable_mn"),
+    "LRLC_MN_FALLBACK": ("info", "lrlc.remediation.variable_mn"),
+    "LRLC_MN_SHELL_LITHOLOGY": ("warning", "lrlc.remediation.variable_mn"),
+    "LRLC_MN_SETTING_INVALID": ("warning", "lrlc.remediation.variable_mn"),
 }
 
 

@@ -96,6 +96,26 @@ DIAGNOSIS_DEFAULTS: Dict[str, Any] = {
     "dsw_clay": 0.10,
 }
 
+VARIABLE_MN_DEFAULTS: Dict[str, Any] = {
+    "clip_m": [1.0, 4.0],
+    "clip_n": [1.0, 4.0],
+    "clip_warn_fraction": 0.05,
+    "fit": {
+        "min_points_per_param": 15,
+        "min_phi_range": 0.05,
+        "min_vsh_range": 0.10,
+        "phi_window": [0.03, 0.60],
+        "f_scale": 0.1,
+        "max_implausible_fraction": 0.05,
+    },
+}
+
+INVASION_DEFAULTS: Dict[str, Any] = {
+    "rt_bounds": [0.05, 20000.0],
+    "chunk": 20000,
+    "max_iter": 40,
+}
+
 LRLC_DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "screening": {"use_gas_flag": True, "use_rs": True},
@@ -108,6 +128,8 @@ LRLC_DEFAULTS: Dict[str, Any] = {
     "qv": QV_DEFAULTS,
     "guard": GUARD_DEFAULTS,
     "diagnosis": DIAGNOSIS_DEFAULTS,
+    "variable_mn": VARIABLE_MN_DEFAULTS,
+    "invasion": INVASION_DEFAULTS,
     "params": {"default": {}, "zones": {}},
 }
 
@@ -116,6 +138,9 @@ WORKBENCH_ONLY = ("pickett", "buckles")
 
 # Blocks added with session format 2.6 (laminated sands, minerals, Qv, guard, diagnosis).
 L2_BLOCKS = ("thomas_stieber", "pyrite", "qv", "guard", "diagnosis")
+
+# Blocks added with session format 2.7 (variable m/n, radial invasion).
+L3_BLOCKS = ("variable_mn", "invasion")
 
 # Inclusive (low, high) for the numeric keys of the setting blocks; a stored value outside
 # falls back to the default.
@@ -139,6 +164,21 @@ BLOCK_RANGES: Dict[str, Dict[str, Tuple[float, float]]] = {
         "contrast_low": (1.0, 100.0), "vpyr_flag": (0.0, 0.5), "pef_flag": (0.0, 20.0),
         "qv_high": (0.0, 20.0), "vsh_clay": (0.0, 1.0), "dsw_clay": (0.0, 1.0),
     },
+    "variable_mn": {"clip_warn_fraction": (0.0, 1.0)},
+    "variable_mn.fit": {
+        "min_points_per_param": (3, 1000), "min_phi_range": (0.0, 0.5),
+        "min_vsh_range": (0.0, 1.0), "f_scale": (0.001, 5.0),
+        "max_implausible_fraction": (0.0, 1.0),
+    },
+    "invasion": {"chunk": (1000, 10000000), "max_iter": (5, 500)},
+}
+
+# Two-element blocks keys: (lowest allowed low, highest allowed high) of ``[lo, hi]`` with
+# lo < hi. Anything else falls back to the default.
+BLOCK_PAIRS: Dict[str, Dict[str, Tuple[float, float]]] = {
+    "variable_mn": {"clip_m": (0.5, 6.0), "clip_n": (0.5, 6.0)},
+    "variable_mn.fit": {"phi_window": (0.0, 1.0)},
+    "invasion": {"rt_bounds": (1e-3, 1e6)},
 }
 
 LRLC_PARAM_DEFAULTS: Dict[str, Any] = {
@@ -176,6 +216,26 @@ LRLC_PARAM_DEFAULTS: Dict[str, Any] = {
     "qv_source": "manual",
     "cec_shale": 25.0,
     "qv_rho_g": None,
+    # Variable m and n: per-sample exponents from porosity and shale volume.
+    "mn_mode": "scalar",
+    "m_model": "formula",
+    "m_coef": [2.15, 0.0, 0.0, 0.0],
+    "shell_confirm": False,
+    "n_model": "constant",
+    "n_coef": [2.0, 0.0],
+    "phi_source": "phie",
+    # Radial invasion correction (None for inv_r50 = the radii of the tool preset).
+    "inv_tool": "generic_induction",
+    "inv_r50": None,
+    "inv_p": 2.5,
+    "inv_rxo_mode": "fixed",
+    "inv_di_min": 8.0,
+    "inv_di_max": 120.0,
+    "inv_min_contrast": 1.15,
+    "inv_max_rms": 0.15,
+    # Mud-filtrate resistivity (None = not set) at the temperature it was measured.
+    "rmf": None,
+    "rmf_temp": 75.0,
 }
 
 RT_FALLBACKS = ("nan", "previous")
@@ -187,16 +247,42 @@ LRLC_CHOICES: Dict[str, Tuple[str, ...]] = {
     "sw_basis": ("auto", "sand", "bulk"),
     "pyr_method": ("manual", "rhob_pef"),
     "qv_source": ("manual", "estimate"),
+    "mn_mode": ("scalar", "curve"),
+    "m_model": ("formula", "shell"),
+    "n_model": ("constant", "vsh"),
+    "phi_source": ("phie", "phit"),
+    "inv_tool": ("generic_induction", "generic_laterolog", "custom"),
+    "inv_rxo_mode": ("fixed", "ignore"),
 }
 
+# Boolean ladder keys.
+LRLC_BOOLS = ("shell_confirm",)
+
+# List-valued ladder keys: one inclusive (low, high) per element.
+LRLC_LISTS: Dict[str, Tuple[Tuple[float, float], ...]] = {
+    "m_coef": ((0.5, 5.0), (-10.0, 10.0), (-3.0, 3.0), (-0.5, 0.5)),
+    "n_coef": ((1.0, 4.0), (-3.0, 3.0)),
+}
+
+# Radii (in) that ``inv_r50`` may hold, one per tool of the radial step.
+INV_R50_KEYS = ("deep", "medium", "shallow")
+INV_R50_RANGE = (2.0, 400.0)
+
 # Numeric ladder keys that also accept None.
-LRLC_NULLABLE = ("cut_sw_target", "phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g")
+LRLC_NULLABLE = ("cut_sw_target", "phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g",
+                 "rmf", "inv_r50")
 
 # Ladder keys added with session format 2.6.
 L2_PARAM_KEYS = (
     "phi_max", "phi_sh", "vlam_source", "vlam_const", "hag_vsh_max", "s_warn", "s_invalid",
     "sw_basis", "pyr_method", "pyr_vpyr", "pyr_rho", "pyr_pef", "ma_rho", "ma_pef", "sh_rho",
     "sh_pef", "pyr_f", "pyr_rpy", "qv_source", "cec_shale", "qv_rho_g",
+)
+# Ladder keys added with session format 2.7.
+L3_PARAM_KEYS = (
+    "mn_mode", "m_model", "m_coef", "shell_confirm", "n_model", "n_coef", "phi_source",
+    "inv_tool", "inv_r50", "inv_p", "inv_rxo_mode", "inv_di_min", "inv_di_max",
+    "inv_min_contrast", "inv_max_rms", "rmf", "rmf_temp",
 )
 # Chain steps added with session format 2.6.
 L2_STEPS = ("laminated", "pyrite")
@@ -226,6 +312,13 @@ LRLC_RANGES: Dict[str, Tuple[float, float]] = {
     "pyr_rpy": (1e-5, 10.0),
     "cec_shale": (1.0, 150.0),
     "qv_rho_g": (2.0, 3.2),
+    "inv_p": (1.0, 6.0),
+    "inv_di_min": (4.0, 60.0),
+    "inv_di_max": (4.0, 300.0),
+    "inv_min_contrast": (1.01, 3.0),
+    "inv_max_rms": (0.01, 1.0),
+    "rmf": (0.005, 20.0),
+    "rmf_temp": (32.0, 400.0),
 }
 
 SWIRR_COLUMNS = ("SWIRR", "SWIRR_BUCKLES", "SWIRR_CLEANZONE", "SWIRR_STAT")
@@ -262,6 +355,20 @@ def clean_param(key: str, value) -> Tuple[Any, bool]:
         return None, False
     if key in LRLC_NULLABLE and value is None:
         return None, True
+    if key in LRLC_BOOLS:
+        return (value, True) if isinstance(value, bool) else (None, False)
+    if key in LRLC_LISTS:
+        bounds = LRLC_LISTS[key]
+        if (isinstance(value, (list, tuple)) and len(value) == len(bounds)
+                and all(_is_number(x) and lo <= x <= hi for x, (lo, hi) in zip(value, bounds))):
+            return [float(x) for x in value], True
+        return None, False
+    if key == "inv_r50":
+        lo, hi = INV_R50_RANGE
+        if (isinstance(value, dict) and set(value) == set(INV_R50_KEYS)
+                and all(_is_number(v) and lo <= v <= hi for v in value.values())):
+            return {k: float(value[k]) for k in INV_R50_KEYS}, True
+        return None, False
     if not _is_number(value):
         return None, False
     lo, hi = LRLC_RANGES[key]
@@ -332,16 +439,17 @@ def clean_curves(stored) -> Dict[str, Optional[str]]:
 # ---------------------------------------------------------------------------
 # Project block
 # ---------------------------------------------------------------------------
-def _merge_block(key: str, default, value, out) -> None:
-    """Overlay one dict block of the project settings (tolerant)."""
+def _overlay(path: str, default: dict, value, block: dict) -> None:
+    """Overlay the keys of ``default`` found in ``value`` onto ``block`` (tolerant, recursive)."""
     if not isinstance(value, dict):
         return
-    block = out[key]
     for sub, sub_default in default.items():
         if sub not in value:
             continue
         v = value[sub]
-        if isinstance(sub_default, bool):
+        if isinstance(sub_default, dict):
+            _overlay(f"{path}.{sub}", sub_default, v, block[sub])
+        elif isinstance(sub_default, bool):
             if isinstance(v, bool):
                 block[sub] = v
         elif isinstance(sub_default, list):
@@ -356,10 +464,20 @@ def _merge_block(key: str, default, value, out) -> None:
         elif isinstance(sub_default, str):
             if isinstance(v, str) and v:
                 block[sub] = v
-    for sub, (lo, hi) in BLOCK_RANGES.get(key, {}).items():
+    for sub, (lo, hi) in BLOCK_RANGES.get(path, {}).items():
         if not lo <= block[sub] <= hi:
             block[sub] = copy.deepcopy(default[sub])
-    if key == "pickett":
+    for sub, (lo, hi) in BLOCK_PAIRS.get(path, {}).items():
+        pair = block[sub]
+        if len(pair) != 2 or not (lo <= pair[0] < pair[1] <= hi):
+            block[sub] = copy.deepcopy(default[sub])
+
+
+def _merge_block(key: str, default, value, out) -> None:
+    """Overlay one dict block of the project settings (tolerant)."""
+    _overlay(key, default, value, out[key])
+    if key == "pickett" and isinstance(value, dict):
+        block = out[key]
         if block["phi_source"] not in PHI_SOURCES:
             block["phi_source"] = PICKETT_DEFAULTS["phi_source"]
         if block["color_by"] not in COLOR_BY:
@@ -379,7 +497,7 @@ def merge_lrlc(stored) -> Dict[str, Any]:
         return out
     if isinstance(stored.get("enabled"), bool):
         out["enabled"] = stored["enabled"]
-    for key in ("screening", "rt_cutoff", "movable", "pickett", "buckles") + L2_BLOCKS:
+    for key in ("screening", "rt_cutoff", "movable", "pickett", "buckles") + L2_BLOCKS + L3_BLOCKS:
         _merge_block(key, LRLC_DEFAULTS[key], stored.get(key), out)
     out["params"] = clean_params(stored.get("params"))
     return out
