@@ -129,7 +129,7 @@ def step_shf() -> str:
 
 
 def step_lrlc() -> str:
-    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT, the laminated-sand Rt and the estimated Qv match their closed forms, BibTeX renders and the Rt chain runs."""
+    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT, the laminated-sand Rt and the estimated Qv match their closed forms, Sw with constant m and n arrays equals the scalar result, an invasion round trip recovers Rt, Rxo and the diameter, the Shell m model is refused outside carbonate zones, BibTeX renders and the Rt chain runs."""
     import numpy as np
     import pandas as pd
 
@@ -200,8 +200,55 @@ def step_lrlc() -> str:
     qv_est, _qv_counts = estimate_qv(np.array([0.15]), np.array([0.20]), 25.0, 2.65, 0.03, 3.0)
     if abs(qv_est[0] - 0.3975) > 1e-9:
         raise RuntimeError(f"estimated Qv {qv_est} does not match the closed form 0.3975")
+
+    # Sw with constant m and n arrays must equal the scalar result exactly (Archie and Simandoux).
+    from modules.petrophysics import PetrophysicsCalculator
+
+    frame = pd.DataFrame({"RT": np.array([4.0, 12.0, 30.0, 80.0])})
+    calc = PetrophysicsCalculator(frame)
+    phie = pd.Series([0.12, 0.18, 0.22, 0.25])
+    vsh = pd.Series([0.30, 0.20, 0.10, 0.05])
+    m_arr, n_arr = np.full(4, 2.1), np.full(4, 1.8)
+    for label, scalar, array in (
+        ("Archie", calc.calculate_sw_archie("RT", phie, 0.05, 1.0, 2.1, 1.8),
+         calc.calculate_sw_archie("RT", phie, 0.05, 1.0, m_arr, n_arr)),
+        ("Simandoux", calc.calculate_sw_simandoux("RT", phie, vsh, 0.05, 2.0, 1.0, 2.1, 1.8),
+         calc.calculate_sw_simandoux("RT", phie, vsh, 0.05, 2.0, 1.0, m_arr, n_arr)),
+    ):
+        if not np.array_equal(np.asarray(scalar), np.asarray(array), equal_nan=True):
+            raise RuntimeError(f"{label} Sw with m and n arrays differs from the scalar result")
+
+    # Invasion round trip: the generic induction tool at di = 40 in reads 8.5034, 4.1303 and
+    # 2.3127 ohm.m over Rt 20 and Rxo 2 ohm.m; inverting those three readings returns the profile.
+    from modules.lrlc.invasion import GENERIC_TOOLS, fit_invasion, forward_ra
+
+    tool = GENERIC_TOOLS["generic_induction"]
+    r50 = (tool["deep"], tool["medium"], tool["shallow"])
+    ra = forward_ra(np.array([20.0]), np.array([2.0]), np.array([40.0]), r50, tool["p"])[0]
+    if not np.allclose(ra, [8.5034, 4.1303, 2.3127], atol=5e-5):
+        raise RuntimeError(f"invasion forward model {ra} does not match the worked readings")
+    inv = fit_invasion(ra[0], rm=ra[1], rs=ra[2], r50=r50, p=tool["p"])
+    got = (inv.rt[0], inv.rxo[0], inv.di[0])
+    if not (inv.valid[0] and np.allclose(got, [20.0, 2.0, 40.0], rtol=1e-6)):
+        raise RuntimeError(f"invasion round trip returned Rt, Rxo, di = {got}")
+
+    # Shell gate: the Shell m model is refused (scoped m kept) in a zone that is not carbonate
+    # unless confirmed, and evaluated (m = 2.06 at porosity 0.10) in a carbonate zone.
+    from modules.lrlc.variable_mn import build_mn_curves
+
+    shell = {"Z": {"mn_mode": "curve", "m_model": "shell", "m_coef": [2.15, 0.0, 0.0, 0.0],
+                   "shell_confirm": False, "n_model": "constant", "n_coef": [2.0, 0.0]}}
+    labels = np.array(["Z"], dtype=object)
+    args = (np.array([0.10]), np.array([0.0]), labels, shell, 2.15, 2.0, (1.0, 4.0), (1.0, 4.0))
+    refused = build_mn_curves(*args, "Sandstone (Humble)")
+    allowed = build_mn_curves(*args, "Carbonate")
+    if refused.m[0] != 2.15 or refused.m_valid[0]:
+        raise RuntimeError(f"Shell m was not refused outside a carbonate zone: {refused.m}")
+    if abs(allowed.m[0] - 2.06) > 1e-9:
+        raise RuntimeError(f"Shell m {allowed.m} does not match the closed form 2.06")
     return (f"Pickett m = {fit.m:.3f}, RT_CUT = {cut[0]:.3f} ohm.m, laminated Rt = {sand[0]:.1f} "
-            f"ohm.m, Qv = {qv_est[0]:.4f} meq/mL, chain ok")
+            f"ohm.m, Qv = {qv_est[0]:.4f} meq/mL, m/n arrays = scalars, invasion Rt = {got[0]:.2f} "
+            f"ohm.m, Shell gate ok, chain ok")
 
 
 def step_pipeline() -> str:

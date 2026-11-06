@@ -1,0 +1,1028 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": NaN,
+ "avg_sw_pay": NaN,
+ "avg_vsh_pay": NaN,
+ "data_points": 50,
+ "gr_max": 130.0,
+ "gr_min": 40.0,
+ "gross_sand": 0.0,
+ "hcpv_gross": 3.194742374337791,
+ "hcpv_net_pay": 0.0,
+ "hcpv_net_res": 0.0,
+ "issues": [
+  {
+   "code": "RW_AUTO_NO_WATER",
+   "severity": "warning",
+   "target": "params.rw.rw_value",
+   "text": "auto Rw: no water-bearing samples found; entered Rw used.",
+   "zone": null
+  },
+  {
+   "code": "RW_AUTO_UNAVAILABLE",
+   "severity": "warning",
+   "target": "params.rw.rw_value",
+   "text": "Rw could not be estimated automatically; using the entered Rw of 0.01.",
+   "zone": null
+  },
+  {
+   "code": "LRLC_CRITERION_UNAVAILABLE",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "Screening criteria not evaluable for the whole well: HC.",
+   "zone": null
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Waxman-Smits (zone UPPER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 35 of 40 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": "UPPER"
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Waxman-Smits (zone LOWER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 10 of 10 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": "LOWER"
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Dual-Water (zone UPPER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 29 of 40 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": "UPPER"
+  },
+  {
+   "code": "BVH_CAPPED",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Dual-Water (zone LOWER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 8 of 10 samples. Check that PHIE and PHIT come from the same inputs.",
+   "zone": "LOWER"
+  }
+ ],
+ "lrlc": {
+  "chain": [],
+  "counts": {
+   "flag": 0,
+   "n": 50,
+   "rt_sw_written": false,
+   "water_free": 0
+  },
+  "curves": {},
+  "movable": {
+   "swirr_column": "SWIRR",
+   "swirr_method": "Buckles Number",
+   "tol_by_zone": {
+    "LOWER": 0.05,
+    "UPPER": 0.05
+   },
+   "zones": [
+    {
+     "avg_bvw": NaN,
+     "avg_movable_sw": NaN,
+     "n": 0,
+     "net_res_ft": 0.0,
+     "pct": NaN,
+     "water_free_ft": 0.0,
+     "zone": "UPPER"
+    },
+    {
+     "avg_bvw": NaN,
+     "avg_movable_sw": NaN,
+     "n": 0,
+     "net_res_ft": 0.0,
+     "pct": NaN,
+     "water_free_ft": 0.0,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "params": {
+   "default": {
+    "cut_sw_target": null,
+    "movable_tol": 0.05,
+    "rt_fallback": "nan",
+    "rt_steps": [],
+    "screen_contrast_max": 2.0,
+    "screen_min_score": 5,
+    "screen_rt_max": 5.0
+   },
+   "zones": {
+    "LOWER": {
+     "cut_sw_target": null,
+     "movable_tol": 0.05,
+     "rt_fallback": "nan",
+     "rt_steps": [],
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0
+    },
+    "UPPER": {
+     "cut_sw_target": null,
+     "m_coef": [
+      1.9,
+      0.5,
+      0.3,
+      0.0
+     ],
+     "mn_mode": "curve",
+     "movable_tol": 0.05,
+     "n_coef": [
+      1.8,
+      0.6
+     ],
+     "n_model": "vsh",
+     "rt_fallback": "nan",
+     "rt_steps": [],
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0
+    }
+   }
+  },
+  "screening": {
+   "criteria": {
+    "CONTRAST": {
+     "evaluable": 50,
+     "met": 50
+    },
+    "HC": {
+     "evaluable": 0,
+     "met": 0
+    },
+    "LOW_RT": {
+     "evaluable": 50,
+     "met": 26
+    },
+    "PHI": {
+     "evaluable": 50,
+     "met": 39
+    },
+    "SW_HIGH": {
+     "evaluable": 50,
+     "met": 8
+    },
+    "VSH": {
+     "evaluable": 50,
+     "met": 0
+    }
+   },
+   "thresholds": {
+    "LOWER": {
+     "phi_cutoff": 0.08,
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0,
+     "sw_cutoff": 0.6,
+     "vsh_cutoff": 0.4
+    },
+    "UPPER": {
+     "phi_cutoff": 0.08,
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0,
+     "sw_cutoff": 0.6,
+     "vsh_cutoff": 0.4
+    }
+   },
+   "unavailable": [
+    "HC"
+   ],
+   "zones": [
+    {
+     "avg_phie": NaN,
+     "avg_rt": NaN,
+     "avg_sw": NaN,
+     "avg_vsh": NaN,
+     "candidate_ft": 0.0,
+     "candidate_not_pay_ft": 0.0,
+     "n": 40,
+     "net_res_ft": 0.0,
+     "pct_of_net_res": NaN,
+     "rt_cut": NaN,
+     "zone": "UPPER"
+    },
+    {
+     "avg_phie": NaN,
+     "avg_rt": NaN,
+     "avg_sw": NaN,
+     "avg_vsh": NaN,
+     "candidate_ft": 0.0,
+     "candidate_not_pay_ft": 0.0,
+     "n": 10,
+     "net_res_ft": 0.0,
+     "pct_of_net_res": NaN,
+     "rt_cut": NaN,
+     "zone": "LOWER"
+    }
+   ]
+  },
+  "variable_mn": {
+   "clip_m": [
+    1.0,
+    4.0
+   ],
+   "clip_n": [
+    1.0,
+    4.0
+   ],
+   "zones": [
+    {
+     "m_coef": [
+      1.9,
+      0.5,
+      0.3,
+      0.0
+     ],
+     "m_model": "formula",
+     "m_p05": 2.168499114876425,
+     "m_p50": 2.1845225483731863,
+     "m_p95": 2.201453391342665,
+     "mode": "curve",
+     "n_clipped_m": 0,
+     "n_clipped_n": 0,
+     "n_coef": [
+      1.8,
+      0.6
+     ],
+     "n_eval": 40,
+     "n_fallback": 0,
+     "n_model": "vsh",
+     "n_p05": 2.2076669269594387,
+     "n_p50": 2.258139834158781,
+     "n_p95": 2.32686135903242,
+     "n_samples": 40,
+     "phi_source": "phie",
+     "zone": "UPPER"
+    }
+   ]
+  },
+  "version": 1
+ },
+ "net_pay": 0.0,
+ "net_reservoir": 0.0,
+ "ng_pay": 0.0,
+ "ng_reservoir": 0.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     40.0,
+     130.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Limestone"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": 0.0
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 4.844974974315079
+   },
+   "rw": {
+    "source": "auto unavailable (fallback: project)",
+    "value": 0.01
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "LOWER": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     40.0,
+     130.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Limestone"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": 0.0
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 4.844974974315079
+   },
+   "rw": {
+    "source": "auto unavailable (fallback: project)",
+    "value": 0.01
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  },
+  "UPPER": {
+   "a": {
+    "source": "project",
+    "value": 0.62
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     40.0,
+     130.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Limestone"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.15
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": 0.0
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto",
+    "value": 4.844974974315079
+   },
+   "rw": {
+    "source": "auto unavailable (fallback: project)",
+    "value": 0.01
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 0.0,
+ "rsh": 4.844974974315079,
+ "rsh_shale_samples": 16,
+ "rsh_source": "auto",
+ "rw": 0.01,
+ "rw_hc_samples": 0,
+ "rw_quality": "no_water",
+ "rw_source": "manual (auto estimate unavailable)",
+ "rw_water_samples": 0,
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_ARCHIE": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 10
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  },
+  "SW_DW": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 37,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 8,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 10
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 29,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  },
+  "SW_INDO": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 10
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  },
+  "SW_SIMAN": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 10
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 0,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  },
+  "SW_WS": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 45,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0,
+   "zones": {
+    "LOWER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 10,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 10
+    },
+    "UPPER": {
+     "at_lower_bound": 0,
+     "at_upper_bound": 0,
+     "bvh_exceeds_phie": 35,
+     "failed": 0,
+     "no_phit": 0,
+     "no_porosity": 0,
+     "no_root": 0,
+     "phie_above_phit": 0,
+     "samples": 40
+    }
+   }
+  }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 0,
+  "limited_to_max": 0,
+  "method_used": "Buckles Number",
+  "samples": 50
+ },
+ "swirr_mean": 0.20466379984798894,
+ "swirr_method": "Buckles Number",
+ "warnings": [
+  "auto Rw: no water-bearing samples found; entered Rw used.",
+  "Rw could not be estimated automatically; using the entered Rw of 0.01.",
+  "Waxman-Smits (zone UPPER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 35 of 40 samples. Check that PHIE and PHIT come from the same inputs.",
+  "Waxman-Smits (zone LOWER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 10 of 10 samples. Check that PHIE and PHIT come from the same inputs.",
+  "Dual-Water (zone UPPER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 29 of 40 samples. Check that PHIE and PHIT come from the same inputs.",
+  "Dual-Water (zone LOWER): the hydrocarbon volume from total porosity is larger than the effective porosity can hold, so it was limited to PHIE in 8 of 10 samples. Check that PHIE and PHIT come from the same inputs."
+ ],
+ "zone_diagnostics": {
+  "LOWER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 0.0,
+   "limiting": "vsh_cutoff",
+   "net_pay": 0.0,
+   "net_reservoir": 0.0,
+   "pass_phi": 0.7,
+   "pass_sw": 0.9,
+   "pass_vsh": 0.0,
+   "status": "no_gross",
+   "valid": 10
+  },
+  "UPPER": {
+   "cutoffs": {
+    "phi_cutoff": 0.08,
+    "sw_cutoff": 0.6,
+    "vsh_cutoff": 0.4
+   },
+   "gross": 0.0,
+   "limiting": "vsh_cutoff",
+   "net_pay": 0.0,
+   "net_reservoir": 0.0,
+   "pass_phi": 0.8,
+   "pass_sw": 0.825,
+   "pass_vsh": 0.0,
+   "status": "no_gross",
+   "valid": 40
+  }
+ },
+ "zones": [
+  {
+   "avg_phie_pay": NaN,
+   "avg_sw_pay": NaN,
+   "avg_vsh_pay": NaN,
+   "bottom": 1039.795918367347,
+   "gross_sand": 0.0,
+   "hcpv_net_pay": 0.0,
+   "net_pay": 0.0,
+   "net_reservoir": 0.0,
+   "ng_pay": 0.0,
+   "ng_reservoir": 0.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 0.62
+    },
+    "m": {
+     "source": "project",
+     "value": 2.15
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "auto",
+     "value": 4.844974974315079
+    },
+    "rw": {
+     "source": "auto unavailable (fallback: project)",
+     "value": 0.01
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 0.0,
+   "samples": 40,
+   "top": 1000.0,
+   "zone": "UPPER"
+  },
+  {
+   "avg_phie_pay": NaN,
+   "avg_sw_pay": NaN,
+   "avg_vsh_pay": NaN,
+   "bottom": 1050.0,
+   "gross_sand": 0.0,
+   "hcpv_net_pay": 0.0,
+   "net_pay": 0.0,
+   "net_reservoir": 0.0,
+   "ng_pay": 0.0,
+   "ng_reservoir": 0.0,
+   "params": {
+    "a": {
+     "source": "project",
+     "value": 0.62
+    },
+    "m": {
+     "source": "project",
+     "value": 2.15
+    },
+    "n": {
+     "source": "project",
+     "value": 2.0
+    },
+    "phi_cutoff": {
+     "source": "project",
+     "value": 0.08
+    },
+    "rsh": {
+     "source": "auto",
+     "value": 4.844974974315079
+    },
+    "rw": {
+     "source": "auto unavailable (fallback: project)",
+     "value": 0.01
+    },
+    "sw_cutoff": {
+     "source": "project",
+     "value": 0.6
+    },
+    "vsh_cutoff": {
+     "source": "project",
+     "value": 0.4
+    }
+   },
+   "phih_pay": 0.0,
+   "samples": 10,
+   "top": 1040.8163265306123,
+   "zone": "LOWER"
+  }
+ ]
+}

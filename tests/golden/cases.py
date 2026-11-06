@@ -123,6 +123,57 @@ def lrlc_pyrite_data():
     })
 
 
+# Known truth of the invasion case: (top, bottom, Rt, Rxo, di) per interval, ft and in.
+INVASION_INTERVALS = (
+    (1000.0, 1030.0, 20.0, 2.0, 40.0),     # well posed
+    (1030.0, 1050.0, 8.0, 1.5, 25.0),      # well posed
+    (1050.0, 1065.0, 12.0, 12.5, 30.0),    # Rxo close to Rt: non-unique
+    (1065.0, 1085.0, 15.0, 1.5, 150.0),    # di above the upper bound (120 in)
+    (1085.0, 1100.0, 30.0, 3.0, 60.0),     # well posed
+)
+
+
+def invasion_truth(depth):
+    """Per-sample true (Rt, Rxo, di) of the invasion case; Rt undulates gently inside an interval."""
+    rt, rxo, di = (np.full(len(depth), np.nan) for _ in range(3))
+    for top, bottom, t, x, d in INVASION_INTERVALS:
+        sel = (depth >= top) & (depth < bottom)
+        rt[sel] = t * (1.0 + 0.25 * np.sin(depth[sel] / 4.0))
+        rxo[sel] = x
+        di[sel] = d
+    return rt, rxo, di
+
+
+def lrlc_invasion_data():
+    """A clean sand with a step invasion profile from the forward model, no noise.
+
+    Deep, medium and shallow readings come from the generic induction tool (80, 45 and 20 in,
+    shape 2.5). Five intervals: three well posed, one with Rxo close to Rt and one with an
+    invasion diameter above the upper bound. A few samples lose a curve (NaN). Deterministic.
+    """
+    from modules.lrlc.invasion import GENERIC_TOOLS, forward_ra
+
+    tool = GENERIC_TOOLS["generic_induction"]
+    depth = np.linspace(1000.0, 1099.5, 200)
+    rt, rxo, di = invasion_truth(depth)
+    ra = forward_ra(rt, rxo, di, (tool["deep"], tool["medium"], tool["shallow"]), tool["p"])
+    wave = np.sin(depth / 5.0)
+    data = pd.DataFrame({
+        "DEPTH": depth,
+        "GR": 30.0 + 6.0 * wave,
+        "RHOB": 2.30 + 0.03 * wave,
+        "NPHI": 0.20 + 0.02 * wave,
+        "DT": 80.0 + 3.0 * wave,
+        "RT": ra[:, 0],
+        "RM": ra[:, 1],
+        "RS": ra[:, 2],
+    })
+    data.loc[[7, 21], "RS"] = np.nan
+    data.loc[[48, 49], "RT"] = np.nan
+    data.loc[[170, 171], "RM"] = np.nan
+    return data
+
+
 # Literal rock-type definitions (as Project.rock_types stores them) for the
 # rock_typing_enabled case: three FZI types, pooled over the project.
 ROCK_TYPE_SET = {
@@ -282,6 +333,52 @@ CASES = {
                  "params": {"default": {"rt_steps": ["pyrite"], "pyr_method": "rhob_pef",
                                         "pyr_f": 0.5, "pyr_rpy": 0.1}, "zones": {}}},
     },
+    # Variable m and n: Upper in curve mode (m from porosity and clay, n from clay), Lower scalar;
+    # all five Sw models, primary Simandoux.
+    "lrlc_variable_mn": {
+        "data": "shaly_data",
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 40.0,
+            "gr_max_manual": 130.0,
+            "vsh_methods": ALL_VSH,
+            "primary_phie_method": "PHIE_N",
+            "sw_methods": ALL_SW,
+            "sw_primary_method": "Simandoux",
+            "rw": 0.01,
+            "rw_mode": "auto",
+            "swirr_method": "Buckles Number",
+            "nphi_matrix": 0.0,
+            "lithology_preset": "Limestone",
+        },
+        "tops": True,
+        "lrlc": {"settings": {"enabled": True},
+                 "params": {"default": {},
+                            "zones": {"UPPER": {"mn_mode": "curve",
+                                                "m_coef": [1.9, 0.5, 0.3, 0.0],
+                                                "n_model": "vsh", "n_coef": [1.8, 0.6]}}}},
+    },
+    # Radial invasion from the forward model of the generic induction tool: known Rt, Rxo and di
+    # per interval, RM and RS mapped, missing samples, a non-unique and an out-of-range interval.
+    "lrlc_invasion": {
+        "builder": lrlc_invasion_data,
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 20.0,
+            "gr_max_manual": 120.0,
+            "sw_methods": ["Archie"],
+            "sw_primary_method": "Archie",
+            "rw": 0.05,
+            "rw_mode": "manual",
+            "a": 1.0,
+            "m": 2.0,
+            "n": 2.0,
+        },
+        "lrlc_curves": {"RM": "RM", "RS": "RS"},
+        "lrlc": {"settings": {"enabled": True},
+                 "params": {"default": {"rt_steps": ["invasion"], "inv_tool": "generic_induction",
+                                        "rt_fallback": "nan"}, "zones": {}}},
+    },
     # A log-derived fit with use for pay requested: refused, pay stays on resistivity Sw.
     "shf_log_derived": {
         "data": "sample_log_data",
@@ -330,6 +427,8 @@ def build_case(name):
         model.las_data = data
         model.formation_tops = tops
         _set_lrlc(model, spec["lrlc"])
+        if spec.get("lrlc_curves"):
+            model._well.lrlc_curves = dict(spec["lrlc_curves"])
         params["lrlc"] = model._lrlc_params(model._well)
     if spec.get("shf"):
         # What AppModel.params_for_well hands the pipeline when saturation height is on.
@@ -364,3 +463,5 @@ def apply_to_model(model, name, params):
         model._well.shf_contacts = copy.deepcopy(CASES[name]["shf"]["contacts"])
     if CASES[name].get("lrlc"):
         _set_lrlc(model, CASES[name]["lrlc"])
+    if CASES[name].get("lrlc_curves"):
+        model._well.lrlc_curves = dict(CASES[name]["lrlc_curves"])

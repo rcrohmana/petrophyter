@@ -1,0 +1,457 @@
+{
+ "analysis_mode": "Whole Well",
+ "avg_phie_pay": 0.19347078540198998,
+ "avg_sw_pay": 0.30393824574759926,
+ "avg_vsh_pay": 0.09144826847262738,
+ "data_points": 200,
+ "gr_max": 120.0,
+ "gr_min": 20.0,
+ "gross_sand": 100.0,
+ "hcpv_gross": 10.36940629982942,
+ "hcpv_net_pay": 10.36940629982942,
+ "hcpv_net_res": 10.36940629982942,
+ "issues": [
+  {
+   "code": "RSH_AUTO_UNAVAILABLE",
+   "severity": "warning",
+   "target": "params.rw.rsh_value",
+   "text": "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
+   "zone": null
+  },
+  {
+   "code": "LRLC_STEP_INVALID",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Radial invasion: 44 sample(s) in the unzoned interval gave no valid Rt (left empty).",
+   "zone": null
+  },
+  {
+   "code": "LRLC_INV_TOOL_GENERIC",
+   "severity": "info",
+   "target": null,
+   "text": "Invasion correction in the unzoned interval uses a generic tool preset; confirm the radial diameters against the chart book of the tool that was run.",
+   "zone": null
+  },
+  {
+   "code": "LRLC_INV_NONUNIQUE",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "Invasion correction: 24 sample(s) in the unzoned interval have curves too close together to separate Rt from Rxo; the input Rt is kept.",
+   "zone": null
+  },
+  {
+   "code": "LRLC_INV_DI_BOUND",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Invasion correction: 40 sample(s) in the unzoned interval reached the upper invasion diameter bound and give no Rt.",
+   "zone": null
+  },
+  {
+   "code": "LRLC_INV_RMF_MISSING",
+   "severity": "info",
+   "target": null,
+   "text": "No mud-filtrate resistivity is set for the unzoned interval; Rxo has no lower bound.",
+   "zone": null
+  },
+  {
+   "code": "SWIRR_LIMITED",
+   "severity": "info",
+   "target": "params.swirr",
+   "text": "Hierarchical Swirr: 10 samples were limited to the measured Sw (Swirr cannot exceed Sw).",
+   "zone": null
+  },
+  {
+   "code": "LRLC_SWIRR_MISSING",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "46 net reservoir samples have no Swirr; the water-free flag was not evaluated there.",
+   "zone": null
+  }
+ ],
+ "lrlc": {
+  "chain": [
+   {
+    "counts": {
+     "curves_missing": 0,
+     "di_lower": 0,
+     "di_upper": 40,
+     "failed": 0,
+     "generic": 1,
+     "missing": 6,
+     "no_temperature": 0,
+     "nonunique": 24,
+     "ok": 130,
+     "poor_fit": 0,
+     "rmf_missing": 1,
+     "rxo_below_rmf": 0,
+     "setting_invalid": 0
+    },
+    "curve": "RT_INV",
+    "fallback": 0,
+    "from": "RT",
+    "n_invalid": 44,
+    "n_valid": 154,
+    "params": {
+     "inv_di_max": 120.0,
+     "inv_di_min": 8.0,
+     "inv_max_rms": 0.15,
+     "inv_min_contrast": 1.15,
+     "inv_p": 2.5,
+     "inv_r50": null,
+     "inv_rxo_mode": "fixed",
+     "inv_tool": "generic_induction",
+     "rmf": null,
+     "rmf_temp": 75.0
+    },
+    "refs": [
+     "doll1949",
+     "anderson2001",
+     "arps1953"
+    ],
+    "segment": "well",
+    "step": "invasion",
+    "zone": null
+   }
+  ],
+  "counts": {
+   "flag": 0,
+   "n": 200,
+   "rt_sw_written": true,
+   "water_free": 24
+  },
+  "curves": {
+   "RM": "RM",
+   "RS": "RS"
+  },
+  "invasion": {
+   "zones": [
+    {
+     "badge": "generic, confirm with tool charts",
+     "di_p50": 40.00000000003085,
+     "generic": true,
+     "n_di_lower": 0,
+     "n_di_upper": 40,
+     "n_failed": 0,
+     "n_missing": 6,
+     "n_nonunique": 24,
+     "n_ok": 130,
+     "n_poor_fit": 0,
+     "n_rxo_below_rmf": 0,
+     "n_valid": 154,
+     "p": 2.5,
+     "r50": {
+      "deep": 80.0,
+      "medium": 45.0,
+      "shallow": 20.0
+     },
+     "rmf": null,
+     "rmf_temp": 75.0,
+     "rt_ratio_p50": 2.0118967450248695,
+     "rxo_mode": "fixed",
+     "rxo_p50": 2.000000000000889,
+     "tool": "generic_induction",
+     "zone": "WELL"
+    }
+   ]
+  },
+  "movable": {
+   "swirr_column": "SWIRR",
+   "swirr_method": "Hierarchical (Recommended)",
+   "tol_by_zone": {
+    "WELL": 0.05
+   },
+   "zones": [
+    {
+     "avg_bvw": 0.05880317111849107,
+     "avg_movable_sw": 0.12026881275220026,
+     "n": 200,
+     "net_res_ft": 100.0,
+     "pct": 12.0,
+     "water_free_ft": 12.0,
+     "zone": "WELL"
+    }
+   ]
+  },
+  "params": {
+   "default": {
+    "cut_sw_target": null,
+    "movable_tol": 0.05,
+    "rt_fallback": "nan",
+    "rt_steps": [
+     "invasion"
+    ],
+    "screen_contrast_max": 2.0,
+    "screen_min_score": 5,
+    "screen_rt_max": 5.0
+   },
+   "zones": {}
+  },
+  "screening": {
+   "criteria": {
+    "CONTRAST": {
+     "evaluable": 198,
+     "met": 173
+    },
+    "HC": {
+     "evaluable": 196,
+     "met": 183
+    },
+    "LOW_RT": {
+     "evaluable": 198,
+     "met": 40
+    },
+    "PHI": {
+     "evaluable": 200,
+     "met": 198
+    },
+    "SW_HIGH": {
+     "evaluable": 154,
+     "met": 0
+    },
+    "VSH": {
+     "evaluable": 200,
+     "met": 198
+    }
+   },
+   "thresholds": {
+    "WELL": {
+     "phi_cutoff": 0.08,
+     "screen_contrast_max": 2.0,
+     "screen_min_score": 5,
+     "screen_rt_max": 5.0,
+     "sw_cutoff": 0.6,
+     "vsh_cutoff": 0.4
+    }
+   },
+   "unavailable": [],
+   "zones": [
+    {
+     "avg_phie": NaN,
+     "avg_rt": NaN,
+     "avg_sw": NaN,
+     "avg_vsh": NaN,
+     "candidate_ft": 0.0,
+     "candidate_not_pay_ft": 0.0,
+     "n": 200,
+     "net_res_ft": 100.0,
+     "pct_of_net_res": 0.0,
+     "rt_cut": NaN,
+     "zone": "WELL"
+    }
+   ]
+  },
+  "validation": {
+   "basis": "measured RT, scalar Qv, bulk basis",
+   "n_shf_held": 0,
+   "pay_sw": "resistivity",
+   "well": {
+    "avg_sw_pay": 0.30393824574759926,
+    "avg_sw_pay_base": 0.402584303277381,
+    "delta": -2.0,
+    "hcpv_net_pay": 10.369406299829418,
+    "hcpv_net_pay_base": 9.12884685174804,
+    "net_pay": 77.0,
+    "net_pay_base": 79.0
+   },
+   "zones": []
+  },
+  "version": 1,
+  "zones": [
+   {
+    "causes": [],
+    "guard": {
+     "lam_share": null,
+     "laminated": null
+    },
+    "n_res": 200,
+    "primary": null,
+    "status": "ok",
+    "thickness_ft": 100.0,
+    "ts": null,
+    "zone": "WELL"
+   }
+  ]
+ },
+ "net_pay": 77.0,
+ "net_reservoir": 100.0,
+ "ng_pay": 0.77,
+ "ng_reservoir": 1.0,
+ "param_sources": {
+  "(well)": {
+   "a": {
+    "source": "project",
+    "value": 1.0
+   },
+   "dn_combination": {
+    "source": "project",
+    "value": "Average"
+   },
+   "dt_fluid": {
+    "source": "project",
+    "value": 189.0
+   },
+   "dt_matrix": {
+    "source": "project",
+    "value": 55.5
+   },
+   "dt_shale": {
+    "source": "project",
+    "value": 100.0
+   },
+   "dw_rwb": {
+    "source": "project",
+    "value": 0.2
+   },
+   "dw_swb": {
+    "source": "project",
+    "value": 0.1
+   },
+   "gas_correction_enabled": {
+    "source": "project",
+    "value": false
+   },
+   "gas_crossover_min": {
+    "source": "project",
+    "value": 0.02
+   },
+   "gas_vsh_max": {
+    "source": "project",
+    "value": 0.4
+   },
+   "gr_baseline": {
+    "source": "project",
+    "value": [
+     20.0,
+     120.0
+    ]
+   },
+   "k_buckles": {
+    "source": "project",
+    "value": 0.02
+   },
+   "lithology_preset": {
+    "source": "project",
+    "value": "Sandstone (Humble)"
+   },
+   "m": {
+    "source": "project",
+    "value": 2.0
+   },
+   "n": {
+    "source": "project",
+    "value": 2.0
+   },
+   "nphi_matrix": {
+    "source": "project",
+    "value": null
+   },
+   "nphi_shale": {
+    "source": "project",
+    "value": 0.35
+   },
+   "perm_C": {
+    "source": "project",
+    "value": 8581.0
+   },
+   "perm_P": {
+    "source": "project",
+    "value": 4.4
+   },
+   "perm_Q": {
+    "source": "project",
+    "value": 2.0
+   },
+   "phi_cutoff": {
+    "source": "project",
+    "value": 0.08
+   },
+   "rho_fluid": {
+    "source": "project",
+    "value": 1.0
+   },
+   "rho_matrix": {
+    "source": "project",
+    "value": 2.65
+   },
+   "rho_shale": {
+    "source": "project",
+    "value": 2.45
+   },
+   "rsh": {
+    "source": "auto unavailable (fallback: project)",
+    "value": 5.0
+   },
+   "rw": {
+    "source": "project",
+    "value": 0.05
+   },
+   "rw_ref_temp": {
+    "source": "project",
+    "value": 75.0
+   },
+   "surface_temp": {
+    "source": "project",
+    "value": 80.0
+   },
+   "sw_cutoff": {
+    "source": "project",
+    "value": 0.6
+   },
+   "temp_correction": {
+    "source": "project",
+    "value": false
+   },
+   "temp_gradient": {
+    "source": "project",
+    "value": 1.5
+   },
+   "vsh_cutoff": {
+    "source": "project",
+    "value": 0.4
+   },
+   "ws_b": {
+    "source": "project",
+    "value": 1.0
+   },
+   "ws_qv": {
+    "source": "project",
+    "value": 0.2
+   }
+  }
+ },
+ "phih_pay": 14.897250475953228,
+ "rsh": 5.0,
+ "rsh_shale_samples": 0,
+ "rsh_source": "manual (auto estimate unavailable)",
+ "rw": 0.05,
+ "rw_source": "manual",
+ "selected_formations": [],
+ "solver_diagnostics": {
+  "SW_ARCHIE": {
+   "at_lower_bound": 0,
+   "at_upper_bound": 0,
+   "bvh_exceeds_phie": 0,
+   "failed": 0,
+   "no_phit": 0,
+   "no_porosity": 0,
+   "no_root": 0,
+   "phie_above_phit": 0
+  }
+ },
+ "swirr_diagnostics": {
+  "fallback_samples": 0,
+  "floor_samples": 0,
+  "limited_by_sw": 10,
+  "limited_to_max": 0,
+  "method_used": "Hierarchical (Recommended)",
+  "samples": 154
+ },
+ "swirr_mean": 0.18560803421197083,
+ "swirr_method": "Hierarchical (Recommended)",
+ "warnings": [
+  "Rsh could not be estimated automatically; using the entered Rsh of 5.0.",
+  "Radial invasion: 44 sample(s) in the unzoned interval gave no valid Rt (left empty).",
+  "Invasion correction: 40 sample(s) in the unzoned interval reached the upper invasion diameter bound and give no Rt."
+ ],
+ "zones": []
+}

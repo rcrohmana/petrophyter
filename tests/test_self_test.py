@@ -15,7 +15,9 @@ def test_numeric_steps_pass_in_process():
     assert self_test.step_lapack()
     assert self_test.step_uncertainty()
     assert self_test.step_shf()
-    assert "chain ok" in self_test.step_lrlc()
+    detail = self_test.step_lrlc()
+    for fragment in ("m/n arrays = scalars", "invasion Rt = 20.00 ohm.m", "Shell gate ok", "chain ok"):
+        assert fragment in detail
     assert self_test.step_pipeline()
 
 
