@@ -4,6 +4,7 @@ Handles reading and parsing LAS 2.0 format files
 """
 
 import logging
+import math
 import lasio
 import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
@@ -27,6 +28,84 @@ logger = logging.getLogger(__name__)
 # Depth-unit tokens.
 _METER_UNITS = {'M', 'METER', 'METERS', 'METRE', 'METRES'}
 _FEET_UNITS = {'FT', 'F', 'FEET', 'FOOT'}
+
+
+_OHMM_UNITS = {'OHMM', 'OHM.M', 'OHM-M', 'OHM M', 'OHM*M', 'OHMS.M', 'OHM/M', 'OHMMETER', 'OHM-METER'}
+_DEGF_UNITS = {'DEGF', 'F', 'DEG F', 'DEG_F', 'FAHRENHEIT'}
+_DEGC_UNITS = {'DEGC', 'C', 'DEG C', 'DEG_C', 'CELSIUS'}
+MUD_RMF_RANGE = (0.005, 20.0)           # ohm.m
+MUD_TEMP_RANGE = (32.0, 400.0)          # degF
+
+
+def _unit_key(unit) -> str:
+    return str(unit or '').upper().replace('°', '').strip()
+
+
+def _resistivity_ohmm(value, unit):
+    """``(ohm.m, assumed)`` or ``(None, False)`` when the unit is not ohm.m."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        return None, False
+    key = _unit_key(unit)
+    if not key:
+        return float(value), True
+    return (float(value), False) if key in _OHMM_UNITS else (None, False)
+
+
+def _temperature_degf(value, unit):
+    """``(degF, assumed)`` or ``(None, False)`` when the unit is unknown."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+        return None, False
+    key = _unit_key(unit)
+    if not key:
+        return float(value), True
+    if key in _DEGF_UNITS:
+        return float(value), False
+    if key in _DEGC_UNITS:
+        return float(value) * 9.0 / 5.0 + 32.0, False
+    return None, False
+
+
+def mud_header_proposal(well_info) -> Dict[str, Any]:
+    """Mud values of a LAS header as a proposal in ohm.m and degF; nothing is applied.
+
+    Keys (present only when the header gives a usable value): ``rmf`` and ``rmf_temp`` for the mud
+    filtrate, ``mud_rm`` and ``mud_rm_temp`` for the mud itself, ``bht`` (degF). ``assumed`` lists the
+    keys whose unit was missing and taken as ohm.m / degF; ``skipped`` maps a name to the reason a
+    header value was not offered (unknown unit or outside the plausible range).
+    """
+    info = well_info or {}
+    out: Dict[str, Any] = {}
+    assumed: List[str] = []
+    skipped: Dict[str, str] = {}
+    for name in ('rmf', 'mud_rm'):
+        if name not in info:
+            continue
+        value, was_assumed = _resistivity_ohmm(info.get(name), info.get(f'{name}_unit'))
+        if value is None:
+            skipped[name] = 'unit is not ohm.m'
+        elif not MUD_RMF_RANGE[0] <= value <= MUD_RMF_RANGE[1] and name == 'rmf':
+            skipped[name] = 'outside the plausible range'
+        elif value <= 0:
+            skipped[name] = 'outside the plausible range'
+        else:
+            out[name] = value
+            if was_assumed:
+                assumed.append(name)
+    for name in ('rmf_temp', 'mud_rm_temp', 'bht'):
+        if name not in info:
+            continue
+        value, was_assumed = _temperature_degf(info.get(name), info.get(f'{name}_unit'))
+        if value is None:
+            skipped[name] = 'unit is not degF or degC'
+        elif not MUD_TEMP_RANGE[0] <= value <= MUD_TEMP_RANGE[1]:
+            skipped[name] = 'outside the plausible range'
+        else:
+            out[name] = value
+            if was_assumed:
+                assumed.append(name)
+    out['assumed'] = assumed
+    out['skipped'] = skipped
+    return out
 
 
 class LASParser:
@@ -244,6 +323,11 @@ class LASParser:
             'df_elevation': ('DF', 'EDF'),
             'bht': ('BHT', 'MRT'),
             'td': ('TD', 'TDL', 'TDD'),
+            # Mud values of the header; the mud RM is not the medium resistivity curve.
+            'rmf': ('RMF',),
+            'rmf_temp': ('MFST', 'MFT', 'RMFT', 'RMF_TEMP'),
+            'mud_rm': ('RM',),
+            'mud_rm_temp': ('MST',),
         }
         for name, mnemonics in numeric_specs.items():
             item = self._get_header_item(*mnemonics)

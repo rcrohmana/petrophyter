@@ -377,6 +377,7 @@ def register_step() -> None:
     """Register the step unless it is already registered."""
     if STEP.name not in chain.STEPS:
         chain.register(STEP)
+    register_derive()
 
 
 # ---------------------------------------------------------------------------
@@ -385,9 +386,19 @@ def register_step() -> None:
 def invasion_count_issues(records: List[dict]) -> List[tuple]:
     """Issue tuples ``(code, text, zone, severity_or_None)`` for the ``invasion`` records of a chain run."""
     out: List[tuple] = []
+    vertical_zones = {
+        rec.get("zone") for rec in records
+        if rec.get("step") in chain.STEPS and chain.STEPS[rec["step"]].kind == "vertical"}
     for rec in records:
         if rec.get("step") != "invasion":
             continue
+        if rec.get("zone") in vertical_zones:
+            zone = rec.get("zone")
+            where = "the unzoned interval" if zone is None else f"zone {zone}"
+            out.append(("LRLC_INV_DECON_MISMATCH",
+                        f"Invasion correction in {where} follows a vertical-resolution step that changes only "
+                        "the deep curve; the medium and shallow curves are used as measured, so the "
+                        "three curves have different vertical resolution.", zone, None))
         c = rec.get("counts") or {}
         zone = rec.get("zone")
         where = "the unzoned interval" if zone is None else f"zone {zone}"
@@ -432,3 +443,77 @@ def invasion_count_issues(records: List[dict]) -> List[tuple]:
             out.append(("LRLC_INV_RMF_MISSING",
                         f"No mud-filtrate resistivity is set for {where}; Rxo has no lower bound.", zone, None))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Formation temperature (well-scope derive read by the step as ``ctx.derived["T_FM_F"]``)
+# ---------------------------------------------------------------------------
+# Defaults of the temperature setup (surface temperature degF, gradient degF/100 ft, datum ft).
+_TEMP_SETUP_DEFAULTS = (80.0, 1.5, 0.0)
+
+
+def temperature_needed(lrlc, zone_keys) -> bool:
+    """True when some zone present runs the ``invasion`` step with a mud-filtrate resistivity set."""
+    if not lrlc or "resolved" not in lrlc:
+        return False
+    for zone in chain._unique_keys(zone_keys):
+        prm = chain._resolved(lrlc, zone)
+        specs, _ = chain.resolve_steps(prm.get("rt_steps", []))
+        if any(sp.name == "invasion" for sp in specs) and prm.get("rmf") is not None:
+            return True
+    return False
+
+
+def temperature_setup_is_default(params) -> bool:
+    """True when surface temperature, gradient and datum are all still at their defaults (or absent)."""
+    params = params or {}
+    for key, default in zip(("surface_temp", "temp_gradient", "temp_datum_depth"), _TEMP_SETUP_DEFAULTS):
+        val = params.get(key)
+        if val is None:
+            continue
+        try:
+            if abs(float(val) - default) > 1e-9:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def derive_formation_temperature(*, tvd, params, zone_keys, lrlc, issues=None) -> Dict[str, np.ndarray]:
+    """``{"T_FM_F": degF per sample}`` from the TVD of each sample and the temperature settings.
+
+    ``tvd`` is the true vertical depth (ft) per sample, ``params`` the flat parameters (``surface_temp``,
+    ``temp_gradient``, ``temp_datum_depth``). The array is produced only when a zone runs ``invasion``
+    with ``rmf`` set (otherwise ``{}``); it does not depend on the Arps or Juhasz options. When the
+    temperature settings are all still defaults an ``LRLC_INV_TEMP_DEFAULT`` tuple is appended to
+    ``issues`` (if given).
+    """
+    if not temperature_needed(lrlc, zone_keys):
+        return {}
+    from modules.param_scopes import formation_temperature
+    params = params or {}
+    surface = float(params.get("surface_temp") if params.get("surface_temp") is not None
+                    else _TEMP_SETUP_DEFAULTS[0])
+    gradient = float(params.get("temp_gradient") if params.get("temp_gradient") is not None
+                     else _TEMP_SETUP_DEFAULTS[1])
+    datum = float(params.get("temp_datum_depth") or 0.0)
+    temp = np.asarray(formation_temperature(np.asarray(tvd, dtype=float), surface, gradient, datum),
+                      dtype=float)
+    if issues is not None and temperature_setup_is_default(params):
+        finite = temp[np.isfinite(temp)]
+        span = f" ({finite.min():.0f} to {finite.max():.0f} degF)" if finite.size else ""
+        issues.append(("LRLC_INV_TEMP_DEFAULT",
+                       "The mud-filtrate bound of the invasion correction uses the default formation "
+                       f"temperature settings (surface 80 degF, gradient 1.5 degF/100 ft){span}; enter "
+                       "the temperature settings of the well to refine it.", None, None))
+    return {"T_FM_F": temp}
+
+
+DERIVE = chain.DeriveSpec(
+    name="formation_temperature", scope="well", fn=derive_formation_temperature, outputs=("T_FM_F",))
+
+
+def register_derive() -> None:
+    """Register the formation-temperature derive unless it is already registered."""
+    if DERIVE.name not in chain.DERIVES:
+        chain.register_derive(DERIVE)
