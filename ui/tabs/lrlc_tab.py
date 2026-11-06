@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QSplitter,
     QStackedWidget,
     QTabWidget,
     QVBoxLayout,
@@ -473,9 +474,19 @@ class LrlcTab(QWidget):
         gl.addWidget(self.sbc_note)
         self.guard_status = _note("")
         gl.addWidget(self.guard_status)
-        v.addWidget(group)
+        # The Rt source box and the form share a splitter: on a short window the box scrolls
+        # (or is dragged smaller) instead of being squeezed under its own content.
+        self.rt_source_scroll = _scroll(group)
+        self.rt_source_scroll.setMinimumHeight(60)
         self.remediation_form = RemediationForm()
-        v.addWidget(self.remediation_form, 1)
+        self.remediation_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.remediation_splitter.setChildrenCollapsible(False)
+        self.remediation_splitter.addWidget(self.rt_source_scroll)
+        self.remediation_splitter.addWidget(self.remediation_form)
+        self.remediation_splitter.setStretchFactor(0, 0)
+        self.remediation_splitter.setStretchFactor(1, 1)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self.remediation_splitter, 1)
 
         # The Rt chain tab: the chain sentence and the method box.
         self.chain_note = _note(CHAIN_SENTENCE)
@@ -975,6 +986,9 @@ class LrlcTab(QWidget):
             width += table.columnWidth(c)
         table.setFixedWidth(width + 2 * table.frameWidth() + 4)
         fit_table_height(table)
+        # The Rt source box never takes more height than its content.
+        scroll = self.rt_source_scroll
+        scroll.setMaximumHeight(self.rt_source_group.sizeHint().height() + 2 * scroll.frameWidth() + 2)
 
     def _render_sw_reads(self):
         zone = self.selected_zone()
