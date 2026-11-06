@@ -17,6 +17,8 @@ Variable m/n to curve mode or add the invasion step, and sessions that use neith
   the invasion step.
 - The Rt cutoff now uses exactly the per-sample inputs of the primary Sw (sand basis, estimated Qv,
   variable exponents).
+- **Methods panel** in the LRLC Workbench with typeset equations, symbol tables, assumptions, limits and
+  references; the Method & Reference boxes are now compact strips linking to it. The Remediation panel has one inner tab per correction.
 - **Workbench Remediation sections** Variable m/n and Radial invasion with plots; **Specialized** menu
   entries; `RT_INV` and `RXO_INV` on the resistivity track.
 - **Monte Carlo** varies m and n as whole-curve offsets in curve mode; the invasion step is held fixed.

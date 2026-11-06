@@ -1,24 +1,27 @@
-"""Method & Reference box shown under the LRLC tools."""
+"""Compact Method & Reference strip shown under the LRLC tools.
+
+Title, rendered equations, one line of short citations and a link that opens the full
+write-up (assumptions, limits, references) in the Methods panel of the LRLC Workbench.
+"""
 
 import html
+from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QGroupBox,
-    QHeaderView,
     QLabel,
     QPlainTextEdit,
-    QTableWidget,
-    QTableWidgetItem,
+    QPushButton,
     QVBoxLayout,
 )
 
 from modules import references
-from modules.lrlc.methods import MethodInfo
-from themes.helpers import set_status
-from themes.tokens import TYPOGRAPHY
+from modules.lrlc.methods import METHOD_TEXT, MethodInfo
+from themes.helpers import set_status, set_variant
+
+from .equation_view import EquationView
 
 
 def citation_text(keys) -> str:
@@ -33,123 +36,89 @@ def citation_text(keys) -> str:
 
 
 TITLE = "Method & Reference"
+LINK_TEXT = "Assumptions, limits and references"
+
+
+def method_key(info: MethodInfo) -> Optional[str]:
+    """Key of ``info`` in METHOD_TEXT, None for a text that is not one of the shipped methods."""
+    for key, known in METHOD_TEXT.items():
+        if known is info:
+            return key
+    return None
 
 
 class MethodReferenceBox(QGroupBox):
+    """Compact strip. Its link emits ``method_requested(key)`` and asks the enclosing LRLC tab
+    (the first ancestor with ``show_panel``) to open the Methods panel at that key."""
+
+    method_requested = pyqtSignal(str)
+
     def __init__(self, parent=None):
         # "&&": a single "&" in a group-box title is a mnemonic marker and is not drawn.
         super().__init__(TITLE.replace("&", "&&"), parent)
+        self._key: Optional[str] = None
         layout = QVBoxLayout(self)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
         self.title_label = QLabel()
         set_status(self.title_label, "muted")
-        self.equation = _equation_box()
-        self.criteria = QTableWidget(0, 3)
-        self.criteria.setHorizontalHeaderLabels(["#", "Criterion", "Condition"])
-        self.criteria.verticalHeader().setVisible(False)
-        self.criteria.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.criteria.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.criteria.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.criteria.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        header = self.criteria.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.criteria.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.criteria.hide()
-        self.equation_after = _equation_box()
-        self.equation_after.hide()
-        self.assumptions = QLabel()
-        self.limits = QLabel()
+        self.title_label.setWordWrap(True)
+        # The copyable plain-text form of the equation: not shown, kept for copying and tests.
+        self.equation = QPlainTextEdit()
+        self.equation.setReadOnly(True)
+        self.equation.hide()
+        self.equation_view = EquationView()
+        copy = QAction("Copy equation as text", self.equation_view)
+        copy.triggered.connect(
+            lambda: QGuiApplication.clipboard().setText(self.equation.toPlainText()))
+        self.equation_view.addAction(copy)
+        self.equation_view.setContextMenuPolicy(Qt.ContextMenuPolicy.ActionsContextMenu)
         self.citations = QLabel()
-        for label in (self.title_label, self.assumptions, self.limits, self.citations):
-            label.setWordWrap(True)
+        self.citations.setWordWrap(True)
         set_status(self.citations, "muted")
+        self.link = QPushButton(LINK_TEXT)
+        set_variant(self.link, "link")
+        self.link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.link.clicked.connect(self.open_methods)
 
-        for widget in (self.title_label, self.equation, self.criteria, self.equation_after,
-                       self.assumptions, self.limits, self.citations):
-            layout.addWidget(widget)
+        layout.addWidget(self.title_label)
+        layout.addSpacing(6)
+        layout.addWidget(self.equation_view)
+        layout.addSpacing(6)
+        layout.addWidget(self.citations)
+        layout.addWidget(self.link, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(self.equation)
 
     def set_method(self, info: MethodInfo) -> None:
+        self._key = method_key(info)
         self.title_label.setText(info.title)
-        self.equation.setPlainText(info.equation)
-        _fit_equation_height(self.equation)
-        self._set_criteria(info.criteria)
-        self.equation_after.setPlainText(info.equation_after)
-        _fit_equation_height(self.equation_after)
-        self.equation_after.setVisible(bool(info.equation_after))
-        self.assumptions.setText(f"<b>Assumptions.</b> {html.escape(info.assumptions)}")
-        self.limits.setText(f"<b>Limits.</b> {html.escape(info.limits)}")
+        plain = info.equation
+        if info.equation_after:
+            plain += "\n" + info.equation_after
+        self.equation.setPlainText(plain)
+        self.equation_view.set_lines(info.equation_tex)
+        self.equation_view.setVisible(bool(info.equation_tex))
         self.citations.setText(
             f"References: {html.escape(citation_text(info.refs))}" if info.refs else ""
         )
         self.citations.setVisible(bool(info.refs))
+        self.link.setEnabled(self._key is not None)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # The horizontal scrollbar of an equation box comes and goes with the width.
-        _fit_equation_height(self.equation)
-        _fit_equation_height(self.equation_after)
-        self._fit_criteria()
+    @property
+    def key(self) -> Optional[str]:
+        return self._key
 
-    def showEvent(self, event):
-        super().showEvent(event)
-        # Fonts from the theme are only known once the box is polished and shown.
-        self._fit_criteria()
+    def refresh_theme(self) -> None:
+        self.equation_view.refresh_theme()
 
-    def _set_criteria(self, rows) -> None:
-        table = self.criteria
-        table.setRowCount(len(rows))
-        mono = QFont(TYPOGRAPHY["font_mono"], TYPOGRAPHY["font_body"])
-        for r, (code, condition) in enumerate(rows):
-            number = QTableWidgetItem(str(r + 1))
-            number.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            table.setItem(r, 0, number)
-            for c, text in ((1, code), (2, condition)):
-                item = QTableWidgetItem(text)
-                item.setFont(mono)
-                table.setItem(r, c, item)
-        table.setVisible(bool(rows))
-        self._fit_criteria()
-
-    def _fit_criteria(self) -> None:
-        """As wide and tall as the content: a compact table, not a full-width grid."""
-        table = self.criteria
-        rows = table.rowCount()
-        if not rows:
+    def open_methods(self) -> None:
+        """Open the Methods panel at this method."""
+        if self._key is None:
             return
-        table.resizeColumnsToContents()
-        table.resizeRowsToContents()
-        header = table.horizontalHeader()
-        frame = 2 * table.frameWidth() + 2
-        width = sum(table.columnWidth(c) for c in range(table.columnCount()))
-        table.setFixedWidth(width + frame)
-        height = max(header.height(), header.sizeHint().height())
-        height += sum(table.rowHeight(r) for r in range(rows))
-        table.setFixedHeight(height + frame)
-
-
-def _equation_box() -> QPlainTextEdit:
-    box = QPlainTextEdit()
-    # The object name gets a monospace rule in the theme; the app-wide "*" font rule
-    # would otherwise replace the font set here.
-    box.setObjectName("MethodEquation")
-    box.setReadOnly(True)
-    box.setFont(QFont(TYPOGRAPHY["font_mono"], TYPOGRAPHY["font_body"]))
-    box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-    box.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    return box
-
-
-def _fit_equation_height(box: QPlainTextEdit) -> None:
-    """Show every line of the equation: no inner vertical scroll, no empty space."""
-    lines = max(box.document().blockCount(), 1)
-    metrics = QFontMetrics(box.font())
-    margins = box.contentsMargins()
-    height = (lines * metrics.lineSpacing() + 2 * box.document().documentMargin()
-              + margins.top() + margins.bottom() + 2 * box.frameWidth())
-    widest = max((metrics.horizontalAdvance(line) for line in box.toPlainText().splitlines()),
-                 default=0)
-    room = box.width() - 2 * box.frameWidth() - 2 * box.document().documentMargin()
-    if widest > room:
-        height += box.horizontalScrollBar().sizeHint().height()
-    box.setFixedHeight(int(height) + 2)
+        self.method_requested.emit(self._key)
+        widget = self.parentWidget()
+        while widget is not None:
+            if hasattr(widget, "show_panel"):
+                widget.show_panel("methods", self._key)
+                return
+            widget = widget.parentWidget()

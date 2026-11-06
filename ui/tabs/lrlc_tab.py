@@ -45,17 +45,19 @@ from ..widgets.lrlc_diagnosis import ThomasStieberPanel, ZonesPanel
 from ..widgets.lrlc_pickett import PickettPanel
 from ..widgets.lrlc_remediation import RemediationForm
 from ..widgets.lrlc_validation import ValidationPanel
+from ..widgets.lrlc_methods_panel import LrlcMethodsPanel
 from ..widgets.method_box import MethodReferenceBox
 from .rock_typing_tab import fit_table_height
 
 logger = logging.getLogger(__name__)
 
-PANELS = ("screening", "diagnosis", "remediation", "validation")
+PANELS = ("screening", "diagnosis", "remediation", "validation", "methods")
 DIAGNOSIS_SECTIONS = ("zones", "thomas_stieber", "pickett", "buckles")
 REMEDIATION_SECTIONS = ("rt_source", "laminated", "pyrite", "clay", "sw_basis", "variable_mn",
                         "invasion")
 PANEL_TITLES = {"screening": "Screening", "diagnosis": "Diagnosis",
-                "remediation": "Remediation", "validation": "Validation"}
+                "remediation": "Remediation", "validation": "Validation",
+                "methods": "Methods"}
 
 SCOPES = (("project_default", "Project default", "project", False),
           ("project_zone", "Project zone", "project", True),
@@ -208,6 +210,8 @@ class LrlcTab(QWidget):
         self.panels.addTab(self._build_diagnosis(), PANEL_TITLES["diagnosis"])
         self.panels.addTab(self._build_remediation(), PANEL_TITLES["remediation"])
         self.panels.addTab(self._build_validation(), PANEL_TITLES["validation"])
+        self.methods_panel = LrlcMethodsPanel()
+        self.panels.addTab(self.methods_panel, PANEL_TITLES["methods"])
         v.addWidget(self.panels, 1)
         return page
 
@@ -1043,18 +1047,20 @@ class LrlcTab(QWidget):
 
     # ------------------------------------------------------------ navigation
     def show_panel(self, name, section=None):
-        """Select a panel ("screening", "diagnosis", "remediation", "validation") and scroll to
-        a section of it (on Remediation, the matching inner tab; ``"rt_source"`` is the Rt chain
-        tab): ``"rt_cutoff"`` or ``"curves"`` on Screening; ``"zones"``,
+        """Select a panel ("screening", "diagnosis", "remediation", "validation", "methods")
+        and scroll to a section of it (on Remediation, the matching inner tab; ``"rt_source"``
+        is the Rt chain tab): ``"rt_cutoff"`` or ``"curves"`` on Screening; ``"zones"``,
         ``"thomas_stieber"``, ``"pickett"`` or ``"buckles"`` on Diagnosis; ``"rt_source"``,
         ``"laminated"``, ``"pyrite"``, ``"clay"``, ``"sw_basis"``, ``"variable_mn"`` or
-        ``"invasion"`` on Remediation."""
+        ``"invasion"`` on Remediation; a method key of METHOD_TEXT on Methods."""
         if name in PANELS:
             self.panels.setCurrentIndex(PANELS.index(name))
         if name == "screening" and section:
             target = {"rt_cutoff": self.rt_cutoff_group, "curves": self.curves_group}.get(section)
             if target is not None:
                 self.page_scroll.ensureWidgetVisible(target)
+        elif name == "methods" and section:
+            self.methods_panel.show_method(section)
         elif name == "diagnosis" and section in DIAGNOSIS_SECTIONS:
             self.diagnosis_tabs.setCurrentIndex(DIAGNOSIS_SECTIONS.index(section))
         elif name == "remediation" and section in REMEDIATION_SECTIONS:

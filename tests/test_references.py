@@ -186,7 +186,12 @@ def test_method_box_shows_method(qtbot):
     qtbot.addWidget(box)
     assert box.title() == "Method && Reference"  # drawn as "Method & Reference"
     box.set_method(METHOD_TEXT["rt_cutoff"])
-    assert "RT_CUT" in box.equation.toPlainText()
+    assert "RT_CUT" in box.equation.toPlainText()  # the copyable plain-text form, not shown
+    assert box.equation.isHidden()
+    assert box.equation_view.lines == METHOD_TEXT["rt_cutoff"].equation_tex
+    assert box.link.text() == "Assumptions, limits and references"
+    assert box.key == "rt_cutoff"
+    assert not hasattr(box, "assumptions") and not hasattr(box, "limits")
     cites = box.citations.text()
     assert "Liu Chenglin et al. (2023)" in cites
     assert "Liu Chenglin et al. (2023) (to verify)" not in cites

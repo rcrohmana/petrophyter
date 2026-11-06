@@ -21,11 +21,29 @@ class MethodInfo:
     # rows of (code, condition), numbered from 1 in the box.
     criteria: Tuple[Tuple[str, str], ...] = ()
     equation_after: str = ""
+    # Matplotlib-mathtext lines of the equation (one line per entry), shown rendered; the
+    # plain ``equation`` stays the copyable text form.
+    equation_tex: Tuple[str, ...] = ()
+    # "Where" rows of (tex symbol, plain-English meaning with units).
+    legend: Tuple[Tuple[str, str], ...] = ()
 
 
 METHOD_TEXT: Dict[str, MethodInfo] = {
     "screening": MethodInfo(
         title="Low-resistivity low-contrast screening",
+        equation_tex=(
+            r"$\mathrm{score} = \sum_{i=1}^{6} c_i, \qquad c_i \in \{0,\ 1\}$",
+            r"$\mathrm{flag} = 1 \quad \mathrm{when} \quad c_1 = c_3 = c_6 = 1$",
+            r"$\mathrm{and} \quad \mathrm{score} \geq \min(s_{\mathrm{min}},\ N_{\mathrm{eval}})$",
+        ),
+        legend=(
+            (r"$c_i$",
+             "criterion i of the table, 1 when met, 0 when not met or unavailable"),
+            (r"$s_{\mathrm{min}}$",
+             "minimum criteria met (screen_min_score)"),
+            (r"$N_{\mathrm{eval}}$",
+             "number of criteria that can be evaluated for the sample"),
+        ),
         equation="score = number of criteria met (0 to 6)",
         criteria=(
             ("LOW_RT", "RT < screen_rt_max"),
@@ -55,6 +73,24 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "rt_cutoff": MethodInfo(
         title="Resistivity cutoff (RT_CUT)",
+        equation_tex=(
+            r"$R_{t,\mathrm{cut}} = R_t \ \mathrm{such\ that}\ S_w(R_t) = S_{w,\mathrm{target}}$",
+            r"$\mathrm{Archie:}\quad R_{t,\mathrm{cut}} = \frac{a\,R_w}{\phi_e^{\,m}\,S_{w,\mathrm{target}}^{\,n}}$",
+            r"$\mathrm{Simandoux:}\quad \frac{1}{R_t} = \frac{\phi_e^{\,m}\,S_w^{\,n}}{a\,R_w} + \frac{V_{\mathrm{sh}}\,S_w}{R_{\mathrm{sh}}}$",
+            r"$\mathrm{Indonesian:}\quad \frac{1}{\sqrt{R_t}} = \left[\frac{V_{\mathrm{sh}}^{\,1 - V_{\mathrm{sh}}/2}}{\sqrt{R_{\mathrm{sh}}}} + \frac{\phi_e^{\,m/2}}{\sqrt{a\,R_w}}\right] S_w^{\,n/2}$",
+        ),
+        legend=(
+            (r"$R_{t,\mathrm{cut}}$",
+             "resistivity cutoff, ohm.m (RT_CUT)"),
+            (r"$S_{w,\mathrm{target}}$",
+             "Sw the cutoff is solved for (Rt cutoff Sw target)"),
+            (r"$R_w,\ R_{\mathrm{sh}}$",
+             "formation water and shale resistivity, ohm.m"),
+            (r"$\phi_e,\ V_{\mathrm{sh}}$",
+             "effective porosity and shale volume, fractions"),
+            (r"$a,\ m,\ n$",
+             "tortuosity factor, cementation and saturation exponents"),
+        ),
         equation=(
             "RT_CUT = Rt at which the selected Sw model returns sw_target\n"
             "Archie form: Rt_cut = a * Rw / (PHIE^m * sw_target^n)\n"
@@ -76,6 +112,20 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "bvw": MethodInfo(
         title="Bulk volume water and water-free flag",
+        equation_tex=(
+            r"$\mathrm{BVW} = \phi_e\,S_w$",
+            r"$F_{\mathrm{wf}} = 1 \quad \mathrm{if} \quad S_w \leq S_{\mathrm{wirr}} + \Delta S_{\mathrm{mov}}$",
+        ),
+        legend=(
+            (r"$\mathrm{BVW}$",
+             "bulk volume water, fraction of the rock volume"),
+            (r"$F_{\mathrm{wf}}$",
+             "WATER_FREE_FLAG; evaluated in net reservoir only"),
+            (r"$S_{\mathrm{wirr}}$",
+             "irreducible water saturation"),
+            (r"$\Delta S_{\mathrm{mov}}$",
+             "movable water tolerance (movable_tol)"),
+        ),
         equation=(
             "BVW = PHIE * Sw\n"
             "WATER_FREE_FLAG = 1 when net reservoir and Sw <= Swirr + movable_tol"
@@ -93,6 +143,15 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "buckles": MethodInfo(
         title="Buckles plot",
+        equation_tex=(
+            r"$\mathrm{BVW} = \phi_e\,S_w = k \quad \Rightarrow \quad S_w = \frac{k}{\phi_e}$",
+        ),
+        legend=(
+            (r"$k$",
+             "Buckles number, the constant bulk volume water of the zone"),
+            (r"$\phi_e,\ S_w$",
+             "effective porosity and water saturation"),
+        ),
         equation="BVW = PHIE * Sw = k   ->   Sw = k / PHIE",
         assumptions=(
             "Points of one rock type at irreducible water lie on a hyperbola of constant bulk "
@@ -106,6 +165,23 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "pickett": MethodInfo(
         title="Pickett plot and wet-point fit",
+        equation_tex=(
+            r"$\log_{10} R_t = -m \log_{10} \phi + \log_{10}(a\,R_w) - n \log_{10} S_w$",
+            r"$S_w = 1:\quad \mathrm{slope} = -m, \quad \mathrm{intercept} = \log_{10}(a\,R_w)$",
+            r"$R_w = \frac{a_{\mathrm{Rw}}}{a}$",
+        ),
+        legend=(
+            (r"$a_{\mathrm{Rw}}$",
+             "product a * Rw read from the fitted intercept"),
+            (r"$m,\ n$",
+             "cementation and saturation exponents"),
+            (r"$\phi$",
+             "porosity, fraction"),
+            (r"$R_t,\ R_w$",
+             "true and formation water resistivity, ohm.m"),
+            (r"$S_w = 1$",
+             "the wet points of the fit; the intercept is read at porosity 1"),
+        ),
         equation=(
             "log10(Rt) = -m * log10(PHI) + log10(a * Rw) - n * log10(Sw)\n"
             "wet points (Sw = 1): slope = -m, intercept at PHI = 1 is log10(a * Rw)\n"
@@ -125,6 +201,17 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "rt_chain": MethodInfo(
         title="Rt correction chain",
+        equation_tex=(
+            r"$R_t \ \rightarrow\ \mathrm{step}_1 \ \rightarrow\ \mathrm{step}_2 \ \rightarrow\ \cdots \ \rightarrow\ R_{t,\mathrm{sw}}$",
+        ),
+        legend=(
+            (r"$R_t$",
+             "measured resistivity, never modified"),
+            (r"$\mathrm{step}_k$",
+             "a correction switched on for the zone, applied in a fixed order"),
+            (r"$R_{t,\mathrm{sw}}$",
+             "RT_SW, the resistivity every Sw model reads"),
+        ),
         equation="RT (measured, never modified) -> step 1 -> step 2 -> ... -> RT_SW",
         assumptions=(
             "Each correction step reads the output of the step before it, in a fixed order, per "
@@ -139,6 +226,29 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "thomas_stieber": MethodInfo(
         title="Thomas-Stieber laminar and dispersed shale",
+        equation_tex=(
+            r"$\phi_{\mathrm{sand}} = \phi_{\mathrm{max}} - V_{d,s}\,(1 - \phi_{\mathrm{sh}})$",
+            r"$\phi_t = (1 - V_{\mathrm{lam}})\,\phi_{\mathrm{sand}} + V_{\mathrm{lam}}\,\phi_{\mathrm{sh}}$",
+            r"$V_{\mathrm{sh}} = V_{\mathrm{lam}} + (1 - V_{\mathrm{lam}})\,V_{d,s}$",
+            r"$V_{\mathrm{lam}} = \frac{\phi_t - \phi_{\mathrm{max}} + V_{\mathrm{sh}}\,(1 - \phi_{\mathrm{sh}})}{1 - \phi_{\mathrm{max}}}$",
+            r"$V_{\mathrm{disp}} = V_{\mathrm{sh}} - V_{\mathrm{lam}}$",
+        ),
+        legend=(
+            (r"$\phi_{\mathrm{max}}$",
+             "porosity of the clean sand"),
+            (r"$\phi_{\mathrm{sh}}$",
+             "porosity of the shale"),
+            (r"$\phi_t$",
+             "total porosity (PHIT)"),
+            (r"$V_{\mathrm{lam}}$",
+             "laminar shale volume (VLAM)"),
+            (r"$V_{\mathrm{disp}}$",
+             "dispersed shale volume (VDISP)"),
+            (r"$V_{d,s}$",
+             "dispersed clay as a share of the sand laminae pore space"),
+            (r"$\phi_{\mathrm{sand}}$",
+             "porosity of the sand laminae (PHI_SAND)"),
+        ),
         equation=(
             "phi_sand = phi_max - Vd_s * (1 - phi_sh)\n"
             "PHIT     = (1 - Vlam) * phi_sand + Vlam * phi_sh\n"
@@ -163,6 +273,23 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "laminated": MethodInfo(
         title="Laminated-sand resistivity (parallel conductance)",
+        equation_tex=(
+            r"$\frac{1}{R_t} = \frac{1 - V_{\mathrm{lam}}}{R_{\mathrm{sand}}} + \frac{V_{\mathrm{lam}}}{R_{\mathrm{sh}}}$",
+            r"$s = \frac{V_{\mathrm{lam}}\,R_t}{R_{\mathrm{sh}}}$",
+            r"$R_{\mathrm{sand}} = \frac{(1 - V_{\mathrm{lam}})\,R_t}{1 - s}$",
+        ),
+        legend=(
+            (r"$R_t$",
+             "measured deep resistivity, ohm.m"),
+            (r"$R_{\mathrm{sand}}$",
+             "resistivity of the sand laminae, ohm.m (RT_SAND)"),
+            (r"$R_{\mathrm{sh}}$",
+             "resistivity of the shale laminae, ohm.m"),
+            (r"$V_{\mathrm{lam}}$",
+             "laminar shale volume, fraction"),
+            (r"$s$",
+             "share of the conductance carried by the shale; errors in Rt grow as 1 / (1 - s)"),
+        ),
         equation=(
             "1/Rt = (1 - Vlam) / Rsand + Vlam / Rsh\n"
             "s = Vlam * Rt / Rsh\n"
@@ -184,6 +311,24 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "pyrite": MethodInfo(
         title="Pyrite volume and parallel-conductance correction",
+        equation_tex=(
+            r"$\rho_b = \phi\,\rho_f + V_{\mathrm{ma}}\,\rho_{\mathrm{ma}} + V_{\mathrm{py}}\,\rho_{\mathrm{py}} + V_{\mathrm{sh}}\,\rho_{\mathrm{sh}}$",
+            r"$\mathrm{PEF}\,\rho_b = \phi\,U_f + V_{\mathrm{ma}}\,U_{\mathrm{ma}} + V_{\mathrm{py}}\,U_{\mathrm{py}} + V_{\mathrm{sh}}\,U_{\mathrm{sh}}$",
+            r"$1 = \phi + V_{\mathrm{ma}} + V_{\mathrm{py}} + V_{\mathrm{sh}}$",
+            r"$R_{t,\mathrm{pyr}} = \frac{1}{\frac{1}{R_t} - f\,\frac{V_{\mathrm{py}}}{R_{\mathrm{py}}}}$",
+        ),
+        legend=(
+            (r"$\rho,\ U$",
+             "bulk density (g/cm3) and volumetric photoelectric factor (PEF * density) of each end-point"),
+            (r"$V_{\mathrm{py}}$",
+             "pyrite volume, fraction (VPYR)"),
+            (r"$f$",
+             "connected fraction of the pyrite that conducts"),
+            (r"$R_{\mathrm{py}}$",
+             "pyrite resistivity, ohm.m"),
+            (r"$R_{t,\mathrm{pyr}}$",
+             "resistivity without the pyrite conductance, ohm.m (RT_PYR)"),
+        ),
         equation=(
             "RHOB     = phi*rho_f + Vma*rho_ma + Vpy*rho_py + Vsh*rho_sh\n"
             "PEF*RHOB = phi*U_f + Vma*U_ma + Vpy*U_py + Vsh*U_sh\n"
@@ -205,6 +350,20 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "qv": MethodInfo(
         title="Cation exchange per pore volume (Qv)",
+        equation_tex=(
+            r"$\mathrm{CEC}_{\mathrm{rock}} = V_{\mathrm{sh}}\,\mathrm{CEC}_{\mathrm{sh}}$",
+            r"$Q_v = \frac{\mathrm{CEC}_{\mathrm{rock}}}{100}\,\rho_g\,\frac{1 - \phi_t}{\phi_t}$",
+        ),
+        legend=(
+            (r"$\mathrm{CEC}_{\mathrm{rock}},\ \mathrm{CEC}_{\mathrm{sh}}$",
+             "cation exchange capacity of the rock and of the shale, meq/100 g"),
+            (r"$\rho_g$",
+             "grain density, g/cm3"),
+            (r"$\phi_t$",
+             "total porosity, fraction"),
+            (r"$Q_v$",
+             "cation exchange per pore volume, meq/mL (QV_EST)"),
+        ),
         equation=(
             "CEC_rock = Vsh * cec_shale          (meq/100 g)\n"
             "Qv = CEC_rock / 100 * rho_g * (1 - PHIT) / PHIT     (meq/mL)"
@@ -223,6 +382,26 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "variable_mn": MethodInfo(
         title="Variable m and n",
+        equation_tex=(
+            r"$m = c_0 + c_1\,\phi + c_2\,V_{\mathrm{sh}} + \frac{c_3}{\phi}$",
+            r"$n = d_0 + d_1\,V_{\mathrm{sh}}$",
+            r"$\mathrm{Shell:}\quad m = 1.87 + \frac{0.019}{\phi}$",
+            r"$\ln\frac{a\,R_w}{R_t} = m\,\ln\phi \quad (S_w = 1)$",
+        ),
+        legend=(
+            (r"$c_0 \ldots c_3$",
+             "coefficients of the m formula; c0 equal to the zone m gives a constant"),
+            (r"$d_0,\ d_1$",
+             "coefficients of the n formula; n is the zone constant when the formula is off"),
+            (r"$S_w = 1$",
+             "the fit uses the wet points of the Pickett plot"),
+            (r"$\phi$",
+             "porosity as a fraction"),
+            (r"$V_{\mathrm{sh}}$",
+             "shale volume, fraction"),
+            (r"$R_t,\ R_w$",
+             "resistivity the Sw models read and zone Rw, ohm.m"),
+        ),
         equation=(
             "m = c0 + c1 * PHI + c2 * Vsh + c3 / PHI        (PHI as a fraction)\n"
             "n = d0 + d1 * Vsh        or the constant n of the zone\n"
@@ -257,6 +436,27 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
     ),
     "invasion": MethodInfo(
         title="Radial invasion correction",
+        equation_tex=(
+            r"$J_i = \frac{1}{1 + \left(r_i / d_{\mathrm{inv}}\right)^{p}}$",
+            r"$\frac{1}{R_{a,i}} = \frac{J_i}{R_{\mathrm{xo}}} + \frac{1 - J_i}{R_t}$",
+            r"$R_{\mathrm{xo}} \geq R_{\mathrm{mf}}(T_{\mathrm{f}})$",
+        ),
+        legend=(
+            (r"$J_i$",
+             "share of tool i inside the invaded cylinder"),
+            (r"$r_i$",
+             "50 percent investigation diameter of the tool curve"),
+            (r"$d_{\mathrm{inv}}$",
+             "diameter of the invaded cylinder (di in the panel)"),
+            (r"$p$",
+             "exponent of the geometric function"),
+            (r"$R_{a,i}$",
+             "apparent resistivity read by tool i (deep, medium, shallow)"),
+            (r"$R_{\mathrm{xo}},\ R_t$",
+             "flushed-zone and true resistivity, ohm.m; Rxo is fixed if RXO is mapped"),
+            (r"$R_{\mathrm{mf}}(T_{\mathrm{f}})$",
+             "mud filtrate resistivity at formation temperature (Arps)"),
+        ),
         equation=(
             "J_i = 1 / (1 + (r_i / di)^p)\n"
             "    share of tool i inside the invaded cylinder\n"

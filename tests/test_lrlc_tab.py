@@ -89,12 +89,12 @@ def test_disable_keeps_settings_and_emits(window, qtbot):
     assert not tab.disable_check.isChecked()
 
 
-def test_four_panels(window, qtbot):
+def test_five_panels(window, qtbot):
     _well(window)
     _enable(window, qtbot)
     tab = window.lrlc_tab
     titles = [tab.panels.tabText(i) for i in range(tab.panels.count())]
-    assert titles == ["Screening", "Diagnosis", "Remediation", "Validation"]
+    assert titles == ["Screening", "Diagnosis", "Remediation", "Validation", "Methods"]
     tab.show_panel("remediation")
     assert tab.panels.currentIndex() == 2
     tab.show_panel("screening", "rt_cutoff")
