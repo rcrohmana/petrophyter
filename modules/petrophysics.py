@@ -320,6 +320,12 @@ class PetrophysicsCalculator:
             raise ValueError(f"{name} array must have one value per data row")
         return values
 
+    def _exponent(self, value, name: str):
+        """A scalar exponent unchanged; for an array a float array with one value per row."""
+        if np.ndim(value) == 0:
+            return value
+        return self._per_sample(value, name)
+
     def _rsh_values(self, rsh):
         """Rsh as a float, or as a float array aligned to the data rows.
 
@@ -1217,8 +1223,8 @@ class PetrophysicsCalculator:
             phie: Effective porosity series
             rw: Formation water resistivity (ohm.m)
             a: Tortuosity factor (Humble: 0.62)
-            m: Cementation exponent (Humble: 2.15)
-            n: Saturation exponent (2.0)
+            m: Cementation exponent (Humble: 2.15), scalar or one value per row
+            n: Saturation exponent (2.0), scalar or one value per row
 
         Returns:
             Water saturation series (0-1); NaN without RT or porosity, 1.0
@@ -1233,6 +1239,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
+        m = self._exponent(m, "m")
+        n = self._exponent(n, "n")
         self._validate_positive_parameter("rt", rt, allow_nan=True)
 
         if phie is None:
@@ -1280,7 +1288,7 @@ class PetrophysicsCalculator:
             vsh: Vshale series
             rw: Formation water resistivity (ohm.m), scalar or one value per row
             rsh: Shale resistivity (ohm.m), scalar or one value per row
-            a, m, n: Archie parameters
+            a, m, n: Archie parameters; m and n are scalars or one value per row
 
         Returns:
             Water saturation series (0-1); NaN without RT or porosity, 1.0
@@ -1297,6 +1305,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
+        m = self._exponent(m, "m")
+        n = self._exponent(n, "n")
         self._validate_positive_parameter("rt", rt, allow_nan=True)
 
         if phie is None:
@@ -1328,72 +1338,9 @@ class PetrophysicsCalculator:
         self.results["SW_INDO"] = sw
         return sw
 
-    def calculate_sw_simandoux(
-        self,
-        rt_curve: str = "RT",
-        phie: pd.Series = None,
-        vsh: pd.Series = None,
-        rw: float = 0.05,
-        rsh: float = 5.0,
-        a: float = 0.62,
-        m: float = 2.15,
-        n: float = 2.0,
-        *,
-        rt=None,
-    ) -> pd.Series:
-        """
-        Calculate water saturation using Simandoux equation.
-
-        1/Rt = (PHIE^m * Sw^n)/(a*Rw) + (Vsh * Sw)/Rsh
-
-        Solved as quadratic: A*Sw^2 + B*Sw - C = 0
-
-        Args:
-            rt_curve: Resistivity curve mnemonic
-            phie: Effective porosity series
-            vsh: Vshale series (clipped to 0-1)
-            rw: Formation water resistivity (ohm.m), scalar or one value per row
-            rsh: Shale resistivity (ohm.m), scalar or one value per row
-            a, m, n: Archie parameters
-
-        Returns:
-            Water saturation series (0-1); NaN without RT or porosity, 1.0
-            where the porosity is at or below 0.001
-        """
-        if rt_curve not in self.data.columns:
-            return self._make_series(np.nan)
-
-        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
-        self._validate_positive_parameter("rw", rw)
-        rw = self._rw_values(rw)
-        self._validate_positive_parameter("rsh", rsh)
-        rsh = self._rsh_values(rsh)
-        self._validate_positive_parameter("a", a)
-        self._validate_positive_parameter("m", m)
-        self._validate_positive_parameter("n", n)
-        self._validate_positive_parameter("rt", rt, allow_nan=True)
-
-        if phie is None:
-            phie = self.results.get("PHIE", self._make_series(0.15))
-        if vsh is None:
-            vsh = self.results.get("VSH", self._make_series(0.2))
-
-        phie_a = self._column(phie, "phie")
-        vsh_a = self._column(vsh, "vsh")
-        rt_a = self._column(rt, "rt")
-        solve, no_porosity = self._sw_valid_mask(rt_a, phie_a)
-
-        # Simandoux:  1/Rt = A*Sw^n + B*Sw   with
-        #   A = PHIE^m / (a*Rw)   (coefficient on Sw^n)
-        #   B = Vsh / Rsh         (coefficient on Sw), Vsh clipped to [0, 1]
-        #   C = 1 / Rt            (constant)
-        phie_safe = np.maximum(phie_a, SW_MIN_POROSITY)
-        rt_safe = np.maximum(rt_a, 0.001)
-
-        A = np.power(phie_safe, m) / (a * rw)
-        B = np.clip(vsh_a, 0.0, 1.0) / rsh
-        C = 1 / rt_safe
-
+    @staticmethod
+    def _simandoux_scalar_n(A, B, C, n, rt_safe):
+        """Root of A*Sw^n + B*Sw - C = 0 for one saturation exponent."""
         if abs(n - 2.0) < 1e-9:
             # n == 2: closed-form quadratic  A*Sw^2 + B*Sw - C = 0
             discriminant = B**2 + 4 * A * C
@@ -1422,6 +1369,113 @@ class PetrophysicsCalculator:
             solved = bracketed & ~failed
             raw[solved] = root[solved]
             raw[wet] = 1.0
+
+        return raw
+
+    @staticmethod
+    def _simandoux_array_n(A, B, C, n, rt_safe):
+        """Root of A*Sw^n + B*Sw - C = 0 with one saturation exponent per row."""
+        shape = rt_safe.shape
+        A_arr = np.broadcast_to(np.asarray(A, dtype=float), shape)
+        B_arr = np.broadcast_to(np.asarray(B, dtype=float), shape)
+        C_arr = np.broadcast_to(np.asarray(C, dtype=float), shape)
+        n_arr = np.broadcast_to(np.asarray(n, dtype=float), shape)
+
+        valid = ~(np.isnan(A_arr) | np.isnan(B_arr) | np.isnan(C_arr))
+        closed = valid & (np.abs(n_arr - 2.0) < 1e-9)
+        general = valid & ~closed
+
+        def simandoux_func(sw_val):
+            return A_arr * np.power(sw_val, n_arr) + B_arr * sw_val - C_arr
+
+        raw = np.full(shape, np.nan)
+        if closed.any():
+            with np.errstate(all="ignore"):
+                discriminant = np.maximum(B_arr[closed] ** 2 + 4 * A_arr[closed] * C_arr[closed], 0)
+                raw[closed] = (-B_arr[closed] + np.sqrt(discriminant)) / (2 * A_arr[closed])
+        if general.any():
+            with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+                # f(0) = -C <= 0. If f(1) <= 0 the root is >= 1 (fully wet).
+                wet = general & (simandoux_func(np.ones(shape)) <= 0)
+                bracketed = general & ~wet
+                root, failed = _vectorized_brentq(simandoux_func, 0.0, 1.0, bracketed)
+            solved = bracketed & ~failed
+            raw[solved] = root[solved]
+            raw[wet] = 1.0
+        return raw
+
+    def calculate_sw_simandoux(
+        self,
+        rt_curve: str = "RT",
+        phie: pd.Series = None,
+        vsh: pd.Series = None,
+        rw: float = 0.05,
+        rsh: float = 5.0,
+        a: float = 0.62,
+        m: float = 2.15,
+        n: float = 2.0,
+        *,
+        rt=None,
+    ) -> pd.Series:
+        """
+        Calculate water saturation using Simandoux equation.
+
+        1/Rt = (PHIE^m * Sw^n)/(a*Rw) + (Vsh * Sw)/Rsh
+
+        Solved as quadratic: A*Sw^2 + B*Sw - C = 0
+
+        Args:
+            rt_curve: Resistivity curve mnemonic
+            phie: Effective porosity series
+            vsh: Vshale series (clipped to 0-1)
+            rw: Formation water resistivity (ohm.m), scalar or one value per row
+            rsh: Shale resistivity (ohm.m), scalar or one value per row
+            a, m, n: Archie parameters; m and n are scalars or one value per row
+
+        Returns:
+            Water saturation series (0-1); NaN without RT or porosity, 1.0
+            where the porosity is at or below 0.001
+        """
+        if rt_curve not in self.data.columns:
+            return self._make_series(np.nan)
+
+        rt = self.data[rt_curve] if rt is None else self._rt_array(rt)
+        self._validate_positive_parameter("rw", rw)
+        rw = self._rw_values(rw)
+        self._validate_positive_parameter("rsh", rsh)
+        rsh = self._rsh_values(rsh)
+        self._validate_positive_parameter("a", a)
+        self._validate_positive_parameter("m", m)
+        self._validate_positive_parameter("n", n)
+        m = self._exponent(m, "m")
+        n = self._exponent(n, "n")
+        self._validate_positive_parameter("rt", rt, allow_nan=True)
+
+        if phie is None:
+            phie = self.results.get("PHIE", self._make_series(0.15))
+        if vsh is None:
+            vsh = self.results.get("VSH", self._make_series(0.2))
+
+        phie_a = self._column(phie, "phie")
+        vsh_a = self._column(vsh, "vsh")
+        rt_a = self._column(rt, "rt")
+        solve, no_porosity = self._sw_valid_mask(rt_a, phie_a)
+
+        # Simandoux:  1/Rt = A*Sw^n + B*Sw   with
+        #   A = PHIE^m / (a*Rw)   (coefficient on Sw^n)
+        #   B = Vsh / Rsh         (coefficient on Sw), Vsh clipped to [0, 1]
+        #   C = 1 / Rt            (constant)
+        phie_safe = np.maximum(phie_a, SW_MIN_POROSITY)
+        rt_safe = np.maximum(rt_a, 0.001)
+
+        A = np.power(phie_safe, m) / (a * rw)
+        B = np.clip(vsh_a, 0.0, 1.0) / rsh
+        C = 1 / rt_safe
+
+        if np.ndim(n) == 0:
+            raw = self._simandoux_scalar_n(A, B, C, n, rt_safe)
+        else:
+            raw = self._simandoux_array_n(A, B, C, n, rt_safe)
 
         sw = self._finish_sw("SW_SIMAN", raw, solve, no_porosity)
         self.results["SW_SIMAN"] = sw
@@ -1488,7 +1542,7 @@ class PetrophysicsCalculator:
             rt_curve: Resistivity curve mnemonic
             phit: Total porosity series
             rw: Formation water resistivity (ohm.m)
-            a, m, n: Archie parameters
+            a, m, n: Archie parameters; m and n are scalars or one value per row
             qv: Qv parameter (meq/ml), a scalar or one value per row
             B: B parameter (mho cm^2/meq)
             phie: Effective porosity series for the effective Sw
@@ -1505,6 +1559,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
+        m = self._exponent(m, "m")
+        n = self._exponent(n, "n")
         self._validate_positive_parameter("rt", rt, allow_nan=True)
         self._validate_nonnegative_parameter("qv", qv)  # Qv 0 is a clean sand: Waxman-Smits = Archie
         self._validate_positive_parameter("B", B, allow_nan=False)
@@ -1533,7 +1589,9 @@ class PetrophysicsCalculator:
 
         if solve.any():
             with np.errstate(all="ignore"):
-                f_star = a / np.power(phit_arr[solve], m)
+                m_v = m[solve] if np.ndim(m) else m
+                n_v = n[solve] if np.ndim(n) else n
+                f_star = a / np.power(phit_arr[solve], m_v)
                 ct = 1.0 / rt_arr[solve]
                 cw_v = cw[solve] if np.ndim(cw) else cw
                 b_v = B[solve] if np.ndim(B) else B
@@ -1544,8 +1602,8 @@ class PetrophysicsCalculator:
                 def ws_func(sw):
                     # Guard against small Sw
                     sw = np.maximum(sw, 1e-6)
-                    term1 = cw_v * np.power(sw, n)
-                    term2 = (b_v * qv_v) * np.power(sw, n - 1)
+                    term1 = cw_v * np.power(sw, n_v)
+                    term2 = (b_v * qv_v) * np.power(sw, n_v - 1)
                     return (1.0 / f_star) * (term1 + term2) - ct
 
                 f_lo = ws_func(np.full(f_star.shape, 0.001))
@@ -1611,7 +1669,7 @@ class PetrophysicsCalculator:
             rt_curve: Resistivity curve mnemonic
             phit: Total porosity series
             rw: Free water resistivity
-            a, m, n: Archie parameters
+            a, m, n: Archie parameters; m and n are scalars or one value per row
             swb: Bound water saturation fraction
             rwb: Bound water resistivity
             phie: Effective porosity series for the effective Sw
@@ -1630,6 +1688,8 @@ class PetrophysicsCalculator:
         self._validate_positive_parameter("a", a)
         self._validate_positive_parameter("m", m)
         self._validate_positive_parameter("n", n)
+        m = self._exponent(m, "m")
+        n = self._exponent(n, "n")
         self._validate_positive_parameter("rt", rt, allow_nan=True)
         if not np.isfinite(swb) or not 0 <= swb < 1:
             raise ValueError("swb must be finite and in the range [0, 1)")
@@ -1655,7 +1715,9 @@ class PetrophysicsCalculator:
         if solve.any():
             with np.errstate(all="ignore"):
                 # Formation factor based on total porosity
-                f_t = a / np.power(phi_arr[solve], m)
+                m_v = m[solve] if np.ndim(m) else m
+                n_v = n[solve] if np.ndim(n) else n
+                f_t = a / np.power(phi_arr[solve], m_v)
                 ct_measured = 1.0 / rt_arr[solve]
                 cw_v = cw[solve] if np.ndim(cw) else cw
                 cwb_v = cwb[solve] if np.ndim(cwb) else cwb
@@ -1666,7 +1728,7 @@ class PetrophysicsCalculator:
                     swt = np.maximum(swt, swb + 1e-4)  # Ensure slightly above Swb
                     # Ct = (Swt^n / Ft) * (Cw + (Cwb - Cw) * Swb / Swt)
                     term = cw_v + (cwb_v - cw_v) * (swb / swt)
-                    return (np.power(swt, n) / f_t) * term - ct_measured
+                    return (np.power(swt, n_v) / f_t) * term - ct_measured
 
                 # Root search in [Swb, 1.0]
                 lower_bound = min(max(swb + 0.001, 0.001), 0.99)

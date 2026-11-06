@@ -1074,7 +1074,7 @@ def _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data):
 
 def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
                 rsh_auto=False, only_primary=False, rt_values=None, qv_values=None,
-                basis=None):
+                basis=None, m_values=None, n_values=None):
     """Effective Rw / Rsh / WS B, PHIE / PHIT, the Sw methods and the ``SW`` column.
 
     Returns ``(sw, phie, phit, sw_fallback)``. ``sw`` is the ``SW`` Series (also stored
@@ -1084,6 +1084,8 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     ends up as ``SW`` is computed; ``SW`` is the same as the full path's.
 
     ``qv_values`` (an array aligned to the rows) replaces ``p["ws_qv"]`` for Waxman-Smits only.
+    ``m_values`` / ``n_values`` (arrays aligned to the rows) replace the scalar cementation and
+    saturation exponents in every Sw method.
     ``basis`` (a :class:`SandBasis`) replaces the porosity and shale volume the Sw models read;
     the returned ``phie`` / ``phit`` stay the bulk ones.
     """
@@ -1092,6 +1094,10 @@ def _primary_sw(calc, data, curve_mapping, p, vsh, rw, rsh, tctx, warnings,
     rt_curve = curve_mapping.get("RT", "RT")
     has_rt = _has(rt_curve, data)
     a, m, n = p["a"], p["m"], p["n"]
+    if m_values is not None:
+        m = np.asarray(m_values, dtype=float)
+    if n_values is not None:
+        n = np.asarray(n_values, dtype=float)
     rw_eff, rsh_eff, rwb_eff, ws_b = _sw_effective_inputs(p, rw, rsh, rsh_auto, tctx, data)
 
     phie = calc.results.get("PHIE")
