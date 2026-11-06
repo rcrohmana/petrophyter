@@ -323,6 +323,23 @@ def resolve_tool(prm: dict) -> Tuple[Tuple[float, float, float], float, bool, bo
     return vals, p, generic, invalid
 
 
+def _solver_settings(block) -> dict:
+    """``rt_bounds``, ``chunk`` and ``max_iter`` from the project block (defaults when absent or bad)."""
+    out = {"rt_bounds": DEFAULT_RT_BOUNDS, "chunk": DEFAULT_CHUNK, "max_iter": DEFAULT_MAX_ITER}
+    if not isinstance(block, dict):
+        return out
+    bounds = block.get("rt_bounds")
+    if (isinstance(bounds, (list, tuple)) and len(bounds) == 2
+            and all(np.isfinite(_num(b, np.nan)) for b in bounds)
+            and 0 < float(bounds[0]) < float(bounds[1])):
+        out["rt_bounds"] = (float(bounds[0]), float(bounds[1]))
+    for key in ("chunk", "max_iter"):
+        val = _num(block.get(key), np.nan)
+        if np.isfinite(val) and val >= 1:
+            out[key] = int(val)
+    return out
+
+
 def step_invasion(rt: np.ndarray, ctx: ChainContext, prm: dict) -> StepResult:
     n = len(rt)
     r50, p, generic, bad_setting = resolve_tool(prm)
@@ -341,13 +358,14 @@ def step_invasion(rt: np.ndarray, ctx: ChainContext, prm: dict) -> StepResult:
                                        np.asarray(t_fm, dtype=float))
     di_min = _num(prm.get("inv_di_min"), 8.0)
     di_max = _num(prm.get("inv_di_max"), 120.0)
+    solver = _solver_settings(ctx.flags.get("invasion") if ctx.flags else None)
     res = fit_invasion(
         rt, ctx.rm, ctx.rs, ctx.rxo, r50=r50, p=p,
         rxo_mode=prm.get("inv_rxo_mode") or "fixed",
         di_min=di_min, di_max=di_max,
         min_contrast=_num(prm.get("inv_min_contrast"), 1.15),
         max_rms=_num(prm.get("inv_max_rms"), 0.15),
-        rmf_t=rmf_t)
+        rmf_t=rmf_t, **solver)
     out = np.where(res.valid, res.rt, np.nan)
     counts = dict(res.counts)
     counts.update(extra_counts)

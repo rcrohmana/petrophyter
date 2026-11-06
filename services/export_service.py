@@ -409,12 +409,19 @@ def provenance_block(ds, depth_range=None) -> dict:
     }
     summary = getattr(ds, "summary", None)
     if isinstance(summary, dict) and isinstance(summary.get("lrlc"), dict):
-        from modules.lrlc.provenance import lrlc_inputs_text, rt_corrections_text
+        from modules.lrlc.provenance import (
+            invasion_tool_text, lrlc_inputs_text, rt_corrections_text, variable_mn_text)
 
         block["Rt corrections"] = rt_corrections_text(summary["lrlc"])
         inputs = lrlc_inputs_text(summary["lrlc"])
         if inputs:
             block["LRLC inputs"] = inputs
+        mn_text = variable_mn_text(summary["lrlc"])
+        if mn_text:
+            block["Variable m/n"] = mn_text
+        inv_text = invasion_tool_text(summary["lrlc"])
+        if inv_text:
+            block["Invasion tool"] = inv_text
     return block
 
 
@@ -442,6 +449,10 @@ def _las_other_lines(block: dict) -> list:
         lines.append(f"Rt corrections {block['Rt corrections']}")
     if "LRLC inputs" in block:
         lines.append(f"LRLC inputs {block['LRLC inputs']}")
+    if "Variable m/n" in block:
+        lines.append(f"Variable m/n {block['Variable m/n']}")
+    if "Invasion tool" in block:
+        lines.append(f"Invasion tool {block['Invasion tool']}")
     return lines
 
 

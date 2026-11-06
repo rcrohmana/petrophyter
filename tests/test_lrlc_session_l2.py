@@ -15,7 +15,7 @@ from tests.test_session_v2 import three_wells, _save, _restore  # noqa: F401
 
 
 def test_session_version_constant():
-    assert SessionService.SESSION_VERSION == "2.6"
+    assert SessionService.SESSION_VERSION == "2.7"
 
 
 def test_rung_guard_default_is_not_configured(three_wells):  # noqa: F811

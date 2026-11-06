@@ -579,6 +579,36 @@ def lrlc_l2_configured(project) -> bool:
     return False
 
 
+def _level_uses_l3(level) -> bool:
+    if level.get("mn_mode") == "curve":
+        return True
+    if any(key in level for key in L3_PARAM_KEYS if key != "mn_mode"):
+        return True
+    return "invasion" in (level.get("rt_steps") or [])
+
+
+def lrlc_l3_configured(project) -> bool:
+    """True when the project uses a setting of session format 2.7.
+
+    That is a variable m/n or invasion block differing from its default, a 2.7 ladder key
+    (a zone in curve mode, an invasion tool or Rmf value) or the ``invasion`` step at any
+    level.
+    """
+    lrlc = getattr(project, "lrlc", None) or {}
+    defaults = lrlc_defaults()
+    for key in L3_BLOCKS:
+        if key in lrlc and lrlc[key] != defaults[key]:
+            return True
+    if any(_level_uses_l3(level) for level in _levels_of(lrlc.get("params"))):
+        return True
+    try:
+        wells = list(project)
+    except TypeError:
+        return False
+    return any(_level_uses_l3(level)
+               for ds in wells for level in _levels_of(getattr(ds, "lrlc", None)))
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------

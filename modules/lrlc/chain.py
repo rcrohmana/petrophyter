@@ -280,6 +280,8 @@ def apply_rt_chain(rt, ctx_arrays, zone_keys, lrlc, force_rt_sw, guard=None,
     if zone_arr.shape != (n,):
         raise ValueError("zone_keys must have one entry per sample")
     arrays = _normalise(ctx_arrays, rt)
+    if isinstance(lrlc, dict) and isinstance(lrlc.get("invasion"), dict):
+        arrays["flags"]["invasion"] = dict(lrlc["invasion"])   # project-level solver settings
 
     rt_sw = rt.copy()
     any_ran = False

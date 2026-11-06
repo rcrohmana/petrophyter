@@ -17,7 +17,8 @@ from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
 from modules.shf_config import merge_shf, shf_in_use
 from modules.lrlc.config import (
-    clean_curves, clean_well_lrlc, lrlc_in_use, lrlc_l2_configured, merge_lrlc)
+    clean_curves, clean_well_lrlc, lrlc_in_use, lrlc_l2_configured, lrlc_l3_configured,
+    merge_lrlc)
 from modules.uncertainty import UncertaintyConfig, config_from_dict, config_to_dict
 from version import APP_VERSION, version_tuple
 
@@ -194,6 +195,7 @@ def _clean_contacts(raw) -> Dict:
 def session_version_for(project_or_model) -> str:
     """The highest version among the features the project uses.
 
+    "2.7" when LRLC uses variable m/n curves or the radial invasion step;
     "2.6" when LRLC uses a laminated-sand, mineral, Qv, guard, diagnosis or shoulder-bed setting;
     "2.5" when LRLC is on or configured; "2.4" when it holds saturation-height content (Pc data, fits, contacts or SHF on); "2.3" when
     the uncertainty setup is configured (a distribution enabled, or any setting changed); "2.2"
@@ -205,7 +207,7 @@ def session_version_for(project_or_model) -> str:
     project = getattr(project_or_model, "project", project_or_model)
     rock = (bool(getattr(project_or_model, "rock_typing_enabled", False))
             or bool(getattr(project, "rock_types", None)))
-    ladder = ((lrlc_l2_configured(project), "2.6"), (lrlc_in_use(project), "2.5"), (shf_in_use(project), "2.4"), (_uncertainty_configured(project), "2.3"),
+    ladder = ((lrlc_l3_configured(project), "2.7"), (lrlc_l2_configured(project), "2.6"), (lrlc_in_use(project), "2.5"), (shf_in_use(project), "2.4"), (_uncertainty_configured(project), "2.3"),
               (rock, "2.2"))
     return max((v for on, v in ladder if on), key=version_tuple, default="2.1")
 
@@ -645,7 +647,7 @@ class SessionService(QObject):
     error = pyqtSignal(str)
     
     # Session file version for compatibility
-    SESSION_VERSION = "2.6"
+    SESSION_VERSION = "2.7"
     SESSION_FIELDS = tuple(_SESSION_DEFAULTS)
     
     def __init__(self, parent=None):

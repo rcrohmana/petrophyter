@@ -22,12 +22,17 @@ _FIXED = {
     "QV_EST": "ESTIMATED QV FROM VSH AND CEC",
     "SW_BASE": "SW FROM MEASURED RT, NO LRLC CORRECTION",
     "NET_PAY_BASE_FLAG": "NET PAY FLAG FROM SW_BASE",
+    "M_VAR": "MODELLED CEMENTATION EXPONENT (variable m, zone formula)",
+    "N_VAR": "MODELLED SATURATION EXPONENT (variable n)",
+    "RXO_INV": "MODELLED FLUSHED-ZONE RESISTIVITY (step profile)",
+    "DI_INV": "MODELLED INVASION DIAMETER (step profile)",
 }
 
 # Step columns whose description names the curve they were computed from.
 _STEP_TEXT = {
     "RT_SAND": "MODELLED LAMINATED-SAND RT (HAGIWARA)",
     "RT_PYR": "MODELLED PYRITE-CORRECTED RT",
+    "RT_INV": "MODELLED INVASION-CORRECTED RT (step profile)",
 }
 
 OTHER_ZONE = "other"
@@ -164,3 +169,53 @@ def lrlc_inputs_text(summary_lrlc: Optional[dict]) -> str:
     if parts and isinstance(guard, dict):
         parts.append("guard " + ("on" if guard.get("enabled") else "off"))
     return "; ".join(parts)
+
+
+def variable_mn_text(summary_lrlc: Optional[dict]) -> str:
+    """The "Variable m/n" provenance value; ``""`` unless a zone ran in curve mode."""
+    block = summary_lrlc.get("variable_mn") if isinstance(summary_lrlc, dict) else None
+    rows = block.get("zones") if isinstance(block, dict) else None
+    if not rows:
+        return ""
+    groups: Dict[str, List[str]] = {}
+    clipped = evaluated = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        m_text = ("M_VAR = Shell formula" if row.get("m_model") == "shell"
+                  else "M_VAR = f(PHIE, VSH) formula")
+        n_text = ("N_VAR = f(VSH) formula" if row.get("n_model") == "vsh"
+                  else "N_VAR = constant")
+        groups.setdefault(f"{m_text}, {n_text}", []).append(str(row.get("zone")))
+        try:
+            clipped += int(row.get("n_clipped_m") or 0) + int(row.get("n_clipped_n") or 0)
+            evaluated += 2 * int(row.get("n_eval") or 0)
+        except (TypeError, ValueError):
+            pass
+    if not groups:
+        return ""
+    text = "; ".join(f"{label} (zones: {', '.join(zones)})" for label, zones in groups.items())
+    if evaluated:
+        text += f"; clipped {100.0 * clipped / evaluated:.1f} %"
+    return text
+
+
+def invasion_tool_text(summary_lrlc: Optional[dict]) -> str:
+    """The "Invasion tool" provenance value; ``""`` unless the invasion step ran."""
+    block = summary_lrlc.get("invasion") if isinstance(summary_lrlc, dict) else None
+    rows = block.get("zones") if isinstance(block, dict) else None
+    if not rows:
+        return ""
+    parts = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        tool = str(row.get("tool") or "custom")
+        note = f" ({row['badge'].split(',')[0]}, unconfirmed)" if row.get("generic") and row.get("badge") else ""
+        parts.append(f"{tool}{note}")
+    labels = list(dict.fromkeys(parts))
+    zones = [str(r.get("zone")) for r in rows if isinstance(r, dict)]
+    text = "; ".join(labels)
+    if len(zones) > 1 or (zones and zones[0] != "WELL"):
+        text += f" (zones: {', '.join(zones)})"
+    return text
