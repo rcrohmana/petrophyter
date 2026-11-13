@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_release_version_metadata():
     assert APP_VERSION == "1.13.0"
-    assert APP_BUILD == "20261106"
-    assert APP_VERSION_DISPLAY == "1.13.0 (Build 20261106)"
+    assert APP_BUILD == "20261113"
+    assert APP_VERSION_DISPLAY == "1.13.0 (Build 20261113)"
     assert re.fullmatch(r"\d+\.\d+\.\d+", APP_VERSION)
     assert re.fullmatch(r"\d{8}", APP_BUILD)
 

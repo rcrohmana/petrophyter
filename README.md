@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)
 ![PyQt6](https://img.shields.io/badge/PyQt6-6.5+-green.svg)
 ![License](https://img.shields.io/badge/License-Apache--2.0%20OR%20GPL--3.0-blue.svg)
-![Version](https://img.shields.io/badge/Version-1.13.0_(Build_20261106)-orange.svg)
+![Version](https://img.shields.io/badge/Version-1.13.0_(Build_20261113)-orange.svg)
 
 ![Petrophyter main window with the interactive log display](docs/images/petrophyter-main-window.png)
 

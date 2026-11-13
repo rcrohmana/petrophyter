@@ -2,14 +2,15 @@
 
 # Version History
 
-## v1.13.0 (Build 20261106) — Current Release
+## v1.13.0 (Build 20261113) — Current Release
 
 See the [release notes](releases/v1.13.0.md) for details. **Results do not change** unless you switch
 Variable m/n to curve mode or add the invasion step, and sessions that use neither are saved as before.
 
 - **Variable m and n**: `M_VAR` and `N_VAR` per sample from a formula in porosity and Vsh, the Shell formula
   for carbonates, or n from Vsh, read by every Sw model and by the Rt cutoff; values are clipped and counted.
-- **Variable-m fit** to the Pickett wet points (robust, with standard errors); a proposal until applied.
+- **Variable-m fit** to the Pickett wet points (robust, with standard errors); **Use fit** fills the form,
+  written on Apply.
 - **Radial invasion correction**: the `invasion` Rt step fits a step profile to deep, medium and shallow
   resistivity and writes `RT_INV`, `RXO_INV` and `DI_INV`, with generic tool presets, non-unique and bound
   detection, and Rmf at formation temperature (Arps).
@@ -18,7 +19,9 @@ Variable m/n to curve mode or add the invasion step, and sessions that use neith
 - The Rt cutoff now uses exactly the per-sample inputs of the primary Sw (sand basis, estimated Qv,
   variable exponents).
 - **Methods panel** in the LRLC Workbench with typeset equations, symbol tables, assumptions, limits and
-  references; the Method & Reference boxes are now compact strips linking to it. The Remediation panel has one inner tab per correction.
+  references; the Method & Reference boxes are now compact strips linking to it, with a way back.
+- **Remediation panel** as a list of corrections with one settings page each: the step switch on its page,
+  one Apply for every change, one zone selector, tuning values under Advanced, one-line method strips.
 - **Workbench Remediation sections** Variable m/n and Radial invasion with plots; **Specialized** menu
   entries; `RT_INV` and `RXO_INV` on the resistivity track.
 - **Monte Carlo** varies m and n as whole-curve offsets in curve mode; the invasion step is held fixed.
