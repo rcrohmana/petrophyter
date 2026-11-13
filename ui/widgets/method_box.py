@@ -1,7 +1,9 @@
 """Compact Method & Reference strip shown under the LRLC tools.
 
 Title, rendered equations, one line of short citations and a link that opens the full
-write-up (assumptions, limits, references) in the Methods panel of the LRLC Workbench.
+write-up (assumptions, limits, references) in the Methods panel of the LRLC Workbench. The
+compact form (``compact=True``, used on the Remediation pages) is one line: the method title,
+the short citations and the link, with no equations.
 """
 
 import html
@@ -11,6 +13,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QGuiApplication
 from PyQt6.QtWidgets import (
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
@@ -49,16 +52,20 @@ def method_key(info: MethodInfo) -> Optional[str]:
 
 class MethodReferenceBox(QGroupBox):
     """Compact strip. Its link emits ``method_requested(key)`` and asks the enclosing LRLC tab
-    (the first ancestor with ``show_panel``) to open the Methods panel at that key."""
+    (the first ancestor with ``open_method``, else ``show_panel``) to open the Methods panel at
+    that key. ``compact=True`` gives the one-line form without a title or equations."""
 
     method_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, compact: bool = False):
         # "&&": a single "&" in a group-box title is a mnemonic marker and is not drawn.
-        super().__init__(TITLE.replace("&", "&&"), parent)
+        super().__init__("" if compact else TITLE.replace("&", "&&"), parent)
         self._key: Optional[str] = None
+        self.compact = compact
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
+        if compact:
+            layout.setContentsMargins(0, 8, 0, 0)
 
         self.title_label = QLabel()
         set_status(self.title_label, "muted")
@@ -81,6 +88,17 @@ class MethodReferenceBox(QGroupBox):
         self.link.setCursor(Qt.CursorShape.PointingHandCursor)
         self.link.clicked.connect(self.open_methods)
 
+        if compact:
+            self.title_label.setWordWrap(False)
+            self.equation_view.hide()
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            row.addWidget(self.title_label)
+            row.addWidget(self.citations, 1)
+            row.addWidget(self.link)
+            layout.addLayout(row)
+            layout.addWidget(self.equation)
+            return
         layout.addWidget(self.title_label)
         layout.addSpacing(6)
         layout.addWidget(self.equation_view)
@@ -91,13 +109,13 @@ class MethodReferenceBox(QGroupBox):
 
     def set_method(self, info: MethodInfo) -> None:
         self._key = method_key(info)
-        self.title_label.setText(info.title)
+        self.title_label.setText(f"Method: {info.title}" if self.compact else info.title)
         plain = info.equation
         if info.equation_after:
             plain += "\n" + info.equation_after
         self.equation.setPlainText(plain)
         self.equation_view.set_lines(info.equation_tex)
-        self.equation_view.setVisible(bool(info.equation_tex))
+        self.equation_view.setVisible(bool(info.equation_tex) and not self.compact)
         self.citations.setText(
             f"References: {html.escape(citation_text(info.refs))}" if info.refs else ""
         )
@@ -118,6 +136,9 @@ class MethodReferenceBox(QGroupBox):
         self.method_requested.emit(self._key)
         widget = self.parentWidget()
         while widget is not None:
+            if hasattr(widget, "open_method"):
+                widget.open_method(self._key)
+                return
             if hasattr(widget, "show_panel"):
                 widget.show_panel("methods", self._key)
                 return

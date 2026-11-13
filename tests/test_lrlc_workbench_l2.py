@@ -148,10 +148,11 @@ def test_show_panel_sections(window, qtbot, run_result):
     window.show()
     window.resize(1400, 900)
     window.show_lrlc("remediation", "pyrite")
-    tabs = tab.remediation_form.section_tabs
-    assert tabs.tabText(tabs.currentIndex()) == "Pyrite"
+    form = tab.remediation_form
+    assert form.current_section() == "pyrite"
+    assert form.section_stack.currentWidget().widget() is form.scroll_target("pyrite")
     window.show_lrlc("remediation", "laminated")
-    assert tabs.tabText(tabs.currentIndex()) == "Laminated sand"
+    assert form.current_section() == "laminated"
     window.show_lrlc("diagnosis", zone="UPPER")
     assert tab.panels.currentIndex() == 1
     assert tab.zones_panel.selected_row_zone() == "UPPER"
@@ -206,24 +207,29 @@ def test_ts_preview_uses_the_proposal_when_nothing_is_applied(window, qtbot, run
 def test_rt_source_lines_and_marked_rt(window, qtbot, run_result):
     ds = make_well(window, run_result)
     tab = enable(window, qtbot)
-    assert tab.sw_reads_label.text().startswith("Sw reads: RT")
-    assert tab.chain_note.text() == "Rsh and Rw estimators stay on the measured RT."
+    form = tab.remediation_form
+    assert form.sw_reads_label.text().startswith("Sw reads: RT")
+    assert form.chain_note.text() == "Rsh and Rw estimators stay on the measured RT."
     LrlcService.set_param(window.model, "well", "UPPER", "rt_steps", ["laminated", "pyrite"], ds)
     tab.select_zone("UPPER")
-    assert tab.sw_reads_label.text().startswith("Sw reads: RT_PYR <- RT_SAND <- RT")
-    assert not tab.sbc_check.isChecked()
+    assert form.sw_reads_label.text().startswith("Sw reads: RT_PYR <- RT_SAND <- RT")
+    assert not form.sbc_check.isChecked()
+    form.sbc_check.setChecked(True)                            # pending until Apply
+    assert "RT_SBC" not in ds.lrlc_curves
+    assert "RT shoulder-bed mark" in form.pending_label.text()
     with qtbot.waitSignal(tab.stale_requested, timeout=500) as blocker:
-        tab.sbc_check.setChecked(True)
+        form.apply_button.click()
     assert blocker.args == [["WELL:A"]]
     assert ds.lrlc_curves["RT_SBC"] == "RT"
     ds.curve_mapping["RT"] = "RS"                              # remapped: the mark is ignored
     tab.update_display()
-    assert not tab.sbc_check.isChecked() and "no longer the mapped RT" in tab.sbc_note.text()
+    assert not form.sbc_check.isChecked() and "no longer the mapped RT" in form.sbc_note.text()
+    ds.curve_mapping["RT"] = "RT"
+    tab.update_display()
+    assert form.sbc_check.isChecked()
+    form.sbc_check.setChecked(False)
     with qtbot.waitSignal(tab.stale_requested, timeout=500):
-        tab.sbc_check.setEnabled(True)
-        ds.curve_mapping["RT"] = "RT"
-        tab.update_display()
-        tab.sbc_check.setChecked(False)
+        form.apply_button.click()
     assert "RT_SBC" not in ds.lrlc_curves
 
 
@@ -231,29 +237,33 @@ def test_guard_status_texts_and_toggle(window, qtbot, run_result):
     ds = make_well(window, run_result)
     tab = enable(window, qtbot)
     tab.select_zone("UPPER")
-    assert "The guard is on." in tab.guard_status.text()
-    assert "Zone UPPER: laminated (laminar share 0.98)." in tab.guard_status.text()
+    form = tab.remediation_form
+    assert "The guard is on." in form.guard_status.text()
+    assert "Zone UPPER: laminated (laminar share 0.98)." in form.guard_status.text()
     guard = ds.summary["lrlc"]["guard"]["zones"][0]
     guard["blocked_steps"] = ["decon"]
     guard["sbc_rt"] = True
     tab.update_display()
-    text = tab.guard_status.text()
+    text = form.guard_status.text()
     assert "decon not applied in Zone UPPER: laminated (guard); use the laminated-sand " \
            "correction." in text
     assert "RT is marked shoulder-bed corrected in Zone UPPER, which is laminated" in text
     seen = []
     tab.guard_toggled.connect(seen.append)
+    form.guard_check.setChecked(False)                         # pending until Apply
+    assert window.model.project.lrlc["guard"]["enabled"] is not False and seen == []
+    assert "The guard is off" in form.guard_status.text()
     with qtbot.waitSignal(tab.stale_requested, timeout=500) as blocker:
-        tab.guard_check.setChecked(False)
+        form.apply_button.click()
     assert blocker.args == [["WELL:A"]] and seen == [False]
     assert window.model.project.lrlc["guard"]["enabled"] is False
-    assert "The guard is off" in tab.guard_status.text()
+    assert "The guard is off" in form.guard_status.text()
 
 
 def test_guard_status_before_a_run(window, qtbot, run_result):
     make_well(window, run_result, with_run=False)
     tab = enable(window, qtbot)
-    assert "Thomas-Stieber" in tab.guard_status.text()
+    assert "Thomas-Stieber" in tab.remediation_form.guard_status.text()
 
 
 # ---- remediation: form --------------------------------------------------------------------
@@ -337,8 +347,9 @@ def test_prepare_remedy_fills_the_form_without_writing(window, qtbot, run_result
     buttons[0].click()
     form = tab.remediation_form
     assert tab.panels.currentIndex() == 2
-    assert form.zone == "UPPER" and form._steps == ["laminated"]
-    assert "rt_steps" in form._dirty and "sw_basis" in form._dirty
+    assert form.zone == "UPPER" and form._step_toggles == {"laminated": True}
+    assert form.step_checks["laminated"].isChecked() and "sw_basis" in form._dirty
+    assert form.scope_combo.currentData() == "zone"          # a zone in the header writes the zone
     assert form.controls["sw_basis"].currentData() == "sand"
     assert form.ts_check.isChecked() and "thomas_stieber" not in ds.lrlc_curves
     assert not ds.lrlc
@@ -346,7 +357,8 @@ def test_prepare_remedy_fills_the_form_without_writing(window, qtbot, run_result
     assert "Thomas-Stieber on" in form.pending_label.text()
     with qtbot.waitSignal(tab.stale_requested, timeout=500):
         form.apply_button.click()
-    assert ds.lrlc["default"]["rt_steps"] == ["laminated"]
+    assert ds.lrlc["zones"]["UPPER"]["rt_steps"] == ["laminated"]
+    assert "rt_steps" not in (ds.lrlc.get("default") or {})
     assert resolve_lrlc({}, ds.lrlc, "UPPER")["sw_basis"] == "sand"
 
 
@@ -389,9 +401,12 @@ def test_laminated_hint_and_method_boxes(window, qtbot, run_result):
     tab.select_zone("LOWER")
     assert "Zone LOWER is laminated by Thomas-Stieber; consider the laminated-sand Rt" in \
         form.hint_label.text()
+    assert tab.ts_panel.method_box.title().replace("&&", "&") == "Method & Reference"
     for box in (form.laminated_box, form.pyrite_box, form.qv_box, tab.ts_panel.method_box):
-        assert box.title().replace("&&", "&") == "Method & Reference"
         assert "References:" in box.citations.text()
+    for box in (form.laminated_box, form.pyrite_box, form.qv_box):   # one-line strips
+        assert box.compact and box.title() == "" and box.equation_view.isHidden()
+        assert box.title_label.text().startswith("Method: ")
     assert "Hagiwara" in form.laminated_box.citations.text()
 
 

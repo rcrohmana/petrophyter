@@ -125,13 +125,13 @@ def test_diagnosis_sub_tabs_and_swap(window, qtbot):
 def test_remediation_note_with_empty_registry(window, qtbot, monkeypatch):
     monkeypatch.setattr(chain, "STEPS", {})
     _enable(window, qtbot)
-    tab = window.lrlc_tab
-    assert tab.remediation_note.text() == (
+    form = window.lrlc_tab.remediation_form
+    assert form.remediation_note.text() == (
         "No Rt correction steps are available in this version. Sw reads the measured Rt.")
-    assert not tab.remediation_note.isHidden()
-    assert tab.chain_note.text() == "Rsh and Rw estimators stay on the measured RT."
-    assert tab.rt_source_table.columnCount() == 2
-    assert tab.rt_source_table.item(0, 1).text() == "RT"
+    assert not form.remediation_note.isHidden()
+    assert form.chain_note.text() == "Rsh and Rw estimators stay on the measured RT."
+    assert form.chain_table.columnCount() == 2
+    assert form.chain_table.item(0, 1).text() == "RT"
 
 
 def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_test_steps,
@@ -143,17 +143,26 @@ def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_t
     _enable(window, qtbot)
     tab = window.lrlc_tab
     tab.update_display()
-    assert tab.remediation_note.isHidden()
-    assert tab.rt_source_table.columnCount() == 2 + 5
-    box = tab.rt_source_table.cellWidget(0, 2 + 1)         # row 0 = default, step test_scale
+    form = tab.remediation_form
+    assert form.remediation_note.isHidden()
+    assert form.chain_table.columnCount() == 2 + 5
+    # A registered step without a page of its own is switched on the Overview, then applied.
+    assert not form.other_steps_heading.isHidden()
+    box = form._other_step_checks["test_scale"]
+    box.setChecked(True)
+    assert "rt_steps" not in (window.model.active_well.lrlc.get("default") or {})
+    assert "Sw reads after Apply: RT_X2 <- RT" in form.sw_reads_label.text()
     with qtbot.waitSignal(tab.stale_requested, timeout=500) as blocker:
-        box.setChecked(True)
+        form.apply_button.click()
     assert blocker.args == [["WELL:A"]]                     # well level: the active well only
     assert window.model.active_well.lrlc["default"]["rt_steps"] == ["test_scale"]
-    assert tab.rt_source_table.item(0, 1).text() == "RT_X2 <- RT"
-    tab.level_combo.setCurrentIndex(tab.level_combo.findData("project"))
+    assert form.chain_table.item(0, 1).text() == "RT_X2 <- RT"
+    assert form.chain_table.item(0, 2 + 1).text() == "on"
+    form.scope_combo.setCurrentIndex(form.scope_combo.findData("project"))
+    form.fallback_combo.setCurrentIndex(form.fallback_combo.findData("previous"))
+    assert "rt_fallback" not in window.model.project.lrlc["params"]["default"]
     with qtbot.waitSignal(tab.stale_requested, timeout=500):
-        tab.fallback_combo.setCurrentIndex(tab.fallback_combo.findData("previous"))
+        form.apply_button.click()
     assert window.model.project.lrlc["params"]["default"]["rt_fallback"] == "previous"
 
 

@@ -1,9 +1,10 @@
 """Variable m/n and Radial invasion sections of the Remediation form.
 
 ``MnInvasionMixin`` is mixed into ``RemediationForm`` and uses its scratch-copy machinery: the
-controls registered here change nothing until Apply. The m fit and its Apply button write
-through ``services.lrlc_service`` (a separate explicit step), and the invasion plots read the
-last run; nothing here runs the analysis.
+controls registered here change nothing until Apply. The m fit is a proposal; **Use fit** copies
+it into the pending values (curve mode, the formula model, the coefficients and the porosity),
+which the form's one Apply writes. The invasion plots read the last run; nothing here runs the
+analysis.
 """
 
 import logging
@@ -16,33 +17,29 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from modules.lrlc.config import INV_R50_KEYS, INV_R50_RANGE, LRLC_LISTS, LRLC_RANGES
 from modules.lrlc.invasion import GENERIC_LABEL, GENERIC_TOOLS, resolve_tool
-from modules.lrlc.methods import METHOD_TEXT
 from modules.las_parser import mud_header_proposal
 from modules.lrlc.variable_mn import SHELL_PRESET
 from services import lrlc_service as svc
-from services.lrlc_service import LrlcService
-from themes.helpers import set_status
+from themes.helpers import set_status, set_variant
 
 from .lrlc_common import fmt, make_table, note
 from .lrlc_common import item as table_item
 from .lrlc_invasion_plot import InvasionProfilePlot, TornadoPlot
 from .lrlc_mn_plot import MnFitPlot
-from .method_box import MethodReferenceBox
 
 SPIN_MAX_WIDTH = 240
 COMBO_MAX_WIDTH = 420
-PLOT_MIN_WIDTH = 380
+PLOT_MIN_WIDTH = 320
+MULTI_SPIN_WIDTH = 84
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +105,13 @@ class MultiSpin(QWidget):
             spin.setDecimals(decimals)
             spin.setSingleStep(step)
             spin.setKeyboardTracking(False)
-            spin.setMaximumWidth(110)
+            spin.setMaximumWidth(MULTI_SPIN_WIDTH)
             spin.valueChanged.connect(lambda v: self.valueChanged.emit(float(v)))
             col.addWidget(spin)
             row.addLayout(col)
             self.spins.append(spin)
         row.addStretch(1)
-        self.setMaximumWidth(110 * len(self.labels) + 12 * len(self.labels))
+        self.setMaximumWidth((MULTI_SPIN_WIDTH + 12) * len(self.labels))
 
     def set(self, value):
         """Write a list (or dict) of values without emitting."""
@@ -161,10 +158,22 @@ def _make_form() -> QFormLayout:
     return make_form()
 
 
-def _sub_box(title, layout=None) -> QGroupBox:
-    from .lrlc_remediation import sub_box
+def _heading(text) -> QLabel:
+    from .lrlc_remediation import heading
 
-    return sub_box(title, layout)
+    return heading(text)
+
+
+def _subheading(text) -> QLabel:
+    from .lrlc_remediation import subheading
+
+    return subheading(text)
+
+
+def _strip(key):
+    from .lrlc_remediation import method_strip
+
+    return method_strip(key)
 
 
 def _side_by_side(left, right) -> QHBoxLayout:
@@ -209,10 +218,38 @@ class MnInvasionMixin:
         return resolved.get(key)
 
     # ------------------------------------------------------------ variable m/n
-    def _build_variable_mn(self) -> QGroupBox:
-        group = self._group("variable_mn", "Variable m/n")
-        v = QVBoxLayout(group)
-        left = QVBoxLayout()
+    def _build_variable_mn(self, v: QVBoxLayout):
+        # The fit first: it is the path most zones need. The manual settings follow.
+        v.addWidget(_subheading("Fit m to the wet points"))
+        fit = QVBoxLayout()
+        fit_row = QHBoxLayout()
+        self.mn_fit_button = QPushButton("Fit m to the wet points")
+        self.mn_fit_button.clicked.connect(self._on_mn_fit)
+        fit_row.addWidget(self.mn_fit_button)
+        self.mn_use_fit_button = QPushButton("Use fit")
+        self.mn_use_fit_button.setToolTip(
+            "Copy the fit into the settings below (curve mode, formula, coefficients, "
+            "porosity). Apply writes them.")
+        self.mn_use_fit_button.clicked.connect(self._on_mn_use_fit)
+        fit_row.addWidget(self.mn_use_fit_button)
+        fit_row.addStretch(1)
+        fit.addLayout(fit_row)
+        self.mn_fit_status = note("")
+        fit.addWidget(self.mn_fit_status)
+        self.mn_fit_inputs = note("")
+        fit.addWidget(self.mn_fit_inputs)
+        self.mn_fit_table = make_table(("Coefficient", "Value", "Standard error (approximate)"))
+        self.mn_fit_table.setMaximumHeight(150)
+        self.mn_fit_table.horizontalHeader().setStretchLastSection(False)
+        fit.addWidget(self.mn_fit_table)
+        self.mn_fit_stats = note("")
+        fit.addWidget(self.mn_fit_stats)
+        fit.addStretch(1)
+        self.mn_plot = MnFitPlot()
+        self.mn_plot.setMinimumHeight(300)
+        v.addLayout(_side_by_side(fit, self.mn_plot))
+
+        v.addWidget(_heading("Manual"))
         mform = _make_form()
         self._add_combo(mform, "mn_mode", "Mode")
         self._add_combo(mform, "m_model", "m model")
@@ -222,82 +259,56 @@ class MnInvasionMixin:
         self.shell_check = QCheckBox("Use Shell in this zone although the preset is not Carbonate")
         self._register("shell_confirm", self.shell_check)
         mform.addRow("", self.shell_check)
-        left.addWidget(_sub_box("m", mform))
-        nform = _make_form()
-        self._add_combo(nform, "n_model", "n model")
+        self._add_combo(mform, "n_model", "n model")
         ncoef = MultiSpin(N_COEF_LABELS, LRLC_LISTS["n_coef"], 3, 0.05)
         self._register("n_coef", ncoef)
-        nform.addRow("n coefficients", ncoef)
-        self._add_combo(nform, "phi_source", "Porosity")
-        left.addWidget(_sub_box("n", nform))
+        mform.addRow("n coefficients", ncoef)
+        self._add_combo(mform, "phi_source", "Porosity")
+        v.addLayout(mform)
+        self.shell_badge = note("")
+        v.addWidget(self.shell_badge)
         row = QHBoxLayout()
         self.scoped_m_label = note("")
         row.addWidget(self.scoped_m_label, 1)
         self.set_c0_button = QPushButton("Set c0 to the zone m")
         self.set_c0_button.clicked.connect(self._on_set_c0)
         row.addWidget(self.set_c0_button)
-        left.addLayout(row)
-        self.shell_badge = note("")
-        left.addWidget(self.shell_badge)
+        v.addLayout(row)
         self.clip_label = note("")
-        left.addWidget(self.clip_label)
+        v.addWidget(self.clip_label)
         self.mn_last_label = note("")
-        left.addWidget(self.mn_last_label)
-        left.addStretch(1)
-
-        fit = QVBoxLayout()
-        fit_row = QHBoxLayout()
-        self.mn_fit_button = QPushButton("Fit m to the wet points")
-        self.mn_fit_button.clicked.connect(self._on_mn_fit)
-        fit_row.addWidget(self.mn_fit_button)
-        self.mn_apply_fit_button = QPushButton("Apply fit")
-        self.mn_apply_fit_button.setProperty("variant", "primary")
-        self.mn_apply_fit_button.clicked.connect(self._on_mn_apply_fit)
-        fit_row.addWidget(self.mn_apply_fit_button)
-        fit_row.addStretch(1)
-        fit.addLayout(fit_row)
-        self.mn_fit_inputs = note("")
-        fit.addWidget(self.mn_fit_inputs)
-        self.mn_fit_status = note("")
-        fit.addWidget(self.mn_fit_status)
-        self.mn_fit_table = make_table(("Coefficient", "Value", "Standard error (approximate)"))
-        self.mn_fit_table.setMaximumHeight(150)
-        self.mn_fit_table.horizontalHeader().setStretchLastSection(False)
-        fit.addWidget(self.mn_fit_table)
-        self.mn_fit_stats = note("")
-        fit.addWidget(self.mn_fit_stats)
-        self.mn_plot = MnFitPlot()
-        self.mn_plot.setMinimumHeight(300)
-        fit.addWidget(self.mn_plot, 1)
-        fit_box = _sub_box("Fit to wet points", fit)
-        fit_box.setMinimumWidth(PLOT_MIN_WIDTH)
-        fit_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        columns = QHBoxLayout()
-        columns.addLayout(left, 1)
-        columns.addWidget(fit_box, 1)
-        v.addLayout(columns)
-        self.mn_box = MethodReferenceBox()
-        self.mn_box.set_method(METHOD_TEXT["variable_mn"])
+        v.addWidget(self.mn_last_label)
+        self.mn_box = _strip("variable_mn")
         v.addWidget(self.mn_box)
         self._reset_mn_fit()
-        return group
 
     def _reset_mn_fit(self):
         self._mn_proposal = None
         self.mn_fit_table.setRowCount(0)
+        self.mn_fit_table.setVisible(False)
         self.mn_fit_status.setText("")
         self.mn_fit_stats.setText("")
-        self.mn_fit_inputs.setText(
-            "The fit reads the wet points of the Pickett selection, the Rt that the Sw models "
-            "read (RT_SW of the last run) and the zone Rw. It moves when the Rt chain changes.")
+        self.mn_fit_inputs.setText("")
+        # Before a fit the plot and the table are hidden: one hint line, and Manual follows.
         self.mn_plot.clear_data("Fit m to see the wet points")
+        self.mn_plot.setVisible(False)
+        self.mn_fit_inputs.setVisible(False)
+        self.mn_fit_stats.setVisible(False)
+        self.mn_fit_status.setText("Fit m to see the wet points.")
+        set_status(self.mn_fit_status, "muted")
         self._state_mn_fit()
 
     def _state_mn_fit(self):
         has_run = self.ds is not None and getattr(self.ds, "results", None) is not None
         self.mn_fit_button.setEnabled(bool(has_run) and self.model is not None)
         prop = getattr(self, "_mn_proposal", None)
-        self.mn_apply_fit_button.setEnabled(prop is not None and prop.ok)
+        self.mn_use_fit_button.setEnabled(self._fit_usable(prop))
+
+    @staticmethod
+    def _fit_usable(prop) -> bool:
+        fit = getattr(prop, "fit", None)
+        return (prop is not None and prop.ok and fit is not None
+                and bool(getattr(fit, "apply_allowed", False)) and bool(fit.coef))
 
     def _on_set_c0(self):
         flat = self._flat_params()
@@ -338,6 +349,8 @@ class MnInvasionMixin:
             self._state_mn_fit()
             return
         fit = prop.fit
+        self.mn_fit_inputs.setVisible(True)
+        self.mn_fit_stats.setVisible(True)
         rw_text = fmt(prop.rw, 4) + (f" ({prop.rw_mode})" if prop.rw_mode else "")
         self.mn_fit_inputs.setText(
             f"Fit read: Rt curve {prop.rt_curve}, {prop.basis} basis, {prop.phi_source.upper()}, "
@@ -353,6 +366,7 @@ class MnInvasionMixin:
             self._state_mn_fit()
             return
         names = ("c0", "c1", "c2", "c3")
+        self.mn_fit_table.setVisible(True)
         self.mn_fit_table.setRowCount(4)
         for i, name in enumerate(names):
             free = name in fit.free
@@ -375,46 +389,33 @@ class MnInvasionMixin:
         if fit.m_range:
             parts.append(f"fitted m {fmt(fit.m_range[0], 2)} to {fmt(fit.m_range[1], 2)}")
         self.mn_fit_stats.setText("; ".join(parts) + ".")
-        text = fit.message or ("Usable: apply it to write the coefficients."
+        text = fit.message or ("Usable: Use fit copies it into the settings below."
                                if fit.apply_allowed else fit.status)
         self.mn_fit_status.setText(f"Status: {fit.status}. {text}")
         set_status(self.mn_fit_status, "success" if fit.apply_allowed else "warning")
         flat = self._flat_params()
+        self.mn_plot.setVisible(True)
         self.mn_plot.set_data(prop.phi, prop.vsh, fit.index, fit.m_obs, fit.coef,
                               flat.get("m"), self._clip("clip_m"), prop.phi_source.upper())
         self._state_mn_fit()
 
-    def _on_mn_apply_fit(self):
+    def _on_mn_use_fit(self):
+        """Copy a usable fit into the pending values: the same four keys the fit service writes
+        (curve mode, the formula model, the coefficients, the porosity), never the n model. The
+        coefficients are kept at full precision for Apply; the spin boxes show them rounded."""
         prop = getattr(self, "_mn_proposal", None)
-        if self.model is None or prop is None or not prop.ok:
+        if self.model is None or not self._fit_usable(prop):
             return
-        level, zone = self._target()
-        written = svc.apply_variable_m_fit(self.model, level, zone, prop.fit, prop.phi_source,
-                                           self.ds)
-        if not written:
-            self.result_label.setText(
-                "Nothing was written: the fit is already stored at this scope.")
-            set_status(self.result_label, "warning")
-            return
-        # The four keys are stored now: show the stored values and drop them from the pending set.
-        resolved = self._resolved_now()
-        for key in written:
-            self._dirty.discard(key)
-            if key in self.controls:
-                was = self._loading
-                self._loading = True
-                try:
-                    self._write_widget(key, self.controls[key], self._display_value(key, resolved))
-                finally:
-                    self._loading = was
+        self._set_value("mn_mode", "curve")
+        self._set_value("m_model", "formula")
+        self._set_value("phi_source", str(prop.phi_source).lower())
+        coef = [round(float(c), 6) for c in prop.fit.coef]
+        self._set_value("m_coef", coef)
+        self._fit_coef = coef
         self._refresh_info()
         self._update_state()
-        self.result_label.setText(
-            "Written: " + ", ".join(NEW_LABELS.get(k, k) for k in written)
-            + ". Run the analysis to see the effect.")
-        set_status(self.result_label, "success")
-        self.stale_requested.emit(self._stale_keys("project" if level == "project" else level))
-        self.applied.emit(written)
+        self.result_label.setText("The fit is in the settings below. Apply writes it.")
+        set_status(self.result_label, "accent")
 
     def _clip(self, key: str):
         block = self.model.project.lrlc.get("variable_mn") or {} if self.model else {}
@@ -452,8 +453,9 @@ class MnInvasionMixin:
                                 "and the zone keeps its constant m unless you confirm it.",
                                 "warning")
         else:
-            text, status = f"Zone preset: {preset}.", "muted"
+            text, status = "", "muted"
         self.shell_badge.setText(text)
+        self.shell_badge.setVisible(bool(text))
         set_status(self.shell_badge, status)
         lo_m, hi_m = self._clip("clip_m")
         lo_n, hi_n = self._clip("clip_n")
@@ -492,17 +494,21 @@ class MnInvasionMixin:
         return text
 
     # ---------------------------------------------------------- radial invasion
-    def _build_invasion(self) -> QGroupBox:
-        group = self._group("invasion", "Radial invasion")
-        v = QVBoxLayout(group)
+    def _build_invasion(self, v: QVBoxLayout):
+        self._step_check(v, "invasion")
         self.inv_banner = note(
-            "RM, RS and RXO must already be corrected by you for borehole, mud and shoulder-bed "
+            "RM, RS and RXO must already be corrected for borehole, mud and shoulder-bed "
             "effects; this step does not correct them.", "warning")
         v.addWidget(self.inv_banner)
-        self.inv_step_label = note("")
-        v.addWidget(self.inv_step_label)
+        curves = QHBoxLayout()
         self.inv_curves_label = note("")
-        v.addWidget(self.inv_curves_label)
+        curves.addWidget(self.inv_curves_label, 1)
+        self.inv_curves_button = QPushButton("Open Screening > Curves")
+        set_variant(self.inv_curves_button, "link")
+        self.inv_curves_button.clicked.connect(
+            lambda: self.panel_requested.emit("screening", "curves"))
+        curves.addWidget(self.inv_curves_button)
+        v.addLayout(curves)
 
         left = QVBoxLayout()
         tform = _make_form()
@@ -511,31 +517,29 @@ class MnInvasionMixin:
         self.generic_badge = QLabel(GENERIC_LABEL)
         set_status(self.generic_badge, "warning")
         tform.addRow("", self.generic_badge)
-        r50 = MultiSpin(("Deep (in)", "Medium (in)", "Shallow (in)"), INV_R50_RANGE, 1, 1.0,
-                        as_dict=True)
-        self._register("inv_r50", r50)
-        tform.addRow("Investigation diameters", r50)
         self._add_combo(tform, "inv_rxo_mode", "RXO")
-        left.addWidget(_sub_box("Tool", tform))
-        fform = _make_form()
-        self._add_spins(fform, tuple(r for r in INVASION_ROWS if r[0] in (
-            "inv_p", "inv_di_min", "inv_di_max", "inv_min_contrast", "inv_max_rms")))
-        left.addWidget(_sub_box("Fit limits", fform))
-        mud = QVBoxLayout()
-        mform = _make_form()
-        self._add_spins(mform, tuple(r for r in INVASION_ROWS if r[0] in ("rmf", "rmf_temp")))
-        mud.addLayout(mform)
+        self._add_spins(tform, tuple(r for r in INVASION_ROWS if r[0] in ("rmf", "rmf_temp")))
+        left.addLayout(tform)
         row = QHBoxLayout()
         self.header_label = note("")
         row.addWidget(self.header_label, 1)
         self.header_button = QPushButton("Use header Rmf")
         self.header_button.clicked.connect(self._on_use_header_rmf)
         row.addWidget(self.header_button)
-        mud.addLayout(row)
-        mud_box = _sub_box("Mud filtrate", mud)
-        left.addWidget(mud_box)
+        left.addLayout(row)
+        left.addWidget(_heading("Advanced"))
+        aform = _make_form()
+        r50 = MultiSpin(("Deep (in)", "Medium (in)", "Shallow (in)"), INV_R50_RANGE, 1, 1.0,
+                        as_dict=True)
+        self._register("inv_r50", r50)
+        aform.addRow("Investigation diameters", r50)
+        left.addLayout(aform)
         self.inv_tool_label = note("")
         left.addWidget(self.inv_tool_label)
+        fform = _make_form()
+        self._add_spins(fform, tuple(r for r in INVASION_ROWS if r[0] in (
+            "inv_p", "inv_di_min", "inv_di_max", "inv_min_contrast", "inv_max_rms")))
+        left.addLayout(fform)
         left.addStretch(1)
 
         right = QVBoxLayout()
@@ -564,10 +568,8 @@ class MnInvasionMixin:
         self.inv_counts = make_table(COUNT_COLUMNS)
         self.inv_counts.setMaximumHeight(150)
         v.addWidget(self.inv_counts)
-        self.inv_box = MethodReferenceBox()
-        self.inv_box.set_method(METHOD_TEXT["invasion"])
+        self.inv_box = _strip("invasion")
         v.addWidget(self.inv_box)
-        return group
 
     def _on_tool_changed(self, *_):
         if self._loading:
@@ -614,25 +616,25 @@ class MnInvasionMixin:
         self.generic_badge.setVisible(generic)
 
     def _info_invasion(self):
-        prm = self._current_params()
-        from .lrlc_remediation import resolve_lrlc_steps
-
-        on = "invasion" in resolve_lrlc_steps(prm)
-        self.inv_step_label.setText(
-            "The Invasion step is on for this zone: Sw reads the invasion-corrected Rt."
-            if on else
-            "The Invasion step is off for this zone. Switch it on in Rt source above; the "
-            "settings below take effect after Apply and a run.")
-        set_status(self.inv_step_label, "accent" if on else "muted")
+        # One line, only when a curve role is not mapped: a warning when RM or RS (required) is
+        # missing, a muted note when only RXO (optional) is; both link to Screening > Curves.
+        required = optional = False
+        text = ""
         if self.ds is not None:
             names = []
             for role in ("RM", "RS", "RXO"):
                 name = svc.aux_curve_name(self.ds, role)
                 names.append(f"{role} {name}" if name else f"{role} not mapped")
-            self.inv_curves_label.setText(
-                "Curves: " + ", ".join(names) + ". Map them in Screening > Curves.")
-        else:
-            self.inv_curves_label.setText("")
+                if not name:
+                    required = required or role != "RXO"
+                    optional = optional or role == "RXO"
+            if required or optional:
+                text = (("The step needs RM and RS. " if required else "") + "Curves: "
+                        + ", ".join(names) + ".")
+        self.inv_curves_label.setText(text)
+        set_status(self.inv_curves_label, "warning" if required else "muted")
+        self.inv_curves_label.setVisible(bool(text))
+        self.inv_curves_button.setVisible(bool(text))
         mud = self._header_mud()
         if mud is None:
             self.header_label.setText("")

@@ -3,13 +3,13 @@
 A list of the methods on the left, grouped by where the tool lives, and a readable page on
 the right: the rendered equations, what the symbols mean, the criteria table, the assumptions
 and limits as paragraphs, and the full references with links. The inline Method & Reference
-strips under the tools link here. Read-only; it reads ``modules.lrlc.methods.METHOD_TEXT``.
+strips under the tools link here; opened from one, a Back link returns to that place. Read-only; it reads ``modules.lrlc.methods.METHOD_TEXT``.
 """
 
 import html
 from typing import Dict, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -26,7 +27,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QFont
 
 from modules.lrlc.methods import METHOD_TEXT
-from themes.helpers import set_status
+from themes.helpers import set_status, set_variant
 from themes.tokens import TYPOGRAPHY
 
 from .equation_view import EquationView, LEGEND_PT, PANEL_PT
@@ -68,6 +69,10 @@ def _paragraph(text: str = "") -> QLabel:
 
 
 class LrlcMethodsPanel(QWidget):
+    """Method list and page. ``set_back(text)`` shows a Back link (``back_requested``)."""
+
+    back_requested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         root = QHBoxLayout(self)
@@ -108,6 +113,12 @@ class LrlcMethodsPanel(QWidget):
         sheet.setContentsMargins(0, 0, 0, 0)
         sheet.setSpacing(8)
 
+        self.back_button = QPushButton("Back")
+        set_variant(self.back_button, "link")
+        self.back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.back_button.clicked.connect(self.back_requested.emit)
+        self.back_button.setVisible(False)
+        sheet.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignLeft)
         self.title_label = QLabel()
         self.title_label.setWordWrap(True)
         self.equation_view = EquationView(size_pt=PANEL_PT)
@@ -152,6 +163,11 @@ class LrlcMethodsPanel(QWidget):
     @property
     def current_key(self) -> Optional[str]:
         return self._key
+
+    def set_back(self, text: Optional[str]) -> None:
+        """Show the Back link with ``text``; None hides it."""
+        self.back_button.setText(text or "Back")
+        self.back_button.setVisible(bool(text))
 
     def method_keys(self):
         return list(self._items)

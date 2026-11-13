@@ -43,9 +43,10 @@ def _plain_log_axis(axis) -> None:
 
 
 def _fit_layout(figure) -> None:
-    """Keep tick and axis labels inside the canvas."""
+    """Keep tick and axis labels inside the canvas, also after the canvas is resized (the
+    tight layout engine runs on every draw)."""
     try:
-        figure.tight_layout(pad=0.8)
+        figure.set_layout_engine("tight", pad=0.8)
     except (ValueError, RuntimeError):     # a canvas too small to lay out; draw as it is
         pass
 

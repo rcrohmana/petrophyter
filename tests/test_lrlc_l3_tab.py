@@ -11,6 +11,7 @@ import re
 import numpy as np
 import pandas as pd
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QCheckBox, QComboBox, QMessageBox
 
 from models.project import WellDataset
@@ -223,8 +224,10 @@ def test_sections_exist_and_are_scroll_targets(window, qtbot):
     make_synth_well(window)
     tab = enable(window, qtbot)
     form = tab.remediation_form
-    assert form.scroll_target("variable_mn").title() == "Variable m/n"
-    assert form.scroll_target("invasion").title() == "Radial invasion"
+    assert form.page_headings["variable_mn"].text() == "Variable m/n"
+    assert form.page_headings["invasion"].text() == "Radial invasion"
+    assert form.page_headings["invasion"].objectName() == "SectionLabel"
+    assert form.scroll_target("invasion") is form.groups["invasion"]
     tab.show_panel("remediation", "variable_mn")
     tab.show_panel("remediation", "invasion")
     assert tab.panels.currentIndex() == 2
@@ -235,22 +238,48 @@ def test_sections_exist_and_are_scroll_targets(window, qtbot):
     assert SHIPPED_METHODS["invasion"] == ("doll1949", "thadani1981", "anderson2001", "arps1953")
     assert METHOD_TEXT["invasion"].refs == SHIPPED_METHODS["invasion"]
 
-REMEDIATION_TABS = {"rt_source": "Rt chain", "laminated": "Laminated sand", "pyrite": "Pyrite",
-                    "clay": "Clay Qv", "sw_basis": "Sw basis", "variable_mn": "Variable m/n",
-                    "invasion": "Radial invasion"}
+# The corrections list: Rt corrections in chain order, then the saturation corrections.
+REMEDIATION_PAGES = {"rt_source": "Overview", "invasion": "Radial invasion",
+                     "laminated": "Laminated sand", "pyrite": "Pyrite", "clay": "Clay Qv",
+                     "sw_basis": "Sw basis", "variable_mn": "Variable m/n"}
 
 
-def test_show_panel_selects_the_inner_remediation_tab(window, qtbot):
+def test_show_panel_selects_the_remediation_page(window, qtbot):
     make_synth_well(window)
     tab = enable(window, qtbot)
-    tabs = tab.remediation_form.section_tabs
-    assert [tabs.tabText(i) for i in range(tabs.count())] == list(REMEDIATION_TABS.values())
-    for key, title in REMEDIATION_TABS.items():
+    form = tab.remediation_form
+    lst = form.section_list
+    texts = [lst.item(i).text() for i in range(lst.count())]
+    assert texts[0] == "RT CORRECTIONS" and texts[5] == "SATURATION"
+    assert not lst.item(0).flags() & Qt.ItemFlag.ItemIsSelectable
+    keys = [lst.item(i).data(Qt.ItemDataRole.UserRole) for i in range(lst.count())]
+    assert [k for k in keys if k] == list(REMEDIATION_PAGES)
+    for key, title in REMEDIATION_PAGES.items():
         tab.show_panel("diagnosis")
         tab.show_panel("remediation", key)
         assert tab.panels.currentIndex() == 2
-        assert tabs.tabText(tabs.currentIndex()) == title
-    assert set(REMEDIATION_TABS) == set(REMEDIATION_SECTIONS)
+        assert form.current_section() == key
+        assert form.section_stack.currentWidget().widget() is form.groups[key]
+        assert form.page_headings[key].text() == title
+    assert set(REMEDIATION_PAGES) == set(REMEDIATION_SECTIONS)
+    assert not form.show_section("nope")
+
+
+def test_list_rows_show_the_state_of_the_zone(window, qtbot):
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    rows = form._list_rows
+    assert rows["invasion"].state_label.text() == "off"
+    assert rows["variable_mn"].state_label.text() == "scalar"
+    assert rows["rt_source"].state_label.text() == "measured Rt"
+    form.step_checks["invasion"].setChecked(True)
+    assert rows["invasion"].state_label.text() == "on, changed"
+    assert rows["rt_source"].state_label.text() == "1 step on"
+    form.controls["mn_mode"].setCurrentIndex(form.controls["mn_mode"].findData("curve"))
+    assert rows["variable_mn"].state_label.text() == "curve, changed"
+    form.discard_button.click()
+    assert rows["invasion"].state_label.text() == "off"
 
 
 def test_pending_change_on_one_tab_shows_in_the_shared_header(window, qtbot):
@@ -269,6 +298,7 @@ def test_pending_change_on_one_tab_shows_in_the_shared_header(window, qtbot):
     assert "m model" in text and "Shape exponent" in text
     tab.show_panel("remediation", "rt_source")
     assert form.apply_button.isEnabled() and form.pending_label.isVisibleTo(form)
+    assert form.section_list.isVisibleTo(form)
     form.discard_button.click()
     assert not form.apply_button.isEnabled()
 
@@ -321,26 +351,64 @@ def test_set_c0_to_the_zone_m_is_a_pending_edit(window, qtbot, monkeypatch):
     assert "m_coef" in form._dirty and not ds.lrlc
 
 
-def test_fit_button_shows_the_proposal_and_apply_fit_writes_it(window, qtbot):
+def test_fit_button_shows_the_proposal_and_use_fit_makes_it_pending(window, qtbot):
     ds = make_synth_well(window)
     tab = enable(window, qtbot)
     form = tab.remediation_form
-    assert form.mn_fit_button.isEnabled() and not form.mn_apply_fit_button.isEnabled()
+    assert form.mn_fit_button.isEnabled() and not form.mn_use_fit_button.isEnabled()
+    assert form.mn_plot.isHidden() and form.mn_fit_table.isHidden()   # nothing to show yet
+    assert form.mn_fit_status.text() == "Fit m to see the wet points."
     form.mn_fit_button.click()
     assert form.mn_fit_table.rowCount() == 4
     assert form.mn_fit_table.item(0, 1).text() == "1.9000"
+    assert not form.mn_plot.isHidden() and not form.mn_fit_table.isHidden()
     assert form.mn_fit_table.item(3, 0).text() == "c3 (fixed)"
     assert "Rt curve RT_SW" in form.mn_fit_inputs.text() and "bulk basis" in form.mn_fit_inputs.text()
     assert "Status: ok" in form.mn_fit_status.text()
     assert form.mn_plot.n_drawn > 40
-    assert form.mn_apply_fit_button.isEnabled()
+    assert form.mn_use_fit_button.isEnabled()
+    assert form.mn_use_fit_button.property("variant") in (None, "")   # a Standard button
     assert not ds.lrlc                                        # fitting wrote nothing
-    with qtbot.waitSignal(form.stale_requested, timeout=500):
-        form.mn_apply_fit_button.click()
-    assert stored(window, "mn_mode", ds=ds) == "curve"
-    assert form.controls["m_coef"].get()[:3] == pytest.approx(TRUE_COEF, abs=1e-5)
+    form.mn_use_fit_button.click()
+    assert not ds.lrlc                                        # Use fit writes nothing either
+    assert {"mn_mode", "m_model", "m_coef", "phi_source"} <= form._dirty
+    assert "n_model" not in form._dirty
     assert form.controls["mn_mode"].currentData() == "curve"
-    assert "m_coef" not in form._dirty
+    assert form.controls["m_coef"].get()[:3] == pytest.approx(TRUE_COEF, abs=1e-5)
+    assert "m coefficients" in form.pending_label.text()
+    with qtbot.waitSignal(form.stale_requested, timeout=500):
+        form.apply_button.click()
+    assert stored(window, "mn_mode", ds=ds) == "curve"
+    assert stored(window, "m_model", ds=ds) == "formula"
+    prop = form._mn_proposal
+    assert stored(window, "m_coef", ds=ds) == [round(float(c), 6) for c in prop.fit.coef]
+    assert stored(window, "n_model", ds=ds) is None
+    assert "m_coef" not in form._dirty and form._fit_coef is None
+
+
+def test_use_fit_keeps_the_full_precision_of_the_coefficients(window, qtbot):
+    ds = make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    form.mn_fit_button.click()
+    prop = form._mn_proposal
+    prop.fit.coef = [1.912345678, 0.4987654, 0.3012345, 0.0]
+    form.mn_use_fit_button.click()
+    assert form.controls["m_coef"].get()[0] == pytest.approx(1.912, abs=1e-9)   # shown rounded
+    form.apply_button.click()
+    assert stored(window, "m_coef", ds=ds) == [1.912346, 0.498765, 0.301235, 0.0]
+
+
+def test_editing_a_coefficient_after_use_fit_writes_the_edit(window, qtbot):
+    ds = make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    form.mn_fit_button.click()
+    form.mn_use_fit_button.click()
+    form.controls["m_coef"].spins[0].setValue(2.05)
+    assert form._fit_coef is None
+    form.apply_button.click()
+    assert stored(window, "m_coef", ds=ds)[0] == 2.05
 
 
 def test_apply_fit_is_disabled_for_an_implausible_fit(window, qtbot):
@@ -350,7 +418,9 @@ def test_apply_fit_is_disabled_for_an_implausible_fit(window, qtbot):
     window.model.project.lrlc["variable_mn"]["clip_m"] = [1.0, 1.5]
     form.mn_fit_button.click()
     assert "implausible m" in form.mn_fit_status.text()
-    assert not form.mn_apply_fit_button.isEnabled()
+    assert not form.mn_use_fit_button.isEnabled()
+    form._on_mn_use_fit()                                    # refused without the button too
+    assert not form._dirty
     assert not ds.lrlc
 
 
@@ -360,7 +430,7 @@ def test_fit_button_reports_a_missing_rw(window, qtbot):
     form = tab.remediation_form
     form.mn_fit_button.click()
     assert "Rw is unknown" in form.mn_fit_status.text()
-    assert form.mn_fit_table.rowCount() == 0 and not form.mn_apply_fit_button.isEnabled()
+    assert form.mn_fit_table.rowCount() == 0 and not form.mn_use_fit_button.isEnabled()
 
 
 def test_last_run_statistics_read_the_result_columns(window, qtbot):
@@ -391,8 +461,13 @@ def test_invasion_defaults_badge_and_r50(window, qtbot):
     assert form._read_widget("inv_r50") is None
     assert form._read_widget("rmf") is None
     assert "RM, RS and RXO must already be corrected" in form.inv_banner.text()
-    assert "The Invasion step is off" in form.inv_step_label.text()
+    assert not form.step_checks["invasion"].isChecked()
     assert "RM RM" in form.inv_curves_label.text() and "RXO not mapped" in form.inv_curves_label.text()
+    assert not form.inv_curves_button.isHidden()             # RXO is not mapped
+    ds = window.model.active_well
+    ds.lrlc_curves["RXO"] = "RT"                              # every role mapped: no line
+    form._refresh_info()
+    assert form.inv_curves_label.isHidden() and form.inv_curves_button.isHidden()
 
 
 def test_tool_change_loads_the_preset_and_custom_writes_radii(window, qtbot):
@@ -688,18 +763,111 @@ def test_check_boxes_are_registered_controls(window, qtbot):
     assert isinstance(form.controls["shell_confirm"], QCheckBox)
     assert isinstance(form.controls["phi_source"], QComboBox)
 
-def test_remediation_inner_tabs_fit_the_selected_section(window, qtbot):
-    """No inner scroll: the tab widget is as tall as the selected section, so a short section
-    leaves no empty space and a long one is shown whole in the page scroll."""
+def test_remediation_is_one_list_and_one_scrolling_page(window, qtbot):
+    """No inner tabs: a fixed list and a stack of pages, each page scrolling on its own."""
+    from PyQt6.QtWidgets import QScrollArea, QTabWidget
+
     make_synth_well(window)
     tab = enable(window, qtbot)
-    window.show_lrlc("remediation", "clay")
-    tabs = tab.remediation_form.section_tabs
-    width = 1200
-    short = tabs.heightForWidth(width)
-    window.show_lrlc("remediation", "invasion")
-    tall = tabs.heightForWidth(width)
-    assert tall > short + 300
-    assert tabs.currentWidget().parent() is not None
-    from PyQt6.QtWidgets import QScrollArea
-    assert not any(isinstance(tabs.widget(i), QScrollArea) for i in range(tabs.count()))
+    form = tab.remediation_form
+    assert tab.panels.widget(2) is form
+    assert not form.findChildren(QTabWidget)
+    assert form.section_list.width() == form.section_list.maximumWidth() <= 280
+    stack = form.section_stack
+    assert all(isinstance(stack.widget(i), QScrollArea) for i in range(stack.count()))
+    assert not hasattr(form, "zone_combo")                    # the LRLC header picks the zone
+    assert form.apply_button.property("variant") in (None, "")
+
+
+def test_step_switch_is_pending_and_never_copies_a_zone_list_to_the_default(window, qtbot):
+    ds = make_synth_well(window, invasion=True)
+    assert LrlcService.apply_remediation(window.model, "well", "UPPER",
+                                         {"rt_steps": ["laminated"]}, ds)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    tab.select_zone("UPPER")
+    assert form.scope_combo.currentData() == "zone"
+    assert form.step_checks["laminated"].isChecked()
+    assert "in zone UPPER" in form.step_checks["invasion"].text()
+    form.scope_combo.setCurrentIndex(form.scope_combo.findData("well"))
+    assert "as the default of this well" in form.step_checks["invasion"].text()
+    form.step_checks["invasion"].setChecked(True)
+    assert "rt_steps" not in (ds.lrlc.get("default") or {})  # nothing before Apply
+    assert "Sw reads after Apply" in form.sw_reads_label.text()
+    with qtbot.waitSignal(tab.stale_requested, timeout=500):
+        form.apply_button.click()
+    assert ds.lrlc["default"]["rt_steps"] == ["invasion"]     # not UPPER's laminated step
+    assert ds.lrlc["zones"]["UPPER"]["rt_steps"] == ["laminated"]
+
+
+def test_ticking_laminated_also_switches_thomas_stieber_on(window, qtbot):
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    assert not window.model.project.lrlc["thomas_stieber"]["enabled"]
+    form.step_checks["laminated"].setChecked(True)
+    assert form.ts_check.isChecked() and form._settings == {"ts_enabled": True}
+    assert not window.model.project.lrlc["thomas_stieber"]["enabled"]
+    form.apply_button.click()
+    assert window.model.project.lrlc["thomas_stieber"]["enabled"] is True
+
+
+def test_switching_zone_drops_pending_changes_with_a_note(window, qtbot):
+    ds = make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    tab.select_zone("UPPER")
+    form.controls["inv_p"].setValue(3.0)
+    assert form._dirty
+    tab.select_zone("LOWER")
+    assert not form._dirty and not ds.lrlc
+    assert "Changes not applied for UPPER were discarded." in form.result_label.text()
+
+
+def test_a_refused_set_stays_pending_while_the_switches_are_written(window, qtbot):
+    ds = make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    form.controls["phi_max"].setValue(0.32)
+    form.controls["phi_sh"].setValue(0.31)                    # breaks the end-point rule
+    form.guard_check.setChecked(False)
+    with qtbot.waitSignal(tab.guard_toggled, timeout=500):
+        form.apply_button.click()
+    assert window.model.project.lrlc["guard"]["enabled"] is False
+    assert not ds.lrlc
+    assert {"phi_max", "phi_sh"} <= form._dirty and form.apply_button.isEnabled()
+    assert form.controls["phi_sh"].value() == pytest.approx(0.31)
+    assert "still pending" in form.result_label.text()
+
+
+def test_missing_curves_show_one_warning_with_a_link_to_screening(window, qtbot):
+    make_synth_well(window)                                   # no RM or RS in the log
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    tab.show_panel("remediation", "invasion")
+    assert "The step needs RM and RS." in form.inv_curves_label.text()
+    assert not form.inv_curves_button.isHidden()
+    form.inv_curves_button.click()
+    assert tab.panels.currentIndex() == 0                     # Screening
+
+
+def test_methods_back_link_returns_to_the_strip(window, qtbot):
+    make_synth_well(window)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    tab.show_panel("remediation", "invasion")
+    form.inv_box.link.click()
+    assert tab.panels.currentIndex() == 4
+    assert tab.methods_panel.current_key == "invasion"
+    back = tab.methods_panel.back_button
+    assert not back.isHidden() and back.text() == "Back to Remediation > Radial invasion"
+    back.click()
+    assert tab.panels.currentIndex() == 2 and form.current_section() == "invasion"
+    assert back.isHidden()
+    tab.show_panel("methods", "laminated")                    # opened directly: no Back
+    assert back.isHidden()
+    tab.show_panel("diagnosis", "thomas_stieber")
+    tab.ts_panel.method_box.link.click()
+    assert back.text() == "Back to Diagnosis"
+    back.click()
+    assert tab.panels.currentIndex() == 1 and tab.diagnosis_tabs.currentIndex() == 1

@@ -362,13 +362,28 @@ user choice.
   References... (`book-open`), which opens a read-only dialog with Export BibTeX....
 - Every iconed menu action is in `_action_icons`, so icons follow the theme.
 - The LRLC Workbench tab (`ui/tabs/lrlc_tab.py`) follows the Saturation-Height tab: a stacked
-  root with a placeholder page (Enable LRLC analysis) and a content page of four panels
-  (Screening, Diagnosis, Remediation, Validation), scrolling pages, a controls column of
-  320 to 380 px, `SectionLabel` headings and a status line. It writes only through
-  `LrlcService` and never runs the analysis (it emits `stale_requested`). Each tool carries
-  a Method & Reference box (`ui/widgets/method_box.py`): equation in the monospace token
-  font, assumptions, limits and short citations, with a "(to verify)" mark on unconfirmed
-  ones. The Data Browser zone node has the context action Analyze as LRLC candidate
+  root with a placeholder page (Enable LRLC analysis) and a content page of five panels
+  (Screening, Diagnosis, Remediation, Validation, Methods), scrolling pages, a controls column
+  of 320 to 380 px, `SectionLabel` headings and a status line. The zone selector of the tab
+  header drives every panel; no panel has its own. It writes only through `LrlcService` and
+  never runs the analysis (it emits `stale_requested`).
+- Remediation (`ui/widgets/lrlc_remediation.py`) is master-detail, one level deep: a list of
+  about 260 px on the left (styled like the Methods list, non-selectable headings "Rt
+  corrections" and "Saturation", each row with its state for the zone in `muted` text) and a
+  `QStackedWidget` of pages on the right, each page in its own scroll area so the header row
+  and the list stay put. No tabs inside the panel and no nested group boxes: pages use
+  `SectionLabel` / `SubsectionLabel` headings over forms. The header row is only Apply to,
+  Apply, Discard changes and the pending/result text. One save rule: every control of every
+  page, the Rt step switches and the chain options included, is pending until the one Apply
+  (Standard button; "Use fit" and "Use header Rmf" fill pending values, they never write).
+  Each page puts the inputs most zones need first and the tuning values under an "Advanced"
+  `SectionLabel` (not a collapsible). Notes stay only when they are actionable, in one line;
+  a missing curve role is one warning line with a link button to Screening > Curves.
+- Each tool carries a Method & Reference strip (`ui/widgets/method_box.py`): title, typeset
+  equations, short citations with a "(to verify)" mark on unconfirmed ones, and a link that
+  opens the Methods panel at that method. On the Remediation pages the strip is one line
+  (`compact=True`: title, citations, link; no equations). Opened from a strip, the Methods
+  panel shows a "Back to ..." link to the panel and page the strip is on. The Data Browser zone node has the context action Analyze as LRLC candidate
   (`activity`); the browser stays read-only.
 - Plot colours for the new curves (`RT_SW`, `RT_CUT`, `BVW`, `LRLC_FLAG`,
   `WATER_FREE_FLAG`) are plot tokens with dark overrides, like the other curve colours.
