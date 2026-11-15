@@ -254,7 +254,7 @@ def test_decon_summary_block_keys():
     assert set(block) == {"hires", "params", "zones", "windows", "n_beds", "boundaries", "edits",
                           "counts"}
     assert {z["zone"] for z in block["zones"]} == {"UPPER", "LOWER"}
-    assert set(block["zones"][0]) == {"zone", "status", "max_ratio", "n_active", "n_valid",
+    assert set(block["zones"][0]) == {"zone", "status", "max_ratio", "n_active", "n_valid", "width_sensitivity",
                                       "n_amplified", "misfit_rms"}
     assert {"top", "bottom", "n_rows", "n_beds", "lam", "misfit_rms", "misfit_max",
             "status"} <= set(block["windows"][0])

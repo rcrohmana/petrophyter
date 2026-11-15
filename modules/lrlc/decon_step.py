@@ -20,7 +20,7 @@ import numpy as np
 from modules.lrlc import chain
 from modules.lrlc.chain import CHAIN_ORDER, StepResult, StepSpec, resolve_steps
 from modules.lrlc.config import LRLC_PARAM_DEFAULTS, WELL_ONLY_KEYS
-from modules.lrlc.decon import GENERIC_RESPONSES, REFS, DeconParams, default_min_bed, deconvolve
+from modules.lrlc.decon import GENERIC_RESPONSES, REFS, DeconParams, default_min_bed, deconvolve, width_sensitivity
 from modules.param_scopes import UNZONED
 
 STEP_NAME = "decon"
@@ -103,6 +103,11 @@ def derive_decon_well(*, depth, rt, candidates, zone_keys, lrlc, issues: Optiona
         for code, text, zone, severity in res.issues:
             issues.append((code, text, None if zone in (None, "", UNZONED) else zone, severity))
     if info is not None:
+        info["sensitivity"] = width_sensitivity(
+            np.asarray(depth, dtype=float), None if rt is None else np.asarray(rt, dtype=float), hires, params,
+            active, res, data_mask=data_mask, zone_labels=keys, max_ratio_by_zone=ratio_by_zone,
+            misfit_warn_by_zone=misfit_by_zone, log_domain=log_domain) if hires is not None and rt is not None \
+            else {}
         info.update({
             "result": res, "depth": np.asarray(depth, dtype=float), "keys": keys, "active": active,
             "zones": zones, "params": params, "tool": well.get("dec_tool", "custom"),
@@ -203,7 +208,8 @@ def decon_block(info: Optional[dict], guard_decisions: Optional[dict], has_label
             "max_ratio": float(info["ratio_by_zone"].get(str(key), params.max_ratio)),
             "n_active": int(stats.get("n_active", n_rows)), "n_valid": int(stats.get("n_valid", 0)),
             "n_amplified": int(stats.get("n_amplified", 0)),
-            "misfit_rms": float(stats.get("misfit_rms", float("nan")))})
+            "misfit_rms": float(stats.get("misfit_rms", float("nan"))),
+            "width_sensitivity": (info.get("sensitivity") or {}).get(str(key))})
     counts.update(guard_counts)
 
     # Interior boundaries: the shared edge of two touching beds (window and segment ends are not boundaries).

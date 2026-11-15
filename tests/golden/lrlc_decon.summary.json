@@ -262,6 +262,24 @@
      "n_amplified": 0,
      "n_valid": 72,
      "status": "ran",
+     "width_sensitivity": {
+      "median_ratio": [
+       1.9129117552798054,
+       1.9895741930641897,
+       1.7278558427750719
+      ],
+      "n": 19,
+      "n_valid": [
+       19,
+       19,
+       14
+      ],
+      "widths_ft": [
+       3.2,
+       4.0,
+       5.0
+      ]
+     },
      "zone": "UPPER"
     },
     {
@@ -271,6 +289,24 @@
      "n_amplified": 0,
      "n_valid": 113,
      "status": "ran",
+     "width_sensitivity": {
+      "median_ratio": [
+       2.8903777365579604,
+       3.8233782018514306,
+       1.8184742679560602
+      ],
+      "n": 18,
+      "n_valid": [
+       18,
+       18,
+       7
+      ],
+      "widths_ft": [
+       3.2,
+       4.0,
+       5.0
+      ]
+     },
      "zone": "LOWER"
     }
    ]

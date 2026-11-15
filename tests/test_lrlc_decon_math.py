@@ -572,3 +572,40 @@ def test_pick_beds_no_boundary_on_flat_noisy_curve():
         rng = np.random.default_rng(seed)
         ref = 10.0 * (1.0 + 0.03 * rng.standard_normal(z.size))
         assert len(pick_beds(z, ref, DeconParams().with_reference("RXO"), True).boundaries) == 0
+
+
+def test_width_sensitivity_reads_the_same_samples_at_three_widths():
+    z, rt, ref, edges, rts, bed = _well(noise=0.01)
+    labels = np.where(z < z[z.size // 2], "UPPER", "LOWER").astype(object)
+    params = DeconParams().with_reference("RXO")
+    base = deconvolve(z, rt, ref, params, np.ones(z.size, dtype=bool), zone_labels=labels)
+    sens = decon.width_sensitivity(z, rt, ref, params, np.ones(z.size, dtype=bool), base, zone_labels=labels)
+    assert set(sens) == {"UPPER", "LOWER"}
+    for row in sens.values():
+        assert row["widths_ft"] == [pytest.approx(3.2), 4.0, 5.0]
+        assert row["n_valid"][1] == row["n"] and all(k <= row["n"] for k in row["n_valid"])
+        if row["n"]:
+            assert row["median_ratio"][1] > decon.SENSITIVITY_MIN_CHANGE
+    total = sum(row["n"] for row in sens.values())
+    assert total > 0
+    # a narrower response than the one the data were made with corrects less
+    lo = [r["median_ratio"][0] for r in sens.values() if r["n"]]
+    mid = [r["median_ratio"][1] for r in sens.values() if r["n"]]
+    assert np.median(lo) < np.median(mid)
+
+
+def test_width_sensitivity_scales_the_coil_spacing_for_doll():
+    p = replace(DeconParams(), response="doll", doll_spacing_ft=3.0)
+    assert p.with_width(2.4).doll_spacing_ft == 2.4 and p.with_width(2.4).fwhm_ft == p.fwhm_ft
+    assert DeconParams().with_width(5.0).fwhm_ft == 5.0
+
+
+def test_misfit_text_hints_at_the_response_width_when_lambda_is_at_its_floor():
+    z, rt, ref, _, _, _ = _well(noise=0.02)
+    wrong = replace(DeconParams(), fwhm_ft=1.6 * FWHM).with_reference("RXO")
+    res = _run(z, rt, ref, wrong)
+    misfit = [text for code, text, _, _ in res.issues if code == "LRLC_DECON_MISFIT"]
+    assert misfit and all(w.lam <= decon.LAM_FALLBACK * 1.000001 for w in res.windows if w.status == "high_misfit")
+    assert "check the response width" in misfit[0]
+    fixed = _run(z, rt, ref, replace(wrong, lam=1e-4))          # a fixed lambda says nothing about the width
+    assert all("response width" not in text for code, text, _, _ in fixed.issues)

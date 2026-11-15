@@ -12,7 +12,7 @@ Bed boundaries come from a high-resolution reference curve (peaks of the smoothe
 conductivities from a regularised bounded least-squares solve (or a multiplicative iteration) window by
 window. Skin effect, dip, anisotropy, borehole and invasion are ignored: the output is a bed-model estimate.
 
-Benchmark of the ``lsq_linear`` method for the bounded branch (S1, 0.5 ft step, bounds 1/R..R, lam 1e-3, per call):
+Benchmark of the ``lsq_linear`` method for the bounded branch (development PC, 0.5 ft step, bounds 1/R..R, lam 1e-3, per call):
 40 beds / 330 rows / 2 beds at a bound: bvls 2.7 ms, trf 7.2 ms; 40 beds, R = 3 (23 at a bound): bvls 3.1 ms,
 trf 9.8 ms; 120 beds / 1100 rows (56 at a bound): bvls 96 ms, trf 59 ms. Both give the same answer (max difference
 5e-9). Windows hold at most 150 beds and typically about 40, so ``bvls`` is kept.
@@ -51,7 +51,7 @@ LAM_RANGE = (-4.0, 0.0)      # log10 of the automatic Tikhonov weight
 LAM_EVALS = 6
 LAM_FALLBACK = 1e-4
 BOUND_RTOL = 1e-6
-_LSQ_METHOD = "bvls"         # bvls and trf agree to 1e-9 on the benchmark; bvls was faster (S1 benchmark note)
+_LSQ_METHOD = "bvls"         # bvls and trf agree to 1e-9 on the benchmark; bvls was faster (module docstring)
 DEFAULT_MIN_BED = {"resistivity": 1.0, "RHOB": 1.5, "GR": 2.0}
 
 COUNT_KEYS = ("no_hires", "no_rt", "undersampled", "amplified", "edge", "no_data", "windows_bad_misfit",
@@ -113,6 +113,12 @@ class DeconParams:
     def width_ft(self) -> float:
         """Vertical scale of the response: FWHM (Gaussian) or coil spacing (Doll)."""
         return float(self.doll_spacing_ft if self.response == "doll" else self.fwhm_ft)
+
+    def with_width(self, width_ft: float) -> "DeconParams":
+        """The same settings with the response width (FWHM, or coil spacing for Doll) replaced."""
+        if self.response == "doll":
+            return replace(self, doll_spacing_ft=float(width_ft))
+        return replace(self, fwhm_ft=float(width_ft))
 
     def with_reference(self, curve_name: Optional[str]) -> "DeconParams":
         """Fill the automatic minimum bed thickness for the reference curve kind."""
@@ -505,9 +511,10 @@ class _Events:
     def __init__(self):
         self.items: Dict[Tuple[str, Optional[str]], dict] = {}
 
-    def add(self, code: str, zone, n: int = 1, note: str = ""):
-        entry = self.items.setdefault((code, zone), {"n": 0, "notes": []})
+    def add(self, code: str, zone, n: int = 1, note: str = "", hint: bool = False):
+        entry = self.items.setdefault((code, zone), {"n": 0, "notes": [], "hint": False})
         entry["n"] += n
+        entry["hint"] = entry["hint"] or hint
         if note and len(entry["notes"]) < 3:
             entry["notes"].append(note)
 
@@ -821,7 +828,10 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
             counts["windows_bad_misfit"] += 1
             if status == "ok":
                 status = "high_misfit"
-            ev.add("LRLC_DECON_MISFIT", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft rms {m_rms:.2f}")
+            # automatic lambda at its lower limit: the solver already fits as closely as it allows, so the
+            # bed model itself is off; in the width tests this was the case for every wrong-width window
+            at_floor = params.solver == "lsq" and params.lam is None and lam_used <= LAM_FALLBACK * (1.0 + 1e-9)
+            ev.add("LRLC_DECON_MISFIT", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft rms {m_rms:.2f}", hint=at_floor)
         sigma_k = xs * s0
         f_win = W @ sigma_k
         own_pos = np.isin(sys_k, np.flatnonzero(owned))
@@ -887,10 +897,62 @@ def _issues(ev: _Events, result: DeconResult, params: DeconParams, act: np.ndarr
         text = texts[code].format(n=n)
         if entry["notes"]:
             text += " (" + "; ".join(entry["notes"]) + ")"
+        if code == "LRLC_DECON_MISFIT" and entry.get("hint"):
+            text += "; the solver already fits as closely as it allows: check the response width and the boundaries"
         severity = None
         if code == "LRLC_DECON_AMPLIFIED":
             n_zone = int(sum(1 for i in np.flatnonzero(act) if zones is None or zones[i] == zone)) if zones is not None \
                 else int(act.sum())
             severity = "warning" if n_zone and n > 0.01 * n_zone else "info"
         out.append((code, text, zone, severity))
+    return out
+
+
+WIDTH_FACTORS = (0.8, 1.25)      # response-width sensitivity: solved again at these multiples of the set width
+SENSITIVITY_MIN_CHANGE = 1.1     # samples the set-width solve raises by more than 10 % (the thin resistive beds)
+
+
+def _median_ratio(rt_decon, rt, rows) -> Tuple[Optional[float], int]:
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.asarray(rt_decon, dtype=float)[rows] / np.asarray(rt, dtype=float)[rows]
+    ratio = ratio[np.isfinite(ratio)]
+    return (float(np.median(ratio)) if ratio.size else None), int(ratio.size)
+
+
+def width_sensitivity(depth, rt, hires, params: DeconParams, active, base: DeconResult, data_mask=None,
+                      zone_labels=None, max_ratio_by_zone=None, misfit_warn_by_zone=None, log_domain=True,
+                      factors=WIDTH_FACTORS) -> Dict[str, dict]:
+    """Median RT_DECON / RT per zone at the set response width and at ``factors`` times it.
+
+    The samples are those valid at the set width (``base.valid``) that the set-width solve raises by more
+    than 10 % (``SENSITIVITY_MIN_CHANGE``): the thin resistive beds the correction acts on, not the shales
+    and shoulders it leaves alone or lowers. The same samples are read at every width; a sample that is
+    invalid at another width (amplified, for example) is left out of that width's median, and ``n_valid``
+    says how many remained. Same beds, edits and solver settings. Information only: the deconvolved Rt
+    always depends on the width, so no threshold is applied.
+
+    Returns ``{zone label: {"widths_ft": [low, set, high], "median_ratio": [...], "n_valid": [...], "n": int}}``
+    (label ``""`` without zone labels; a median is None when no sample remained).
+    """
+    w = params.width_ft
+    low, high = sorted(factors)
+    runs = {1.0: base}
+    for f in (low, high):
+        runs[f] = deconvolve(depth, rt, hires, params.with_width(w * f), active, data_mask=data_mask,
+                             zone_labels=zone_labels, max_ratio_by_zone=max_ratio_by_zone,
+                             misfit_warn_by_zone=misfit_warn_by_zone, log_domain=log_domain)
+    act = np.asarray(active, dtype=bool)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        change = np.asarray(base.rt_decon, dtype=float) / np.asarray(rt, dtype=float)
+    acted = act & np.asarray(base.valid, dtype=bool) & np.isfinite(change) & (change > SENSITIVITY_MIN_CHANGE)
+    zones = None if zone_labels is None else np.asarray(zone_labels, dtype=object)
+    labels = [""] if zones is None else sorted({_zone_key(z) for z in zones[act]})
+    out: Dict[str, dict] = {}
+    for label in labels:
+        sel = acted.copy()
+        if zones is not None:
+            sel &= np.asarray([_zone_key(z) == label for z in zones], dtype=bool)
+        medians, counts = zip(*(_median_ratio(runs[f].rt_decon, rt, sel) for f in (low, 1.0, high)))
+        out[label] = {"widths_ft": [float(w * low), float(w), float(w * high)],
+                      "median_ratio": list(medians), "n_valid": list(counts), "n": int(sel.sum())}
     return out
