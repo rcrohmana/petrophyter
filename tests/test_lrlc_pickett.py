@@ -1,11 +1,17 @@
 """Pickett wet-point selection and the robust wet-line fit."""
 
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 import numpy as np
+import pandas as pd
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
 from modules.lrlc import pickett
 from modules.lrlc.pickett import (fit_pickett, iso_sw_line, normalise_rt_for_temperature,
                                   wet_points)
+from modules.lrlc.variable_mn import m_formula, n_formula, shell_m
 from modules.param_scopes import VALID_RANGES
 
 A, M_TRUE, RW_TRUE = 1.0, 2.0, 0.05
@@ -180,3 +186,161 @@ def test_temperature_normalisation():
                        a=A, m_current=2.0)
     assert raw.rw == pytest.approx(0.6 * RW_TRUE, rel=1e-6)
     assert norm.rw == pytest.approx(RW_TRUE, rel=1e-6)
+
+
+# ---------------------------------------------------------------- iso-Sw from the variable m model
+GRID = np.logspace(np.log10(0.06), np.log10(0.35), 25)
+FORMULA = {"mn_mode": "curve", "m_model": "formula", "m_coef": [1.8, 0.0, 0.6, 0.02],
+           "n_model": "constant", "n_coef": [2.0, 0.0], "shell_confirm": False}
+
+
+def test_iso_sw_line_scalar_unchanged_and_arrays_align():
+    m_arr = np.full(GRID.shape, 2.0)
+    assert np.array_equal(iso_sw_line(GRID, 1.0, 0.05, m_arr, 2.0, 0.6),
+                          iso_sw_line(GRID, 1.0, 0.05, 2.0, 2.0, 0.6))
+
+
+def test_exponents_formula_zone_matches_the_model_at_the_grid():
+    m, n, used = pickett.iso_sw_exponents(GRID, FORMULA, 0.25, scalar_m=2.0, scalar_n=2.0)
+    assert used
+    assert m == pytest.approx(m_formula(GRID, np.full(GRID.shape, 0.25), FORMULA["m_coef"]))
+    assert n == pytest.approx(np.full(GRID.shape, 2.0))
+    y = iso_sw_line(GRID, 0.62, 0.05, m, n, 0.5)
+    assert y == pytest.approx(0.62 * 0.05 / (GRID ** m * 0.5 ** n))
+    assert np.ptp(m) > 0.05                       # a curve, not a line
+
+
+def test_exponents_clip_range_is_the_runs():
+    steep = dict(FORMULA, m_coef=[3.9, 0.0, 0.0, 0.5])
+    m, _, _ = pickett.iso_sw_exponents(GRID, steep, 0.2, scalar_m=2.0, scalar_n=2.0,
+                                       clip_m=(1.0, 4.0))
+    assert m.max() == pytest.approx(4.0) and m.min() >= 1.0
+
+
+def test_exponents_n_follows_vsh():
+    zone = dict(FORMULA, n_model="vsh", n_coef=[1.8, 1.0])
+    _, n, used = pickett.iso_sw_exponents(GRID, zone, 0.3, scalar_m=2.0, scalar_n=2.0)
+    assert used and n == pytest.approx(n_formula(0.3, [1.8, 1.0]) * np.ones(GRID.shape))
+
+
+def test_exponents_shell_ignores_vsh_and_keeps_the_lithology_gate():
+    shell = dict(FORMULA, m_model="shell")
+    lo, _, used_lo = pickett.iso_sw_exponents(GRID, shell, 0.05, scalar_m=2.0, scalar_n=2.0,
+                                              lithology="Carbonate")
+    hi, _, _ = pickett.iso_sw_exponents(GRID, shell, 0.45, scalar_m=2.0, scalar_n=2.0,
+                                        lithology="Carbonate")
+    assert used_lo and lo == pytest.approx(shell_m(GRID)) and hi == pytest.approx(lo)
+    m, _, used = pickett.iso_sw_exponents(GRID, shell, 0.2, scalar_m=2.1, scalar_n=2.0,
+                                          lithology="Sandstone (Humble)")
+    assert not used and m == pytest.approx(np.full(GRID.shape, 2.1))
+    _, _, used = pickett.iso_sw_exponents(GRID, dict(shell, shell_confirm=True), 0.2,
+                                          scalar_m=2.1, scalar_n=2.0, lithology="Sandstone (Humble)")
+    assert used
+
+
+def test_exponents_scalar_or_invalid_zone_is_not_used():
+    m, _, used = pickett.iso_sw_exponents(GRID, {"mn_mode": "scalar"}, 0.2, scalar_m=2.2,
+                                          scalar_n=2.0)
+    assert not used and m == pytest.approx(np.full(GRID.shape, 2.2))
+    _, _, used = pickett.iso_sw_exponents(GRID, FORMULA, float("nan"), scalar_m=2.2, scalar_n=2.0)
+    assert not used
+
+
+# ------------------------------------------------------------------------------ the panel
+def _panel_model(zone_params, lithology="Sandstone (Humble)", n=400):
+    from models.app_model import AppModel
+    from models.project import WellDataset
+    rng = np.random.default_rng(5)
+    phi = rng.uniform(0.08, 0.30, n)
+    vsh = np.where(np.arange(n) < n // 2, rng.uniform(0.1, 0.3, n), rng.uniform(0.0, 0.1, n))
+    zone = np.where(np.arange(n) < n // 2, "UPPER", "LOWER")
+    rt = 0.05 / phi ** 2.0 * rng.normal(1.0, 0.02, n)
+    res = pd.DataFrame({"DEPTH": 5000.0 + 0.5 * np.arange(n), "RT": rt, "PHIE": phi,
+                        "PHIT": phi + 0.02, "VSH": vsh, "ZONE": zone})
+    table = {"a": {"value": 1.0}, "m": {"value": 2.0}, "n": {"value": 2.0},
+             "rw": {"value": 0.05}, "lithology_preset": {"value": lithology}}
+    ds = WellDataset(key="WELL:A", display_name="A")
+    ds.las_data = res[["DEPTH", "RT"]].copy()
+    ds.curve_mapping = {"RT": "RT"}
+    ds.results = res
+    ds.summary = {"param_sources": {"(well)": table, "UPPER": table, "LOWER": table},
+                  "lrlc": {"params": {"default": {}, "zones": zone_params}}}
+    ds.calculated = True
+    model = AppModel()
+    model.add_well(ds)
+    model.set_active_well("WELL:A")
+    return model, ds, res
+
+
+@pytest.fixture()
+def _no_dialogs(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("unexpected dialog")
+    for name in ("warning", "critical", "information", "question"):
+        monkeypatch.setattr(QMessageBox, name, staticmethod(refuse))
+
+
+def _make(qtbot, zone_params, zone, **kw):
+    from ui.widgets.lrlc_pickett import PickettPanel
+    model, ds, res = _panel_model(zone_params, **kw)
+    panel = PickettPanel()
+    qtbot.addWidget(panel)
+    panel.set_context(model, ds, zone)
+    return panel, ds, res
+
+
+def test_panel_scalar_zone_keeps_the_straight_lines(qtbot, _no_dialogs):
+    panel, _, _ = _make(qtbot, {"UPPER": {"mn_mode": "scalar"}}, "UPPER")
+    assert panel.iso_note.text() == ""
+    xs = panel.plot.figure.axes[0].lines[0].get_xdata()
+    for sw, y in panel.iso_curves:
+        assert y == pytest.approx(iso_sw_line(xs, 1.0, 0.05, 2.0, 2.0, sw))
+    assert len(panel.iso_curves) == 5
+
+
+def test_panel_curve_zone_draws_curves_at_the_median_vsh(qtbot, _no_dialogs):
+    panel, ds, res = _make(qtbot, {"UPPER": dict(FORMULA)}, "UPPER")
+    upper = res[res["ZONE"] == "UPPER"]
+    vsh_ref = float(np.median(upper["VSH"]))
+    assert panel.iso_note.text().startswith(f"Iso-Sw from the variable m model at Vsh = {vsh_ref:.2f}")
+    xs = panel.plot.figure.axes[0].lines[0].get_xdata()
+    for sw, y in panel.iso_curves:
+        m = m_formula(xs, np.full(xs.shape, vsh_ref), FORMULA["m_coef"])
+        assert y == pytest.approx(0.05 / (xs ** m * sw ** 2.0))
+    straight = iso_sw_line(xs, 1.0, 0.05, 2.0, 2.0, 1.0)
+    assert not np.allclose(panel.iso_curves[0][1], straight)
+    assert "PHIT" not in panel.iso_note.text()
+
+
+def test_panel_note_names_the_porosity_the_run_uses(qtbot, _no_dialogs):
+    zone = dict(FORMULA, phi_source="phit")
+    panel, _, _ = _make(qtbot, {"UPPER": zone}, "UPPER")
+    assert "m evaluated on PHIE; the run evaluates it on PHIT" in panel.iso_note.text()
+    sand = dict(FORMULA, sw_basis="sand")
+    panel, _, _ = _make(qtbot, {"UPPER": sand}, "UPPER")
+    assert "the run evaluates it on the sand porosity" in panel.iso_note.text()
+
+
+def test_panel_shell_zone_note_and_gate(qtbot, _no_dialogs):
+    shell = dict(FORMULA, m_model="shell")
+    panel, _, _ = _make(qtbot, {"UPPER": shell}, "UPPER", lithology="Carbonate")
+    assert panel.iso_note.text().startswith("Iso-Sw from the Shell m model.")
+    xs = panel.plot.figure.axes[0].lines[0].get_xdata()
+    assert panel.iso_curves[0][1] == pytest.approx(0.05 / xs ** shell_m(xs))
+    panel, _, _ = _make(qtbot, {"UPPER": shell}, "UPPER")       # sandstone: the run refuses Shell
+    assert "constant m" in panel.iso_note.text()
+
+
+def test_panel_mixed_all_zones_keeps_straight_lines_with_a_note(qtbot, _no_dialogs):
+    panel, _, _ = _make(qtbot, {"UPPER": dict(FORMULA), "LOWER": {"mn_mode": "scalar"}}, None)
+    assert panel.iso_note.text() == ("Iso-Sw lines use the constant m; some zones use the "
+                                     "variable m model.")
+    xs = panel.plot.figure.axes[0].lines[0].get_xdata()
+    for sw, y in panel.iso_curves:
+        assert y == pytest.approx(iso_sw_line(xs, 1.0, 0.05, 2.0, 2.0, sw))
+
+
+def test_panel_curve_mode_does_not_change_the_fit(qtbot, _no_dialogs):
+    curve, _, _ = _make(qtbot, {"UPPER": dict(FORMULA)}, "UPPER")
+    plain, _, _ = _make(qtbot, {}, "UPPER")
+    assert curve._fit.m == plain._fit.m and curve._fit.rw == plain._fit.rw

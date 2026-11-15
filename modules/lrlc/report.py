@@ -29,7 +29,8 @@ ZONE_COLUMNS = (
     "Diagnosis_level", "Diagnosis_evidence", "Rt_steps", "Rt_source", "Rt_fallback", "Guard",
     "Net_pay_base_ft", "Net_pay_ft", "Net_pay_change_ft", "Avg_sw_pay_base", "Avg_sw_pay",
     "Hcpv_base", "Hcpv", "Sw_minus_shf_bias", "Sw_minus_shf_rmse", "Sw_shf_n", "Decon_status",
-    "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Elastic_flag_samples",
+    "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Decon_width_sensitivity",
+    "Elastic_flag_samples",
     "Elastic_flag_thickness_ft", "Elastic_wet_samples", "Issues",
 )
 STEP_COLUMNS = ("Well", "Zone", "Order", "Step", "Curve", "From", "Status", "Valid_samples",
@@ -106,6 +107,26 @@ def _fmt(value) -> str:
         return f"{float(value):.4g}"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _width_sensitivity_text(entry) -> Optional[str]:
+    """``3.2 / 4.0 / 5.0 ft: 1.9 / 2.0 / 1.7 x (valid 19 / 19 / 14 of 19)`` from a zone's
+    ``width_sensitivity`` (None when absent or when no sample is raised by more than 10 percent)."""
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("n") is not None and _num(entry.get("n")) == 0:
+        return None
+    widths, ratios = entry.get("widths_ft"), entry.get("median_ratio")
+    if not isinstance(widths, (list, tuple)) or not isinstance(ratios, (list, tuple)) or not widths:
+        return None
+    w_text = " / ".join("n/a" if _num(w) is None else f"{_num(w):.1f}" for w in widths)
+    r_text = " / ".join("n/a" if _num(r) is None else f"{_num(r):.1f}" for r in ratios)
+    text = f"{w_text} ft: {r_text} x"
+    valid, total = entry.get("n_valid"), _num(entry.get("n"))
+    if isinstance(valid, (list, tuple)) and valid and total is not None:
+        v_text = " / ".join("n/a" if _num(v) is None else str(int(_num(v))) for v in valid)
+        text += f" (valid {v_text} of {int(total)})"
+    return text
 
 
 def _resolved(lrlc: dict, zone) -> dict:
@@ -282,6 +303,7 @@ def _row_cells(label, summary, results, zone, well_row: bool, dz) -> dict:
                     max(len(bounds) - 1, 0) if bounds is not None else None)
                 row["Decon_misfit_rms"] = _num(z.get("misfit_rms"))
                 row["Decon_amplified"] = _num(z.get("n_amplified"))
+                row["Decon_width_sensitivity"] = _width_sensitivity_text(z.get("width_sensitivity"))
             if use_zone:
                 row["Decon_beds"] = _num(decon.get("n_beds")) if row["Decon_beds"] is None else row["Decon_beds"]
 

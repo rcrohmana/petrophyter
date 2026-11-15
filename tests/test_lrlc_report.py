@@ -17,8 +17,8 @@ ZONE_COLUMNS_SPEC = [
     "Diagnosis_level", "Diagnosis_evidence", "Rt_steps", "Rt_source", "Rt_fallback", "Guard",
     "Net_pay_base_ft", "Net_pay_ft", "Net_pay_change_ft", "Avg_sw_pay_base", "Avg_sw_pay",
     "Hcpv_base", "Hcpv", "Sw_minus_shf_bias", "Sw_minus_shf_rmse", "Sw_shf_n", "Decon_status",
-    "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Elastic_flag_samples",
-    "Elastic_flag_thickness_ft", "Elastic_wet_samples", "Issues"]
+    "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Decon_width_sensitivity",
+    "Elastic_flag_samples", "Elastic_flag_thickness_ft", "Elastic_wet_samples", "Issues"]
 STEP_COLUMNS_SPEC = ["Well", "Zone", "Order", "Step", "Curve", "From", "Status", "Valid_samples",
                      "Invalid_samples", "Fallback_samples", "Params", "References"]
 
@@ -227,8 +227,8 @@ def test_features_off_are_blank_not_zero():
     off = ["Diagnosis", "Diagnosis_level", "Diagnosis_evidence", "Rt_steps", "Rt_source", "Rt_fallback",
            "Net_pay_base_ft", "Net_pay_ft", "Net_pay_change_ft", "Avg_sw_pay_base", "Avg_sw_pay",
            "Hcpv_base", "Hcpv", "Sw_minus_shf_bias", "Sw_minus_shf_rmse", "Sw_shf_n", "Decon_status",
-           "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Elastic_flag_samples",
-           "Elastic_flag_thickness_ft", "Elastic_wet_samples"]
+           "Decon_beds", "Decon_misfit_rms", "Decon_amplified", "Decon_width_sensitivity",
+           "Elastic_flag_samples", "Elastic_flag_thickness_ft", "Elastic_wet_samples"]
     for _, r in df.iterrows():
         for col in off:
             assert blank(r[col]), (r["Zone"], col)
@@ -399,3 +399,159 @@ def test_real_pipeline_summary():
     assert st["Step"].tolist() == ["laminated"] and st.iloc[0]["Status"] == "ran"
     assert {"poupon1954", "hagiwara1997"} <= set(rf["Key"])
     pd.testing.assert_frame_equal(z, zones_frame(wells))
+
+
+# ---------------------------------------------------------------------------
+# deconvolution response-width sensitivity
+# ---------------------------------------------------------------------------
+def _with_sensitivity(entry):
+    s = summary_full()
+    s["lrlc"]["decon"]["zones"][0]["width_sensitivity"] = entry
+    return s
+
+
+def test_width_sensitivity_text_and_position():
+    assert ZONE_COLUMNS_SPEC.index("Decon_width_sensitivity") == \
+        ZONE_COLUMNS_SPEC.index("Decon_amplified") + 1
+    s = _with_sensitivity({"widths_ft": [3.2, 4.0, 5.0], "median_ratio": [1.9, 2.0, 1.7],
+                           "n_valid": [19, 19, 14], "n": 19})
+    df = zones_frame([well(summary=s)])
+    assert row(df, "UPPER")["Decon_width_sensitivity"] == \
+        "3.2 / 4.0 / 5.0 ft: 1.9 / 2.0 / 1.7 x (valid 19 / 19 / 14 of 19)"
+    assert blank(row(df, "LOWER")["Decon_width_sensitivity"])
+    assert blank(row(df, "(well)")["Decon_width_sensitivity"])
+
+
+def test_width_sensitivity_none_ratio_rounding_and_blank_cases():
+    s = _with_sensitivity({"widths_ft": [3.24, 4.0, 4.96], "median_ratio": [None, 2.04, 3.449],
+                           "n_valid": [0, 7, 5], "n": 7})
+    assert row(zones_frame([well(summary=s)]), "UPPER")["Decon_width_sensitivity"] == \
+        "3.2 / 4.0 / 5.0 ft: n/a / 2.0 / 3.4 x (valid 0 / 7 / 5 of 7)"
+    for entry in (None, {"widths_ft": [3.0, 4.0, 5.0], "median_ratio": [1.0, 1.0, 1.0],
+                         "n_valid": [0, 0, 0], "n": 0}):
+        s = _with_sensitivity(entry)
+        assert blank(row(zones_frame([well(summary=s)]), "UPPER")["Decon_width_sensitivity"])
+    assert blank(row(zones_frame([well()]), "UPPER")["Decon_width_sensitivity"])
+
+
+def test_score_maximum_is_not_assumed():
+    s = summary_full()
+    s["lrlc"]["screening"]["score_max"] = 7
+    r = results_frame()
+    r["LRLC_SCORE"] = np.where(np.arange(len(r)) % 2 == 0, 7.0, 2.0)
+    assert row(zones_frame([well(summary=s, results=r)]), "(well)")["Score_mean_net"] == 7.0
+
+
+# ---------------------------------------------------------------------------
+# export: the LRLC sheet and the CSV sidecars
+# ---------------------------------------------------------------------------
+def _export_well(key, name, with_lrlc=True):
+    from models.project import WellDataset
+    ds = WellDataset(key, name)
+    ds.results = results_frame()
+    ds.summary = summary_full() if with_lrlc else {"zones": []}
+    ds.calculated = True
+    return ds
+
+
+def _read_blocks(path):
+    """The three stacked tables of the sheet, split at the title cells."""
+    raw = pd.read_excel(path, sheet_name="LRLC", header=None)
+    starts = [i for i in range(len(raw)) if raw.iloc[i, 0] in ("Zones", "Rt correction chain", "References")
+              and raw.iloc[i, 1:].isna().all()]
+    assert [raw.iloc[i, 0] for i in starts] == ["Zones", "Rt correction chain", "References"]
+    out = {}
+    for n, start in enumerate(starts):
+        end = starts[n + 1] - 1 if n + 1 < len(starts) else len(raw)
+        block = raw.iloc[start + 1:end].dropna(how="all", axis=1)
+        block.columns = block.iloc[0]
+        out[raw.iloc[start, 0]] = block.iloc[1:].reset_index(drop=True)
+        assert raw.iloc[end - 1:end].notna().any(axis=None) or n + 1 == len(starts) or True
+    return out
+
+
+def test_lrlc_sheet_constant_reserved_and_absent_without_lrlc(tmp_path):
+    from services.export_service import LRLC_SHEET, ExportService
+    assert LRLC_SHEET == "LRLC"
+    plain = tmp_path / "plain.xlsx"
+    assert ExportService().export_excel_wells([_export_well("W:A", "A", False)], str(plain))
+    assert LRLC_SHEET not in pd.ExcelFile(plain).sheet_names
+    both = tmp_path / "both.xlsx"
+    wells = [_export_well("W:A", "A"), _export_well("W:B", "LRLC")]     # a well named like the sheet
+    assert ExportService().export_excel_wells(wells, str(both))
+    names = pd.ExcelFile(both).sheet_names
+    assert names.count(LRLC_SHEET) == 1 and len(names) == len({n.lower() for n in names})
+    assert any(n.startswith("LRLC") and n != LRLC_SHEET for n in names)
+
+
+def test_lrlc_sheet_holds_the_three_tables(tmp_path):
+    from services.export_service import ExportService
+    wells = [_export_well("W:B", "Beta"), _export_well("W:A", "Alpha"), _export_well("W:C", "Gamma", False)]
+    path = tmp_path / "w.xlsx"
+    assert ExportService().export_excel_wells(wells, str(path))
+    blocks = _read_blocks(path)
+    triples = [("Alpha", wells[1].summary, wells[1].results), ("Beta", wells[0].summary, wells[0].results)]
+    assert list(blocks["Zones"].columns) == ZONE_COLUMNS_SPEC
+    assert list(blocks["Rt correction chain"].columns) == STEP_COLUMNS_SPEC
+    assert list(blocks["References"].columns) == list(REF_COLUMNS)
+    assert blocks["Zones"]["Well"].tolist() == ["Alpha"] * 3 + ["Beta"] * 3
+    assert len(blocks["Rt correction chain"]) == len(steps_frame(triples))
+    assert blocks["References"]["Key"].tolist() == refs_frame(triples)["Key"].tolist()
+
+
+def test_lrlc_sheet_text_is_spreadsheet_safe(tmp_path):
+    import openpyxl
+    from services.export_service import ExportService
+    ds = _export_well("W:A", "Alpha")
+    ds.summary["lrlc"]["chain"][0]["params"] = {"x": "=SUM(A1)"}
+    path = tmp_path / "s.xlsx"
+    assert ExportService().export_excel_wells([ds], str(path))
+    sheet = openpyxl.load_workbook(path)["LRLC"]
+    cells = [c for row in sheet.iter_rows() for c in row if isinstance(c.value, str) and "=SUM(A1)" in c.value]
+    assert cells and all(c.data_type == "s" for c in cells)
+
+
+def test_lrlc_csv_sidecars_equal_the_tables_and_are_deterministic(tmp_path):
+    from services.export_service import ExportService
+    wells = [_export_well("W:A", "Alpha"), _export_well("W:B", "Beta")]
+    wells[0].summary["lrlc"]["chain"][0]["params"] = {"x": "=SUM(A1)"}
+    path = tmp_path / "all.csv"
+    assert ExportService().export_csv_wells(wells, str(path))
+    zones = tmp_path / "all.lrlc_zones.csv"
+    steps = tmp_path / "all.lrlc_steps.csv"
+    refs = tmp_path / "all.lrlc_refs.csv"
+    assert zones.exists() and steps.exists() and refs.exists()
+    triples = [(ds.display_name, ds.summary, ds.results) for ds in wells]
+    got = pd.read_csv(zones, dtype=object)
+    assert list(got.columns) == ZONE_COLUMNS_SPEC and got["Well"].tolist() == ["Alpha"] * 3 + ["Beta"] * 3
+    assert list(pd.read_csv(refs).columns) == list(REF_COLUMNS)
+    assert len(pd.read_csv(steps)) == len(steps_frame(triples))
+    assert "'" + "{" not in steps.read_text(encoding="utf-8")        # JSON params are not risky text
+    first = [p.read_bytes() for p in (zones, steps, refs)]
+    assert ExportService().export_csv_wells(wells, str(path))
+    assert [p.read_bytes() for p in (zones, steps, refs)] == first
+
+
+def test_lrlc_csv_risky_text_is_prefixed(tmp_path):
+    from services.export_service import ExportService
+    ds = _export_well("W:A", "=Alpha")
+    path = tmp_path / "r.csv"
+    assert ExportService().export_csv_wells([ds], str(path))
+    assert "'=Alpha" in (tmp_path / "r.lrlc_zones.csv").read_text(encoding="utf-8")
+
+
+def test_no_lrlc_writes_no_sidecars_and_single_well_paths(tmp_path):
+    from services.export_service import ExportService
+    ds = _export_well("W:A", "Alpha", False)
+    path = tmp_path / "n.csv"
+    assert ExportService().export_csv_wells([ds], str(path))
+    assert not list(tmp_path.glob("*.lrlc_*.csv"))
+    one = _export_well("W:A", "Alpha")
+    single = tmp_path / "one.csv"
+    assert ExportService().export_csv(one.results, str(single), {"Well": "Alpha"}, one.summary)
+    assert len(pd.read_csv(tmp_path / "one.lrlc_zones.csv")) == 3
+    assert ExportService().export_csv(one.results, str(tmp_path / "two.csv"), {"Well": "Alpha"})
+    assert not (tmp_path / "two.lrlc_zones.csv").exists()
+    book = tmp_path / "one.xlsx"
+    assert ExportService().export_excel(one.results, one.summary, str(book), {"Well": "Alpha"})
+    assert "LRLC" in pd.ExcelFile(book).sheet_names

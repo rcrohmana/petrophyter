@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.lrlc import pickett
+from modules.lrlc.config import LRLC_DEFAULTS, LRLC_PARAM_DEFAULTS
 from modules.lrlc.methods import METHOD_TEXT
 from modules.pipeline import WELL_SOURCES_KEY, temperature_factor
 from services.lrlc_service import LrlcService
@@ -85,6 +86,15 @@ def zone_sources(ds, zone: Optional[str]) -> Dict:
     return sources.get(WELL_SOURCES_KEY) or {}
 
 
+def pickett_sand_basis(ladder: dict) -> bool:
+    """The run gives the m model the sand-lamina porosity in this zone."""
+    from modules.lrlc.l2 import resolve_basis
+    try:
+        return resolve_basis(ladder) == "sand"
+    except Exception:      # noqa: BLE001 - a malformed ladder only drops the note
+        return False
+
+
 def source_value(table: Dict, name: str, default: float) -> float:
     try:
         return float(table[name]["value"])
@@ -108,6 +118,7 @@ class PickettPanel(QWidget):
         self._selector = None
         self._fit: Optional[pickett.PickettFit] = None
         self._pending_rw: Optional[bool] = None
+        self.iso_curves: List[tuple] = []     # (Sw, Rt array) of the iso-Sw lines last drawn
         self._settings = dict(pickett.DEFAULT_SETTINGS)
         self._build()
 
@@ -189,6 +200,10 @@ class PickettPanel(QWidget):
         self.fit_note.setWordWrap(True)
         set_status(self.fit_note, "muted")
         rl.addWidget(self.fit_note)
+        self.iso_note = QLabel("")
+        self.iso_note.setWordWrap(True)
+        set_status(self.iso_note, "muted")
+        rl.addWidget(self.iso_note)
 
         apply_row = QHBoxLayout()
         self.apply_m_btn = QPushButton("Apply m")
@@ -397,10 +412,68 @@ class PickettPanel(QWidget):
             logger.exception("Pickett temperature factor failed; plotting raw Rt")
             return None
 
+    # ------------------------------------------------------------ iso-Sw curves
+    def _zone_ladder(self, zone: Optional[str]) -> dict:
+        """Resolved ladder values of a zone as the last run stored them (built-ins for the rest)."""
+        params = ((getattr(self.ds, "summary", None) or {}).get("lrlc") or {}).get("params") or {}
+        out = dict(LRLC_PARAM_DEFAULTS)
+        out.update(params.get("default") or {})
+        if zone:
+            out.update((params.get("zones") or {}).get(zone) or {})
+        return out
+
+    def _iso_mode(self, zones) -> Tuple[str, Optional[str], Optional[dict]]:
+        """``("scalar" | "curve" | "mixed", zone key, ladder)`` of the plotted zone selection."""
+        names = sorted({str(z) for z in zones}, key=str)
+        if self.zone:
+            names = [self.zone]
+        ladders = {z: self._zone_ladder(z or None) for z in names}
+        curve = [z for z, prm in ladders.items() if prm.get("mn_mode") == "curve"]
+        if not curve:
+            return "scalar", None, None
+        if len(names) == 1:
+            return "curve", names[0], ladders[names[0]]
+        return "mixed", None, None
+
+    def _iso_curves(self, mode, key, ladder, phi_col, grid, vsh, zones, table, a, m_cur, n_cur):
+        """``(m, n, note)`` for the iso-Sw lines: arrays along ``grid`` in curve mode, else scalars."""
+        if mode == "mixed":
+            return m_cur, n_cur, ("Iso-Sw lines use the constant m; some zones use the variable "
+                                  "m model.")
+        if mode != "curve":
+            return m_cur, n_cur, ""
+        sel = zones == (key or "")
+        vsh_zone = vsh[sel] if sel.any() else vsh
+        vsh_zone = vsh_zone[np.isfinite(vsh_zone)]
+        vsh_ref = float(np.median(vsh_zone)) if vsh_zone.size else float("nan")
+        blk = {**LRLC_DEFAULTS["variable_mn"],
+               **((getattr(self.ds, "summary", None) or {}).get("lrlc") or {}).get("variable_mn", {})}
+        lithology = None
+        entry = table.get("lithology_preset") if isinstance(table, dict) else None
+        if isinstance(entry, dict):
+            lithology = entry.get("value")
+        m_arr, n_arr, used = pickett.iso_sw_exponents(
+            grid, ladder, vsh_ref, scalar_m=m_cur, scalar_n=n_cur,
+            clip_m=blk["clip_m"], clip_n=blk["clip_n"], lithology=lithology)
+        if not used:
+            return m_cur, n_cur, ("Iso-Sw lines use the constant m; the variable m model could "
+                                  "not be evaluated for this zone.")
+        shell = ladder.get("m_model") == "shell"
+        note = ("Iso-Sw from the Shell m model." if shell else
+                f"Iso-Sw from the variable m model at Vsh = {vsh_ref:.2f}.")
+        run_phi = str(ladder.get("phi_source", "phie")).upper()
+        if pickett_sand_basis(ladder):
+            note += f" m evaluated on {phi_col}; the run evaluates it on the sand porosity."
+        elif run_phi != phi_col:
+            note += f" m evaluated on {phi_col}; the run evaluates it on {run_phi}."
+        return m_arr, n_arr, note
+
     # -------------------------------------------------------------------- plot
     def _replot(self):
         self._selector = None
         self._fit = None
+        self.iso_curves = []
+        self.iso_note.setText("")
         fig = self.plot.figure
         fig.clear()
         df = self._frame()
@@ -459,10 +532,16 @@ class PickettPanel(QWidget):
         x_lo, x_hi = float(phi.min()) * 0.9, float(phi.max()) * 1.1
         grid = np.logspace(np.log10(x_lo), np.log10(x_hi), 60)
         if np.isfinite(rw_cur):
+            mode, key, ladder = self._iso_mode(zones)
+            m_line, n_line, iso_text = self._iso_curves(
+                mode, key, ladder, phi_col, grid, vsh, zones, table, a, m_cur, n_cur)
+            self.iso_note.setText(iso_text)
             for sw in s["iso_sw"]:
-                y = pickett.iso_sw_line(grid, a, rw_cur, m_cur, n_cur, sw)
+                y = pickett.iso_sw_line(grid, a, rw_cur, m_line, n_line, sw)
+                self.iso_curves.append((float(sw), y))
                 is_wet = abs(float(sw) - 1.0) < 1e-9
-                label = "Archie Sw = 1 (current parameters)" if is_wet else None
+                label = ("Archie Sw = 1 (current parameters)" if mode != "curve"
+                         else "Sw = 1 (variable m)") if is_wet else None
                 ax.plot(grid, y, color=get_plot_color("BVW") if is_wet else chrome["spine"],
                         lw=1.4 if is_wet else 0.8, ls="-" if is_wet else "--",
                         label=label, zorder=3)

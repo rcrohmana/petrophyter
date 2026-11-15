@@ -353,7 +353,8 @@ class ExportTab(QWidget):
         elif self.model.calculated and self.model.results is not None:
             self._service.export_csv(
                 apply_depth_range(self.model.results, depth_range), file_path,
-                provenance_block(self.model.project.active, depth_range))
+                provenance_block(self.model.project.active, depth_range),
+                self.model.summary)
 
     def _on_export_excel(self):
         """Handle Excel export."""

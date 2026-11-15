@@ -16,6 +16,8 @@ import pandas as pd
 
 from modules.las_handler import export_merged_las
 from modules.lrlc.provenance import lrlc_curve_descriptions
+from modules.lrlc.report import refs_frame, steps_frame, wells_with_lrlc
+from modules.lrlc.report import zones_frame as lrlc_zones_frame
 from services.issues import collect_issues, issue_counts
 from version import APP_BUILD, APP_VERSION
 
@@ -192,6 +194,7 @@ ROCKTYPES_SHEET = "Rock Types"
 UNCERTAINTY_SHEET = "Uncertainty"
 TORNADO_SHEET = "Tornado"
 SHF_SHEET = "SHF"
+LRLC_SHEET = "LRLC"
 FIELD_TOTAL_LABEL = "Field total"
 
 WELL_COLUMNS = [
@@ -468,6 +471,45 @@ def _las_with_provenance(content: str, block: dict) -> str:
 def _provenance_frame(block: dict) -> pd.DataFrame:
     """Key/value rows of one well's block (single-well Excel)."""
     return pd.DataFrame(list(block.items()), columns=["Item", "Value"])
+
+
+LRLC_TABLES = (("Zones", "zones"), ("Rt correction chain", "steps"), ("References", "refs"))
+
+
+def lrlc_report_frames(triples) -> dict:
+    """``{"zones", "steps", "refs"}`` frames of ``(label, summary, results)`` triples ({} when no
+    well has an LRLC run)."""
+    triples = wells_with_lrlc(triples)
+    if not triples:
+        return {}
+    return {"zones": lrlc_zones_frame(triples), "steps": steps_frame(triples),
+            "refs": refs_frame(triples)}
+
+
+def _lrlc_triples(wells, depth_range=None) -> list:
+    """LRLC report inputs of the exported wells (results inside the depth interval)."""
+    return [(well_label(ds), ds.summary, apply_depth_range(ds.results, depth_range))
+            for ds in wells_with_results(wells) if ds.summary]
+
+
+def _write_lrlc_sheet(writer, frames: dict) -> None:
+    """The ``LRLC`` sheet: three tables stacked, a title cell in column A, one blank row between."""
+    row = 0
+    for title, key in LRLC_TABLES:
+        frame = frames[key]
+        _write_excel_sheet(writer, pd.DataFrame([[title]]), LRLC_SHEET, startrow=row, header=False)
+        _write_excel_sheet(writer, frame, LRLC_SHEET, startrow=row + 1)
+        row += len(frame) + 3
+
+
+def _write_lrlc_sidecars(file_path: str, frames: dict) -> None:
+    """``<name>.lrlc_zones.csv``, ``.lrlc_steps.csv`` and ``.lrlc_refs.csv`` next to a CSV."""
+    stem = os.path.splitext(os.fspath(file_path))[0]
+    for _title, key in LRLC_TABLES:
+        target = f"{stem}.lrlc_{key}.csv"
+        with _atomic_target(target, ".csv") as temporary_path:
+            spreadsheet_safe(frames[key], csv=True).to_csv(
+                temporary_path, index=False, encoding="utf-8", lineterminator="\n")
 
 
 def _write_sidecar(file_path: str, blocks: list) -> None:
@@ -974,10 +1016,11 @@ def _export_wells_excel(wells, file_path, depth_range=None, uncertainty=None):
     names = unique_names([well_label(ds) for ds in ready], 31,
                          reserved=(SUMMARY_SHEET, ZONES_SHEET, PROVENANCE_SHEET,
                                    ROCKTYPES_SHEET, UNCERTAINTY_SHEET, TORNADO_SHEET,
-                                   SHF_SHEET))
+                                   SHF_SHEET, LRLC_SHEET))
     zones = zones_frame(ready)
     rock_types = rock_types_frame(ready)
     shf = shf_frame(ready)
+    lrlc = lrlc_report_frames(_lrlc_triples(ready, depth_range))
     provenance = pd.DataFrame(
         [provenance_block(ds, depth_range) for ds in wells_with_results(wells)])
     with _atomic_target(file_path, ".xlsx") as temporary_path:
@@ -989,6 +1032,8 @@ def _export_wells_excel(wells, file_path, depth_range=None, uncertainty=None):
                 _write_excel_sheet(writer, rock_types, ROCKTYPES_SHEET)
             if len(shf):
                 _write_excel_sheet(writer, shf, SHF_SHEET)
+            if lrlc and len(lrlc["zones"]):
+                _write_lrlc_sheet(writer, lrlc)
             if uncertainty is not None and uncertainty.get("result") is not None:
                 _write_uncertainty_sheets(writer, uncertainty)
             _write_excel_sheet(writer, provenance, PROVENANCE_SHEET)
@@ -1007,11 +1052,13 @@ class ExportService(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
     
-    def export_csv(self, results: pd.DataFrame, file_path: str, provenance: dict = None) -> bool:
+    def export_csv(self, results: pd.DataFrame, file_path: str, provenance: dict = None,
+                   summary: dict = None) -> bool:
         """Export results to CSV file without corrupting an existing target.
 
         With ``provenance`` (see :func:`provenance_block`) a sidecar
-        ``<name>.provenance.txt`` is written next to the CSV; the CSV is unchanged.
+        ``<name>.provenance.txt`` is written next to the CSV; the CSV is unchanged. With a
+        ``summary`` that holds an LRLC run, the three ``.lrlc_*.csv`` report sidecars are written.
         """
         try:
             _validate_results(results)
@@ -1019,6 +1066,10 @@ class ExportService(QObject):
                 spreadsheet_safe(results, csv=True).to_csv(temporary_path, index=False)
             if provenance:
                 _write_sidecar(file_path, [provenance])
+            lrlc = lrlc_report_frames([((provenance or {}).get("Well", ""), summary, results)]
+                                      if summary else [])
+            if lrlc:
+                _write_lrlc_sidecars(file_path, lrlc)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:
@@ -1052,6 +1103,9 @@ class ExportService(QObject):
                         rows = well_shf_rows(summary["shf"], (provenance or {}).get("Well", ""))
                         _write_excel_sheet(writer, pd.DataFrame(rows, columns=SHF_COLUMNS),
                                            SHF_SHEET)
+                    lrlc = lrlc_report_frames([((provenance or {}).get("Well", ""), summary, results)])
+                    if lrlc and len(lrlc["zones"]):
+                        _write_lrlc_sheet(writer, lrlc)
                     if provenance:
                         _write_excel_sheet(writer, _provenance_frame(provenance),
                                            PROVENANCE_SHEET)
@@ -1102,6 +1156,9 @@ class ExportService(QObject):
                 spreadsheet_safe(frame, csv=True).to_csv(temporary_path, index=False)
             _write_sidecar(file_path, [provenance_block(ds, depth_range)
                                        for ds in wells_with_results(wells)])
+            lrlc = lrlc_report_frames(_lrlc_triples(wells, depth_range))
+            if lrlc:
+                _write_lrlc_sidecars(file_path, lrlc)
             self.export_complete.emit(f"Exported to {file_path}")
             return True
         except PermissionError:

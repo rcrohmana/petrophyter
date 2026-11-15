@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from modules.lrlc import SHIPPED_METHODS
+from modules.lrlc.variable_mn import DEFAULT_CLIP, build_mn_curves
 from modules.param_scopes import VALID_RANGES
 
 M_RANGE = VALID_RANGES["m"]
@@ -221,3 +222,23 @@ def normalise_rt_for_temperature(rt, factor) -> np.ndarray:
     f = np.asarray(factor, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(f > 0, rt / f, np.nan)
+
+
+@_refs("pickett")
+def iso_sw_exponents(phi_grid, mn_settings, vsh_ref, *, scalar_m, scalar_n,
+                     clip_m=DEFAULT_CLIP, clip_n=DEFAULT_CLIP, lithology=None, zone="zone"):
+    """``(m, n, used)`` along a porosity grid for the iso-Sw curves of a zone in curve mode.
+
+    Goes through ``build_mn_curves`` (the code the run uses), so the Shell lithology gate, the
+    porosity floor and the clip ranges are the run's. The porosity is the grid value (the plotted
+    x); ``vsh_ref`` is the one shale volume held fixed along the curve. ``mn_settings`` is the
+    zone's resolved ladder dict (``mn_mode``, ``m_model``, ``m_coef``, ``shell_confirm``,
+    ``n_model``, ``n_coef``). ``used`` is True when the m model was evaluated at any grid point;
+    otherwise ``m`` and ``n`` are the scalar values (the caller draws straight lines).
+    """
+    grid = np.asarray(phi_grid, dtype=float).reshape(-1)
+    vsh = np.full(grid.shape, float(vsh_ref) if vsh_ref is not None else np.nan)
+    out = build_mn_curves(grid, vsh, np.full(grid.shape, zone, dtype=object),
+                          {zone: dict(mn_settings or {})}, scalar_m, scalar_n, clip_m, clip_n,
+                          lithology)
+    return out.m, out.n, bool(out.m_valid.any())
