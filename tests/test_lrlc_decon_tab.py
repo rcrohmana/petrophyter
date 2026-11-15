@@ -607,3 +607,20 @@ def test_the_overview_gains_the_decon_column_and_sw_reads_follow(page):
     rows = {form.chain_table.item(r, 0).text(): r for r in range(form.chain_table.rowCount())}
     assert form.chain_table.item(rows["UPPER"], 2).text() == "on"
     assert form.chain_table.item(rows["LOWER"], 2).text() == ""
+
+
+@pytest.mark.parametrize("target, other, beds", [("UPPER", "LOWER", 4), ("LOWER", "UPPER", 6)])
+def test_a_zone_proposal_ignores_the_step_stored_in_the_other_zone(page, target, other, beds):
+    """The bed count and the issues of a one-zone proposal are the zone's own, whatever the other
+    zone has stored."""
+    from services.lrlc_service import LrlcService
+
+    window, _tab, _form, ds = page
+    alone = DeconWorker.from_model(window.model, ds, target, {}, None, 1).compute()
+    assert alone["block"]["n_beds"] == beds
+    LrlcService.set_param(window.model, "project", other, "rt_steps", ["decon"])
+    out = DeconWorker.from_model(window.model, ds, target, {}, None, 2).compute()
+    assert out["block"]["n_beds"] == beds
+    assert not [i for i in out["issues"] if i["zone"] == other and "EDGE" in i["code"]]
+    assert [(i["code"], i["zone"]) for i in out["issues"]] == [
+        (i["code"], i["zone"]) for i in alone["issues"]]
