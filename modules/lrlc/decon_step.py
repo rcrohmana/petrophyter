@@ -90,8 +90,10 @@ def derive_decon_well(*, depth, rt, candidates, zone_keys, lrlc, issues: Optiona
     active = np.isin(keys, zones) if zones else np.zeros(n, dtype=bool)
     well = well_settings(lrlc)
     params = DeconParams.from_settings(well)
-    ratio_by_zone = {str(z): float(_resolved(lrlc, z).get("dec_max_ratio", params.max_ratio)) for z in zones}
-    misfit_by_zone = {str(z): _resolved(lrlc, z).get("dec_misfit_warn", params.misfit_warn) for z in zones}
+    # every zone's limits (a zone without the step still takes part in the well solve)
+    all_zones = list(_unique(keys)) if n else []
+    ratio_by_zone = {str(z): float(_resolved(lrlc, z).get("dec_max_ratio", params.max_ratio)) for z in all_zones}
+    misfit_by_zone = {str(z): _resolved(lrlc, z).get("dec_misfit_warn", params.misfit_warn) for z in all_zones}
     misfit_by_zone = {z: (None if v is None else float(v)) for z, v in misfit_by_zone.items()}
     source = str(well.get("dec_hires_source", "auto"))
     kind, column, hires = pick_reference(source, candidates or {})

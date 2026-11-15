@@ -533,8 +533,9 @@ def deconvolve(depth, rt, hires, params: DeconParams, active, data_mask=None, zo
                max_ratio_by_zone=None, misfit_warn_by_zone=None, log_domain=True) -> DeconResult:
     """Deconvolve the deep resistivity ``rt`` in the rows flagged ``active``; see the module docstring.
 
-    ``hires`` is the reference curve (log10 when ``log_domain``). Rows outside ``active`` feed the data term as context
-    but never produce output. Inputs are not modified.
+    ``hires`` is the reference curve (log10 when ``log_domain``). The solve always covers every row of the well, with
+    beds picked everywhere, so the result in a zone does not depend on which other zones are active; ``active`` only
+    decides where output, counts, issues and window statistics are reported. Inputs are not modified.
     """
     z = np.asarray(depth, dtype=float)
     n = z.size
@@ -585,8 +586,8 @@ def deconvolve(depth, rt, hires, params: DeconParams, active, data_mask=None, zo
     gap_after = _gap_after(z)
     default_ratio = float(params.max_ratio)
 
-    # step 1: solve intervals from the active rows, padded and merged
-    idx = np.flatnonzero(act)
+    # step 1: solve intervals: every row (padded and merged), whatever rows are active
+    idx = np.arange(n)
     run_starts = np.concatenate([[0], np.flatnonzero(np.diff(idx) > 1) + 1])
     run_ends = np.concatenate([run_starts[1:] - 1, [idx.size - 1]])
     intervals: List[List[float]] = []
@@ -680,7 +681,9 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
     n_act = int(seg_act.sum())
     steps = np.diff(zs)
     ds = float(np.median(steps)) if steps.size else np.inf
-    mid_zone = zone_at(j0 + (j1 - j0) // 2)
+    act_rows = np.flatnonzero(seg_act) + j0
+    # segment-level events go to the zone of the middle active row (none when no row is active)
+    mid_zone = zone_at(act_rows[act_rows.size // 2]) if act_rows.size else zone_at(j0 + (j1 - j0) // 2)
     if (j1 - j0) < 5 or not np.isfinite(ds):
         skipped_row[j0:j1] = True
         counts["edge"] += n_act
@@ -693,7 +696,7 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
         if n_act:
             ev.add("LRLC_DECON_UNDERSAMPLED", mid_zone, n_act, f"step {ds:.2f} ft > FWHM/2 = {w / 2.0:.2f} ft")
         return
-    if steps.size > 1 and np.std(steps) / np.mean(steps) > 0.05:
+    if n_act and steps.size > 1 and np.std(steps) / np.mean(steps) > 0.05:
         counts["step_irregular"] += 1
         ev.add("LRLC_DECON_STEP_IRREGULAR", mid_zone, 1)
     hs = hires[j0:j1]
@@ -717,10 +720,10 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
     if bounds.size:
         keep = np.concatenate([[True], np.diff(bounds) > 1e-9])
         bounds = bounds[keep]
-    if pick.n_dropped:
+    if pick.n_dropped and n_act:
         counts["boundaries_merged"] += pick.n_dropped
         ev.add("LRLC_DECON_BED_MERGED", mid_zone, pick.n_dropped)
-    if info["unmatched"]:
+    if info["unmatched"] and n_act:
         counts["edits_unmatched"] += info["unmatched"]
         ev.add("LRLC_DECON_BED_EDIT_UNMATCHED", mid_zone, info["unmatched"])
     edges = np.concatenate([[top], bounds, [bottom]])
@@ -766,8 +769,9 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
         inner = bounds[(bounds > c_lo + 1e-9) & (bounds < c_hi - 1e-9)]
         if n_system(c_lo, c_hi) > MAX_BEDS_PER_WINDOW and inner.size:
             mid = float(inner[np.argmin(np.abs(inner - 0.5 * (c_lo + c_hi)))])
-            counts["window_split"] += 1
-            ev.add("LRLC_DECON_WINDOW_SPLIT", mid_zone, 1)
+            if n_act:
+                counts["window_split"] += 1
+                ev.add("LRLC_DECON_WINDOW_SPLIT", mid_zone, 1)
             work = [(c_lo, mid), (mid, c_hi)] + work
         else:
             final.append((c_lo, c_hi))
@@ -782,8 +786,10 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
         own_rows = np.zeros(j1 - j0, dtype=bool)
         for k in np.flatnonzero(owned):
             own_rows[row_ptr[k]:row_ptr[k + 1]] = True
-        if not np.any(own_rows & seg_act):
+        if not np.any(own_rows):
             continue
+        # every window is solved; only a window that owns active rows is reported
+        report = bool(np.any(own_rows & seg_act))
         lo_, hi_ = max(top, c_lo - overlap), min(bottom, c_hi + overlap)
         sys_k = np.flatnonzero((edges[1:] > lo_) & (edges[:-1] < hi_) & usable)
         win_rows = np.flatnonzero((zs >= lo_) & (zs <= hi_))
@@ -805,6 +811,8 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
         A_full = W * s0[None, :] / np.where(np.isfinite(sa_w), sa_w, 1.0)[:, None]
         A = A_full[~mu]
         zone_c = zone_at(min(j1 - 1, j0 + int(np.searchsorted(zs, 0.5 * (c_lo + c_hi)))))
+        if report and not act[min(j1 - 1, j0 + int(np.searchsorted(zs, 0.5 * (c_lo + c_hi))))]:
+            zone_c = zone_at(j0 + int(np.flatnonzero(own_rows & seg_act)[0]))
         R = float(ratios.get(zone_c, default_ratio))
         if ratios:
             win_zones = {zone_at(j0 + int(i)) for i in win_rows}
@@ -819,26 +827,30 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
             xs = np.clip(xs, 1.0 / R, R)
             if not converged:
                 status = "not_converged"
-                counts["not_converged"] += 1
-                ev.add("LRLC_DECON_NOT_CONVERGED", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft")
+                if report:
+                    counts["not_converged"] += 1
+                    ev.add("LRLC_DECON_NOT_CONVERGED", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft")
         else:
             xs, lam_used, converged = _solve_lsq(A, params.lam, R, params.noise_rel)
             if not converged:
                 status = "not_converged"
-                counts["not_converged"] += 1
-                ev.add("LRLC_DECON_NOT_CONVERGED", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft")
+                if report:
+                    counts["not_converged"] += 1
+                    ev.add("LRLC_DECON_NOT_CONVERGED", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft")
         resid = A @ xs - 1.0
         m_rms, m_max = _rms(resid), float(np.max(np.abs(resid)))
         zone_warn = warns.get(zone_c)
         warn = float(zone_warn) if zone_warn is not None else params.misfit_warn_value
         if m_rms > warn:
-            counts["windows_bad_misfit"] += 1
+            if report:
+                counts["windows_bad_misfit"] += 1
             if status == "ok":
                 status = "high_misfit"
             # automatic lambda at its lower limit: the solver already fits as closely as it allows, so the
             # bed model itself is off; in the width tests this was the case for every wrong-width window
             at_floor = params.solver == "lsq" and params.lam is None and lam_used <= LAM_FALLBACK * (1.0 + 1e-9)
-            ev.add("LRLC_DECON_MISFIT", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft rms {m_rms:.2f}", hint=at_floor)
+            if report:
+                ev.add("LRLC_DECON_MISFIT", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft rms {m_rms:.2f}", hint=at_floor)
         sigma_k = xs * s0
         f_win = W @ sigma_k
         own_pos = np.isin(sys_k, np.flatnonzero(owned))
@@ -856,8 +868,9 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
             gi = j0 + np.arange(r0, r1)[sel]
             f_row[gi] = f_win[wr[sel]]
             resid_row[gi] = rel[wr[sel]]
-        result.windows.append(WindowStat(float(c_lo), float(c_hi), int(A.shape[0]), int(owned.sum()), float(lam_used),
-                                         m_rms, m_max, status))
+        if report:
+            result.windows.append(WindowStat(float(c_lo), float(c_hi), int(A.shape[0]), int(owned.sum()),
+                                             float(lam_used), m_rms, m_max, status))
 
     # step 7: output per row, beds
     for k in range(nb):

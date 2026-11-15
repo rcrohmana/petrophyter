@@ -333,3 +333,28 @@ def test_monte_carlo_not_varied_text_names_the_frozen_deconvolved_rt():
     assert LRLC_DECON in items and LRLC_DECON == "deconvolved Rt (frozen)" and not laminated
     assert lrlc_not_varied([SimpleNamespace(base_summary={"lrlc": {"chain": []}},
                                             segments=[])])[0] == ()
+
+
+# ---- a zone's result does not depend on the neighbouring zone's switch -----------------------------
+def test_upper_result_is_the_same_whether_the_step_is_on_in_lower_or_not():
+    _, (both, s_both) = run_case()
+    _, (alone, s_alone) = run_case(zone_extra={"LOWER": {"rt_steps": []}})
+    upper = both["ZONE"].astype(str).str.upper().eq("UPPER").to_numpy() if "ZONE" in both.columns else (
+        both["DEPTH"].to_numpy() < 1040.0)
+    assert upper.sum() > 50
+    np.testing.assert_array_equal(np.isfinite(both["RT_DECON"].to_numpy()[upper]),
+                                  np.isfinite(alone["RT_DECON"].to_numpy()[upper]))
+    np.testing.assert_allclose(both["RT_DECON"].to_numpy()[upper], alone["RT_DECON"].to_numpy()[upper],
+                               rtol=1e-12, equal_nan=True)
+    assert alone["RT_DECON"].to_numpy()[~upper].tolist() == [] or np.isnan(
+        alone["RT_DECON"].to_numpy()[~upper]).all()
+
+    def windows(s, lo, hi):
+        return [(w["top"], w["bottom"], w["lam"], w["status"]) for w in s["lrlc"]["decon"]["windows"]
+                if w["bottom"] >= lo and w["top"] <= hi]
+
+    lo, hi = float(both["DEPTH"][upper].min()), float(both["DEPTH"][upper].max())
+    assert windows(s_alone, lo, hi) == windows(s_both, lo, hi) != []
+    # nothing is reported for the zone without the step
+    assert not [i for i in s_alone["issues"] if i["code"].startswith("LRLC_DECON") and i.get("zone") == "LOWER"]
+    assert [z["zone"] for z in s_alone["lrlc"]["decon"]["zones"]] == ["UPPER"]
