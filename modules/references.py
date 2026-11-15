@@ -140,7 +140,12 @@ _ENTRIES = [
        "SPWLA 16th Annual Logging Symposium", pages="Paper T", kind="inproceedings",
        url="https://onepetro.org/SPWLAALS/proceedings/SPWLA-1975/All-SPWLA-1975/SPWLA-1975-T/20024",
        status="verified", groups=(G_LAM,)),
-    _r("tolioe2016", "Tolioe et al.", 2016, None, "PETRONAS, Malay Basin", kind="misc",
+    _r("tolioe2016", "Tolioe et al.", 2016,
+       "Identification and Quantification of Thinly Bedded Low Resistivity Pay in Peninsular, "
+       "Malay Basin",
+       "AAPG Asia Pacific Region Geosciences Technology Workshop, Bangkok (Search and "
+       "Discovery Article #90253)", kind="misc",
+       url="https://www.searchanddiscovery.com/abstracts/pdf/2016/90253gtw/abstracts/ndx_tolioe.pdf",
        groups=(G_SCREEN,)),
     _r("poupon1954", "Poupon, Loy and Tixier", 1954,
        "A Contribution to Electrical Log Interpretation in Shaly Sands",
@@ -188,8 +193,10 @@ _ENTRIES = [
        "The Effect of Temperature on the Density and Electrical Resistivity of Sodium Chloride "
        "Solutions", "Journal of Petroleum Technology", volume="5", number="10", pages="17-20",
        doi="10.2118/953327-G", status="verified", groups=(G_INV,)),
-    _r("guo2023", "Guo et al.", 2023, None, "Frontiers in Earth Science", volume="11",
-       pages="1223997", doi="10.3389/feart.2023.1223997", groups=(G_ML,)),
+    _r("guo2023", "Guo et al.", 2023,
+       "Saturation evaluation of tight sandstone in the Dayi structure, West Sichuan "
+       "Depression", "Frontiers in Earth Science", volume="11", pages="1223997",
+       doi="10.3389/feart.2023.1223997", status="verified", groups=(G_ML,)),
     _r("doll1949", "Doll", 1949,
        "Introduction to Induction Logging and Application to Logging of Wells Drilled With Oil "
        "Base Mud", "Journal of Petroleum Technology", volume="1", number="6", pages="148-162",
@@ -204,9 +211,21 @@ _ENTRIES = [
        url=("https://onepetro.org/SPWLAALS/proceedings-abstract/SPWLA-1981/All-SPWLA-1981/"
             "SPWLA-1981-WW/18765"),
        status="verified", groups=(G_INV, G_DECON)),
-    _r("coll1993", "Coll et al.", 1993, None, "AAPG, Ceuta field", kind="misc",
-       groups=(G_LAM,)),
-    _r("us6963803", None, None, None, "US 6,963,803", kind="patent", groups=(G_DECON,)),
+    _r("coll1993", "Coll et al.", 1993, "High Resolution Evaluation Techniques in Thinly "
+       "Laminated Shaly Sands",
+       "AAPG/SVG International Congress and Exhibition, Caracas (abstract, Search and "
+       "Discovery Article #90988)", kind="misc",
+       url="https://www.searchanddiscovery.com/abstracts/html/1993/aapg-svg/abstracts/0311a.htm",
+       status="verified", groups=(G_LAM,)),
+    _r("us6963803", "Heliot, Tabanou and Goswami", 2005,
+       "System and method for analyzing a thin bed formation", "US 6,963,803 B2",
+       url="https://patents.google.com/patent/US6963803B2/en", status="verified",
+       kind="patent", groups=(G_DECON,)),
+    _r("unocal_attaka", "Partono", 1992, "Low-resistive sandstone reservoirs in the Attaka field",
+       "Proceedings of the Indonesian Petroleum Association, 21st Annual Convention",
+       kind="inproceedings",
+       url="https://www.ipa.or.id/en/publications/low-resistive-sandstone-reservoirs-in-the-attaka-field",
+       status="verified", groups=(G_DECON,)),
     _r("leverett1941", "Leverett", 1941, None, "Trans. AIME", volume="142", pages="152-169",
        groups=(G_SHF,)),
     _r("skelt1995", "Skelt and Harrison", 1995, None, "SPWLA 36th Annual Logging Symposium",
