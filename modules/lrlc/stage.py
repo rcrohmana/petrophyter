@@ -15,7 +15,9 @@ import pandas as pd
 
 from modules.lrlc import l2
 from modules.lrlc.invasion import GENERIC_LABEL, resolve_tool
-from modules.lrlc.config import AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, LRLC_DEFAULTS, LRLC_PARAM_DEFAULTS
+from modules.lrlc.config import (
+    AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, L4_PARAM_KEYS, LRLC_DEFAULTS, LRLC_PARAM_DEFAULTS)
+from modules.lrlc.decon_step import decon_block
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
@@ -60,6 +62,7 @@ class LrlcRun:
     shf_held: int = 0                                               # pay Sw held on SHF values
     mn_active: bool = False                     # any zone of the well evaluates variable m / n
     mn_rows: List[dict] = field(default_factory=list)               # per-zone variable m / n rows
+    decon_info: Optional[dict] = None           # what the well-level decon derive solved (summary block)
 
     def aux_array(self, role: str, index) -> Optional[np.ndarray]:
         series = self.aux.get(role)
@@ -208,13 +211,13 @@ def apply_lrlc_stage(calc, data, p, run: LrlcRun, *, rt_curve, zone_keys, sw_inp
 
 
 def _summary_params(resolved: dict) -> dict:
-    """The resolved ladder for the summary: 2.6 and 2.7 keys only where they differ from built-in.
+    """The resolved ladder for the summary: 2.6, 2.7 and 2.8 keys only where they differ from built-in.
 
     Keeps the summary of a run that uses none of them as it was before they existed.
     """
     def level(values):
         return {k: v for k, v in values.items()
-                if (k not in L2_PARAM_KEYS and k not in L3_PARAM_KEYS)
+                if (k not in L2_PARAM_KEYS and k not in L3_PARAM_KEYS and k not in L4_PARAM_KEYS)
                 or v != LRLC_PARAM_DEFAULTS[k]}
     return {"default": level(resolved.get("default") or {}),
             "zones": {z: level(v) for z, v in (resolved.get("zones") or {}).items()}}
@@ -297,11 +300,12 @@ def _invasion_block(run: LrlcRun, chain, results, rt, n) -> Optional[dict]:
 
 
 def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz, p, summary,
-                 param_sources, warnings) -> dict:
+                 param_sources, warnings, elastic=None) -> dict:
     """``summary["lrlc"]`` from the merged results (screening table built after the concat).
 
     ``rt`` (measured), ``vsh`` and ``phie`` are the well's arrays in ``results`` order;
-    ``labels`` the zone Series (or None), ``dz`` the per-sample thickness.
+    ``labels`` the zone Series (or None), ``dz`` the per-sample thickness. ``elastic`` is the
+    :class:`modules.lrlc.elastic.ElasticOutput` of the well-level elastic pass when it ran.
     """
     lrlc = run.lrlc
     n = len(results)
@@ -346,6 +350,12 @@ def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz,
     thresholds = {row["zone"]: thresholds_for(row["zone"]) for row in rows}
     screening = {"thresholds": thresholds, "criteria": counts_by, "unavailable": unavailable,
                  "zones": rows}
+    if elastic is not None and elastic.ran:
+        counts = elastic.summary.get("counts") or {}
+        screening["criteria"]["ELASTIC"] = {
+            "met": int(counts.get("flag", 0)),
+            "evaluable": int(counts.get("net", 0)) - int(counts.get("unevaluable", 0))}
+        screening["score_max"] = len(CRITERIA) + 1
 
     movable_rows = movable_zone_rows(
         labels_arr, col("NET_RES_FLAG", 0), col("WATER_FREE_FLAG", 0), col("BVW"), dz,
@@ -383,6 +393,11 @@ def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz,
     inv_block = _invasion_block(run, chain, results, rt, n)
     if inv_block is not None:
         out["invasion"] = inv_block
+    dec_block = decon_block(run.decon_info, run.guard_decisions, run.has_labels)
+    if dec_block is not None:
+        out["decon"] = dec_block
+    if elastic is not None and elastic.ran:
+        out["elastic"] = elastic.summary
     if cut_on:
         out["rt_cutoff"] = {"model": run.cut_model, "zones": run.cut_rows,
                             "no_root": int(run.cut_no_root), "eligible": int(run.cut_eligible)}

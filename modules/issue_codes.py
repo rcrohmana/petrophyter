@@ -127,6 +127,26 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "LRLC_MN_FALLBACK": ("info", "lrlc.remediation.variable_mn"),
     "LRLC_MN_SHELL_LITHOLOGY": ("warning", "lrlc.remediation.variable_mn"),
     "LRLC_MN_SETTING_INVALID": ("warning", "lrlc.remediation.variable_mn"),
+    # LRLC: Rt deconvolution (chain step ``decon``)
+    "LRLC_GUARD_COMBINED": ("info", None),
+    "LRLC_DECON_NO_HIRES": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_NO_RT": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_UNDERSAMPLED": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_STEP_IRREGULAR": ("info", None),
+    "LRLC_DECON_GAP": ("info", None),
+    "LRLC_DECON_BED_MERGED": ("info", None),
+    "LRLC_DECON_BED_EDIT_UNMATCHED": ("info", "lrlc.remediation.decon"),
+    "LRLC_DECON_AMPLIFIED": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_EDGE": ("info", None),
+    "LRLC_DECON_MISFIT": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_NOT_CONVERGED": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_WINDOW_SPLIT": ("info", None),
+    # LRLC: elastic-attribute screening flag
+    "LRLC_ELASTIC_NO_DTS": ("info", "lrlc.screening.elastic"),
+    "LRLC_ELASTIC_UNITS": ("warning", "lrlc.screening.elastic"),
+    "LRLC_ELASTIC_INVALID": ("warning", "lrlc.screening.elastic"),
+    "LRLC_ELASTIC_NO_SHALE": ("warning", "lrlc.screening.elastic"),
+    "LRLC_ELASTIC_NO_WET": ("warning", "lrlc.screening.elastic"),
 }
 
 

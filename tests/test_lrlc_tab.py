@@ -139,6 +139,7 @@ def test_remediation_follows_registry_and_writes_steps(window, qtbot, register_t
     monkeypatch.delitem(chain.STEPS, "invasion", raising=False)
     monkeypatch.delitem(chain.STEPS, "laminated")
     monkeypatch.delitem(chain.STEPS, "pyrite")
+    monkeypatch.delitem(chain.STEPS, "decon")
     _well(window)
     _enable(window, qtbot)
     tab = window.lrlc_tab

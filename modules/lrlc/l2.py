@@ -287,8 +287,9 @@ def register_derives() -> None:
 
 
 def register_all() -> None:
-    """Register the invasion, laminated and pyrite steps and the three segment derives (idempotent)."""
-    from modules.lrlc import invasion, laminated, pyrite
+    """Register the decon, invasion, laminated and pyrite steps and the derives (idempotent)."""
+    from modules.lrlc import decon_step, invasion, laminated, pyrite
+    decon_step.register_step()
     invasion.register_step()
     laminated.register_step()
     pyrite.register_step()
@@ -308,19 +309,34 @@ def run_derives(env: SegEnv) -> Dict[str, np.ndarray]:
 # ---------------------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------------------
+def vertical_requested(lrlc: dict, keys) -> bool:
+    """True when a zone of the segment lists a step of kind ``vertical`` (deconvolution)."""
+    for key in _unique(keys):
+        specs = resolve_steps(_resolved(lrlc, key).get("rt_steps", []))[0]
+        if any(s.kind == "vertical" for s in specs):
+            return True
+    return False
+
+
 def build_guard(env: SegEnv, derived: Dict[str, np.ndarray], decisions: dict, states: dict
                 ) -> Optional[Callable]:
-    """The chain guard bound to this segment's zone states, or None without Thomas-Stieber output.
+    """The chain guard bound to this segment's zone states.
+
+    Without Thomas-Stieber output the guard still exists (empty zone states) when a vertical
+    step is requested in the segment, so the shoulder-bed rule G4 applies; otherwise None.
 
     ``decisions`` / ``states`` collect what the guard did per zone key (for the summary).
     """
-    if "TS_CLASS" not in derived:
-        return None
     gs = block(env.lrlc, "guard")
-    stats = zone_stats(env.vsh_ts, derived["VLAM"], derived["TS_CLASS"], env.dz, env.keys,
-                       gs["vsh_min"])
-    zone_states = {k: zone_state(v, gs) for k, v in stats.items()}
-    states.update(zone_states)
+    if "TS_CLASS" not in derived:
+        if not vertical_requested(env.lrlc, env.keys):
+            return None
+        zone_states: Dict[str, dict] = {}
+    else:
+        stats = zone_stats(env.vsh_ts, derived["VLAM"], derived["TS_CLASS"], env.dz, env.keys,
+                           gs["vsh_min"])
+        zone_states = {k: zone_state(v, gs) for k, v in stats.items()}
+        states.update(zone_states)
     bound = partial(evaluate_guard, zone_states=zone_states, guard_settings=gs,
                     rt_sbc_marked=env.plan.rt_sbc)
 

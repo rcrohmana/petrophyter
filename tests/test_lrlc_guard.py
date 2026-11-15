@@ -152,15 +152,17 @@ def test_hint_for_laminated_zone_without_step():
     assert run([], CLEAN).issues == []
 
 
-def test_no_ts_blocks_nothing():
-    dec = run([_vert(), LAM], NO_TS, sbc=True)
+def test_no_ts_blocks_nothing_by_lamination():
+    dec = run([_vert(), LAM], NO_TS)
     assert [s.name for s in dec.specs_kept] == ["decon", "laminated"]
-    assert codes(dec) == ["LRLC_GUARD_NO_TS"]
+    assert sorted(codes(dec)) == ["LRLC_GUARD_COMBINED", "LRLC_GUARD_NO_TS"]
     assert dec.invalid_mask is None and dec.blocked_steps == [] and not dec.sbc_rt
     # zone missing from zone_states altogether
     d2 = evaluate_guard("Z", [_vert()], None, zone_states={}, guard_settings=G,
                         rt_sbc_marked=False)
     assert codes(d2) == ["LRLC_GUARD_NO_TS"] and len(d2.specs_kept) == 1
+    # no Thomas-Stieber at all and no vertical step: silent
+    assert evaluate_guard("Z", [_radial()], None, zone_states={}, guard_settings=G).issues == []
     # guard off: silent
     assert run([_vert()], NO_TS, enabled=False).issues == []
 
@@ -184,11 +186,12 @@ def test_partial_binding_and_input_untouched():
 
 # --------------------------------------------------------------------- G3, summary
 
-def test_g3_is_reserved():
-    assert "G3" in RESERVED_RULES
-    # decon + laminated in a non-laminated zone: nothing happens
+def test_no_rule_is_reserved_any_more():
+    assert RESERVED_RULES == ()
+    # decon + laminated in a non-laminated zone: both run, one info note
     dec = run([_vert(), LAM], CLEAN)
-    assert [s.name for s in dec.specs_kept] == ["decon", "laminated"] and not dec.issues
+    assert [s.name for s in dec.specs_kept] == ["decon", "laminated"]
+    assert codes(dec) == ["LRLC_GUARD_COMBINED"]
 
 
 def test_guard_summary_shape():
@@ -203,3 +206,48 @@ def test_guard_summary_shape():
     assert by["B"]["blocked_steps"] == [] and by["B"]["sbc_rt"] is False
     assert by[None]["laminated"] is False
     assert guard_summary(states, decs, enabled=False)["enabled"] is False
+
+
+# ------------------------------------------------------------------------ G3, G4
+
+def test_g4_drops_vertical_step_when_rt_is_marked_even_without_ts():
+    for state in (NO_TS, CLEAN):
+        dec = run([_vert(), _radial()], state, sbc=True)
+        assert [s.name for s in dec.specs_kept] == ["invasion"]
+        assert dec.blocked_steps == ["decon"] and dec.reasons == {"decon": "shoulder"}
+        blocked = [i for i in dec.issues if i[0] == "LRLC_GUARD_BLOCKED"]
+        assert [b[1] for b in blocked] == [
+            "decon not applied in Zone A: RT is marked shoulder-bed corrected (guard)."]
+    assert "LRLC_GUARD_NO_TS" in codes(run([_vert()], NO_TS, sbc=True))
+
+
+def test_g4_guard_off_warns_and_keeps_the_step():
+    dec = run([_vert()], NO_TS, sbc=True, enabled=False)
+    assert [s.name for s in dec.specs_kept] == ["decon"]
+    assert codes(dec) == ["LRLC_GUARD_WARNED"] and dec.warned_steps == ["decon"]
+    assert "(guard off)" in dec.issues[0][1] and dec.blocked_steps == []
+
+
+def test_g1_and_g4_together_report_g1_only():
+    dec = run([_vert()], LAMINATED, sbc=True)
+    assert dec.blocked_steps == ["decon"] and dec.reasons == {"decon": "laminated"}
+    texts = [i[1] for i in dec.issues if i[0] == "LRLC_GUARD_BLOCKED"]
+    assert len(texts) == 1 and "laminated (guard)" in texts[0]
+
+
+def test_g3_combined_info_only_when_not_laminated():
+    dec = run([_vert(), LAM], CLEAN)
+    assert [s.name for s in dec.specs_kept] == ["decon", "laminated"]
+    assert codes(dec) == ["LRLC_GUARD_COMBINED"]
+    assert "double correction" in dec.issues[0][1]
+    assert "LRLC_GUARD_COMBINED" not in codes(run([_vert(), LAM], LAMINATED))
+    assert "LRLC_GUARD_COMBINED" in codes(run([_vert(), LAM], CLEAN, enabled=False))
+
+
+def test_guard_texts_use_the_step_label():
+    spec = StepSpec(name="decon", order=0, column="RT_X",
+                    fn=lambda rt, c, p: StepResult(rt, np.isfinite(rt)),
+                    label="Deconvolution", description="d", refs=(), kind="vertical")
+    assert run([spec], LAMINATED).issues[0][1].startswith("Deconvolution not applied in Zone A")
+    assert run([spec], LAMINATED, enabled=False).issues[0][1].startswith(
+        "Deconvolution applied in Zone A")

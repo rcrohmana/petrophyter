@@ -26,10 +26,14 @@ _FIXED = {
     "N_VAR": "MODELLED SATURATION EXPONENT (variable n)",
     "RXO_INV": "MODELLED FLUSHED-ZONE RESISTIVITY (step profile)",
     "DI_INV": "MODELLED INVASION DIAMETER (step profile)",
+    "AI": "DERIVED ACOUSTIC IMPEDANCE RHOB*304800/DT (G/CC)(M/S)",
+    "VPVS": "DERIVED VP/VS = DTS/DT",
+    "ELASTIC_FLAG": "FLAG ELASTIC LRLC SCREENING (design thresholds)",
 }
 
 # Step columns whose description names the curve they were computed from.
 _STEP_TEXT = {
+    "RT_DECON": "MODELLED DECONVOLVED RT (thin-bed)",
     "RT_SAND": "MODELLED LAMINATED-SAND RT (HAGIWARA)",
     "RT_PYR": "MODELLED PYRITE-CORRECTED RT",
     "RT_INV": "MODELLED INVASION-CORRECTED RT (step profile)",

@@ -19,7 +19,7 @@ import math
 import numpy as np
 
 from modules.lrlc.config import (
-    AUX_ROLES, BLOCK_PAIRS, BLOCK_RANGES, CURVE_MARKERS, L2_BLOCKS, L3_BLOCKS,
+    AUX_ROLES, BLOCK_PAIRS, BLOCK_RANGES, CURVE_MARKERS, L2_BLOCKS, L3_BLOCKS, L4_BLOCKS,
     LRLC_PARAM_DEFAULTS, clean_param,
     lrlc_defaults, resolve_lrlc)
 from modules.param_scopes import UNZONED, normalize_zone
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 LEVELS = ("project", "well")
 SETTING_BLOCKS = (("screening", "rt_cutoff", "movable", "pickett", "buckles") + L2_BLOCKS
-                  + L3_BLOCKS)
+                  + L3_BLOCKS + L4_BLOCKS)
 
 
 def _is_num(value) -> bool:
@@ -190,6 +190,11 @@ class LrlcService:
         if block in L3_BLOCKS:
             value, ok = _clean_l3_value(block, key, defaults[key], value)
             if not ok:
+                return False
+            if current.get(key) == value:
+                return True
+        elif block in L4_BLOCKS:
+            if not isinstance(value, bool):
                 return False
             if current.get(key) == value:
                 return True

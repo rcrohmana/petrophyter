@@ -89,6 +89,7 @@ LRLC_PYRITE = "pyrite volume and correction"
 LRLC_QV = "estimated Qv"
 LRLC_MN_CURVE = "m/n curve shape (coefficients; only a whole-curve offset is varied)"
 LRLC_INVASION = "invasion-corrected Rt (frozen)"
+LRLC_DECON = "deconvolved Rt (frozen)"
 CURVE_RELATIVE_ERROR = "m and n are curves in this well: use additive offsets"
 
 
@@ -130,6 +131,8 @@ def lrlc_not_varied(frozen_wells) -> Tuple[Tuple[str, ...], bool]:
         items.append(LRLC_QV)
     if curves:
         items.append(LRLC_MN_CURVE)
+    if "decon" in steps:
+        items.append(LRLC_DECON)
     if "invasion" in steps:
         items.append(LRLC_INVASION)
     return tuple(items), laminated

@@ -119,3 +119,26 @@ def test_saturation_height_codes_are_listed():
         log.add(code, code)
     assert all(i["target"] == "diagnostics" for i in log.issues)
     assert ISSUE_CODES["SHF_ZONE_SCOPE_RT"][0] == "info"
+
+
+def test_deconvolution_and_elastic_codes_are_listed_with_their_severities():
+    expected = {
+        "LRLC_GUARD_COMBINED": "info", "LRLC_DECON_NO_HIRES": "warning",
+        "LRLC_DECON_NO_RT": "warning", "LRLC_DECON_UNDERSAMPLED": "warning",
+        "LRLC_DECON_STEP_IRREGULAR": "info", "LRLC_DECON_GAP": "info",
+        "LRLC_DECON_BED_MERGED": "info", "LRLC_DECON_BED_EDIT_UNMATCHED": "info",
+        "LRLC_DECON_AMPLIFIED": "warning", "LRLC_DECON_EDGE": "info",
+        "LRLC_DECON_MISFIT": "warning", "LRLC_DECON_NOT_CONVERGED": "warning",
+        "LRLC_DECON_WINDOW_SPLIT": "info", "LRLC_ELASTIC_NO_DTS": "info",
+        "LRLC_ELASTIC_UNITS": "warning", "LRLC_ELASTIC_INVALID": "warning",
+        "LRLC_ELASTIC_NO_SHALE": "warning", "LRLC_ELASTIC_NO_WET": "warning"}
+    assert {code: ISSUE_CODES[code][0] for code in expected} == expected
+
+
+def test_every_code_the_pure_modules_emit_is_listed():
+    root = Path(pipeline.__file__).parent / "lrlc"
+    found = set()
+    for name in ("decon.py", "elastic.py", "guard.py", "decon_step.py"):
+        found |= set(re.findall(r'"(LRLC_(?:DECON|ELASTIC|GUARD)_[A-Z_]+)"',
+                                (root / name).read_text(encoding="utf-8")))
+    assert found and found <= set(ISSUE_CODES), found - set(ISSUE_CODES)

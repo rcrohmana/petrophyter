@@ -129,7 +129,7 @@ def step_shf() -> str:
 
 
 def step_lrlc() -> str:
-    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT, the laminated-sand Rt and the estimated Qv match their closed forms, Sw with constant m and n arrays equals the scalar result, an invasion round trip recovers Rt, Rxo and the diameter, the Shell m model is refused outside carbonate zones, BibTeX renders and the Rt chain runs."""
+    """The LRLC stack imports; a Pickett fit recovers Archie's m, RT_CUT, the laminated-sand Rt and the estimated Qv match their closed forms, Sw with constant m and n arrays equals the scalar result, an invasion round trip recovers Rt, Rxo and the diameter, the Shell m model is refused outside carbonate zones, a three-bed deconvolution recovers its beds, the elastic worked sample (AI 7010.4, Vp/Vs 1.80) holds, BibTeX renders and the Rt chain runs."""
     import numpy as np
     import pandas as pd
 
@@ -246,9 +246,41 @@ def step_lrlc() -> str:
         raise RuntimeError(f"Shell m was not refused outside a carbonate zone: {refused.m}")
     if abs(allowed.m[0] - 2.06) > 1e-9:
         raise RuntimeError(f"Shell m {allowed.m} does not match the closed form 2.06")
+
+    # Deconvolution: a three-bed profile (10, 60 and 20 ohm.m; the 60 ohm.m bed is 8 ft thick) read
+    # through a 4 ft FWHM response is recovered within 10 percent given the bed boundaries of a sharp
+    # reference curve, also 1 to 3 ft from the boundaries where the measured curve is more than 10
+    # percent off (so the check fails when the solve does nothing).
+    from modules.lrlc.decon import DeconParams, deconvolve, response_weights
+
+    depth = np.arange(0.0, 150.0, 0.5)
+    values = np.array([10.0, 60.0, 20.0])
+    edges = np.array([50.0, 58.0])
+    tops_d, bottoms_d = np.array([-1.0e4, edges[0], edges[1]]), np.array([edges[0], edges[1], 1.0e4])
+    deep = 1.0 / (response_weights(depth, tops_d, bottoms_d, 4.0) @ (1.0 / values))
+    truth = values[np.searchsorted(edges, depth, side="right")]
+    dec = deconvolve(depth, deep, truth, DeconParams(), np.ones(depth.size, dtype=bool))
+    dist = np.abs(depth[:, None] - edges[None, :]).min(axis=1)
+    near = (dist >= 1.0) & (dist <= 3.0) & np.isfinite(dec.rt_decon)
+    err_measured = float(np.median(np.abs(deep[near] / truth[near] - 1.0)))
+    err_decon = float(np.max(np.abs(dec.rt_decon[near] / truth[near] - 1.0)))
+    core = (depth >= 53.0) & (depth <= 55.0)
+    recovered = [float(np.nanmedian(dec.rt_decon[core]))]
+    if near.sum() < 10 or err_measured <= 0.10 or err_decon > 0.10:
+        raise RuntimeError(f"deconvolution did not recover the beds: measured error {err_measured:.3f}, "
+                           f"deconvolved error {err_decon:.3f} over {int(near.sum())} samples")
+
+    # Elastic attributes, worked check: DT 100 us/ft, DTS 180 us/ft, RHOB 2.30 g/cc give Vp 3048 m/s,
+    # AI 7010.4 and Vp/Vs 1.80.
+    from modules.lrlc.elastic import acoustic_impedance, vp_vs_ratio
+
+    ai = float(acoustic_impedance(100.0, 2.30))
+    vpvs = float(vp_vs_ratio(100.0, 180.0))
+    if abs(ai - 7010.4) > 0.05 or abs(vpvs - 1.80) > 1e-12:
+        raise RuntimeError(f"elastic worked check failed: AI {ai}, Vp/Vs {vpvs}")
     return (f"Pickett m = {fit.m:.3f}, RT_CUT = {cut[0]:.3f} ohm.m, laminated Rt = {sand[0]:.1f} "
             f"ohm.m, Qv = {qv_est[0]:.4f} meq/mL, m/n arrays = scalars, invasion Rt = {got[0]:.2f} "
-            f"ohm.m, Shell gate ok, chain ok")
+            f"ohm.m, Shell gate ok, deconvolution bed {recovered[0]:.0f} ohm.m, AI = {ai:.1f}, chain ok")
 
 
 def step_pipeline() -> str:

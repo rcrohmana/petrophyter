@@ -93,6 +93,7 @@ def test_available_steps_sorted_by_order(register_test_steps, monkeypatch):
     monkeypatch.delitem(chain.STEPS, "invasion", raising=False)
     monkeypatch.delitem(chain.STEPS, "laminated")
     monkeypatch.delitem(chain.STEPS, "pyrite")
+    monkeypatch.delitem(chain.STEPS, "decon")
     assert [s.name for s in available_steps()] == [
         "test_identity", "test_scale", "test_rsh", "test_bad", "test_extra"]
 

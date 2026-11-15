@@ -532,3 +532,19 @@ def test_vsh_primary_method_round_trips_and_defaults_to_none(tmp_path):
     other = AppModel()
     assert svc.apply_session_to_model(other, {"vsh_methods": ["Linear"]})
     assert other.vsh_primary_method is None
+
+
+def test_deconvolution_or_elastic_makes_the_session_2_8_and_older_rungs_stay(three_wells, tmp_path):
+    from services.lrlc_service import LrlcService
+
+    model, _ = three_wells
+    LrlcService.set_param(model, "project", None, "rt_steps", ["invasion"])
+    assert session_version_for(model) == "2.7"
+    LrlcService.set_param(model, "project", None, "rt_steps", ["decon"])
+    assert session_version_for(model) == "2.8" == session_version_for(model.project)
+    path = str(tmp_path / "s.json")
+    assert SessionService().save_session(model, path)
+    assert json.loads(open(path, encoding="utf-8").read())["_session_version"] == "2.8"
+    LrlcService.set_param(model, "project", None, "rt_steps", [])
+    LrlcService.set_setting(model, "elastic", "enabled", True)
+    assert session_version_for(model) == "2.8"

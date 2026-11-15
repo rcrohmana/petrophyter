@@ -22,7 +22,9 @@ from modules.issue_codes import ISSUE_CODES, IssueLog  # noqa: F401  (re-exporte
 from modules.las_utils import mask_nonpositive
 from modules.lrlc import l2
 from modules.lrlc.chain import DERIVES, apply_rt_chain, chain_active_anywhere
-from modules.lrlc.config import LRLC_DEFAULTS
+from modules.lrlc.config import LRLC_DEFAULTS, WELL_ONLY_KEYS
+from modules.lrlc.decon_step import decon_needed
+from modules.lrlc.elastic import elastic_screen
 from modules.lrlc.invasion import invasion_count_issues, temperature_needed
 from modules.lrlc.rt_cutoff import SwInputs
 from modules.lrlc.stage import (
@@ -1197,8 +1199,89 @@ def _lrlc_setup(p, labels, data, curve_mapping, has_rt, warnings):
         run.well_derived = {name: pd.Series(np.asarray(values, dtype=float), index=data.index)
                             for name, values in derived.items()}
         _issues_to_log(found, warnings)
+    if decon_needed(lrlc, keys.to_numpy(dtype=object)) and "decon_well" in DERIVES:
+        _decon_well(run, data, curve_mapping, keys.to_numpy(dtype=object), warnings)
     run.plan = l2.make_plan(lrlc, keys.to_numpy(dtype=object), curve_mapping.get("RT", "RT"))
     return run
+
+
+def _decon_well(run, data, curve_mapping, keys, warnings):
+    """Solve the Rt deconvolution once for the whole well and merge it into ``run.well_derived``.
+
+    The reference curve is chosen from the HIRES and RXO roles and the mapped RHOB and GR (see
+    ``decon_step.pick_reference``). The guard is not consulted here: zones it drops later are
+    solved and then discarded.
+    """
+    rt_curve = curve_mapping.get("RT", "RT")
+    candidates = {}
+    for role in ("HIRES", "RXO"):
+        series = run.aux.get(role)
+        candidates[role] = (None if series is None else series.to_numpy(dtype=float),
+                            run.aux_names.get(role))
+    for kind in ("RHOB", "GR"):
+        name = curve_mapping.get(kind, kind)
+        candidates[kind] = (pd.to_numeric(data[name], errors="coerce").to_numpy(dtype=float)
+                            if _has(name, data) else None, name)
+    found, info = [], {}
+    out = DERIVES["decon_well"].fn(
+        depth=data["DEPTH"].to_numpy(dtype=float),
+        rt=pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float),
+        candidates=candidates, zone_keys=keys, lrlc=run.lrlc, issues=found, info=info)
+    run.well_derived = {
+        **run.well_derived,
+        **{name: pd.Series(np.asarray(values, dtype=float), index=data.index)
+           for name, values in out.items()}}
+    run.decon_info = info
+    _issues_to_log(found, warnings)
+
+
+def _lrlc_elastic_pass(run, calc, data, curve_mapping, pay, warnings):
+    """The well-level elastic-attribute screening on the merged results (None when it did not run).
+
+    Runs only when the project switch ``elastic.enabled`` is on. Writes ``AI``, ``VPVS`` and
+    ``ELASTIC_FLAG`` and adds the flag to ``LRLC_SCORE``; ``LRLC_FLAG`` is not changed. Without
+    DTS, DT or RHOB (or with us/m curves) no column is written and the info or warning issue is kept.
+    Runs before ``export_results`` so an input curve named ``AI`` or ``VPVS`` is kept as ``<NAME>_IN``.
+    """
+    lrlc = run.lrlc
+    if not (lrlc.get("elastic") or {}).get("enabled"):
+        return None
+    n = len(data)
+    keys = run.well_labels.reindex(calc.results.index).to_numpy(dtype=object)
+    curves = {"DEPTH": data["DEPTH"].to_numpy(dtype=float) if "DEPTH" in data.columns else np.arange(n, dtype=float)}
+    names = {}
+    for kind, role in (("DT", None), ("RHOB", None), ("DTS", "DTS")):
+        if role is not None:
+            series = run.aux.get(role)
+            arr = None if series is None else series.to_numpy(dtype=float)
+            name = run.aux_names.get(role)
+        else:
+            name = curve_mapping.get(kind, kind)
+            arr = (pd.to_numeric(data[name], errors="coerce").to_numpy(dtype=float)
+                   if _has(name, data) else None)
+        if arr is not None:
+            curves[kind] = arr
+            curves[f"{kind}_NAME"] = name
+    curves["VSH"] = np.asarray(pay["vsh"], dtype=float)
+    curves["DZ"] = np.broadcast_to(np.asarray(_sample_dz(data), dtype=float), (n,))
+    params_by_zone = {}
+    default = lrlc["resolved"]["default"]
+    for key in dict.fromkeys(keys.tolist()):
+        prm = resolved_for(lrlc, key)
+        params_by_zone[key] = {k: (default[k] if k in WELL_ONLY_KEYS else v)
+                               for k, v in prm.items() if k.startswith("el_")}
+    out = elastic_screen(calc.results, curves, params_by_zone, keys)
+    _issues_to_log([(c, t, None if z in (None, UNZONED) else z, s) for c, t, z, s in out.issues],
+                   warnings)
+    if not out.ran:
+        return None
+    frame = calc.results
+    frame["AI"] = out.ai
+    frame["VPVS"] = out.vpvs
+    frame["ELASTIC_FLAG"] = out.flag
+    if "LRLC_SCORE" in frame.columns:
+        frame["LRLC_SCORE"] = frame["LRLC_SCORE"] + out.flag
+    return out
 
 
 def mn_curve_anywhere(lrlc, zone_keys) -> bool:
@@ -1365,6 +1448,9 @@ def _apply_rt_chain(calc, data, curve_mapping, p, vsh, eff, tctx, warnings, zone
         calc.results["RT_SW"] = out.rt_sw
     for name, values in out.columns.items():
         calc.results[name] = values
+    if lrlc_run.decon_info and "RT_DECON" not in out.columns:
+        # every zone that asked for it was dropped by the guard: the column exists, empty
+        calc.results["RT_DECON"] = np.full(n, np.nan)
     zone_depth = {}
     for key in dict.fromkeys(keys):
         zone_depth[None if key == UNZONED else key] = float(np.nanmin(depth[keys == key]))
@@ -1764,7 +1850,7 @@ def _lrlc_l2_summary(summary, run, results, data, labels, pay, p, curve_mapping,
         ts_stats = l2.ts_stats_by_key(results, vsh_arr, keys, dz, lrlc)
         out["ts"] = l2.ts_block(ts_stats, run.ts_notes, labels is not None)
     guard_zones = {}
-    if run.guard_states:
+    if run.guard_states or run.guard_decisions:
         out["guard"] = l2.guard_block(run.guard_states, run.guard_decisions, lrlc)
         guard_zones = {(z["zone"] if z["zone"] is not None else UNZONED): z
                        for z in out["guard"]["zones"]}
@@ -2070,6 +2156,8 @@ def run_pipeline(
     emit("Finalizing results...", 95)
     if labels is not None:
         calc.results["ZONE"] = labels
+    elastic_out = (_lrlc_elastic_pass(lrlc_run, calc, data, curve_mapping, pay, warnings)
+                   if lrlc_run is not None else None)
     results = calc.export_results()
     renamed = getattr(calc, "renamed_inputs", [])
     if renamed:
@@ -2147,7 +2235,7 @@ def run_pipeline(
         rt_measured = pd.to_numeric(data[rt_curve], errors="coerce").to_numpy(dtype=float)
         summary["lrlc"] = lrlc_summary(
             lrlc_run, calc.results, rt_measured, pay["vsh"], pay["phie"], labels,
-            _sample_dz(data), p, summary, param_sources, warnings)
+            _sample_dz(data), p, summary, param_sources, warnings, elastic=elastic_out)
         _lrlc_l2_summary(summary, lrlc_run, calc.results, data, labels, pay, p, curve_mapping,
                          param_sources, base_dhcpv, warnings)
     elif p.get("lrlc"):

@@ -17,4 +17,6 @@ SHIPPED_METHODS = {
     "qv": ("waxman1968", "hill1979", "juhasz1981"),
     "variable_mn": ("archie1942", "borai1987", "guo2023"),
     "invasion": ("doll1949", "thadani1981", "anderson2001", "arps1953"),
+    "decon": ("doll1949", "thadani1981", "coll1993"),
+    "elastic": ("ashfaq_us11709287",),
 }

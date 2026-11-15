@@ -174,6 +174,77 @@ def lrlc_invasion_data():
     return data
 
 
+# Known truth of the deconvolution case: (top, bottom, Rt) per bed, ft and ohm.m. The Upper/Lower
+# top at 1040 ft is a bed boundary, so the solve must stay continuous across the zones.
+DECON_BEDS = (
+    (1000.0, 1010.0, 4.0),     # shale
+    (1010.0, 1013.0, 60.0),    # thin sand
+    (1013.0, 1022.0, 4.0),
+    (1022.0, 1040.0, 25.0),    # thick sand
+    (1040.0, 1048.0, 4.0),
+    (1048.0, 1051.0, 45.0),    # thin sand
+    (1051.0, 1060.0, 4.0),
+    (1060.0, 1063.5, 80.0),    # thin sand
+    (1063.5, 1075.0, 4.0),
+    (1075.0, 1100.0, 30.0),    # thick sand
+)
+DECON_FWHM_FT = 4.0
+
+
+def decon_truth(depth):
+    """The per-sample true Rt of the deconvolution case (a blocky bed profile)."""
+    rt = np.full(len(depth), np.nan)
+    for top, bottom, value in DECON_BEDS:
+        rt[(depth >= top) & (depth < bottom)] = value
+    rt[depth >= DECON_BEDS[-1][1]] = DECON_BEDS[-1][2]
+    return rt
+
+
+def _bed_blur(depth, values, fwhm):
+    """Conductivity-domain Gaussian blur of the blocky profile (the forward model of the step)."""
+    from modules.lrlc.decon import response_weights
+
+    tops = np.array([b[0] for b in DECON_BEDS])
+    bottoms = np.array([b[1] for b in DECON_BEDS])
+    tops[0], bottoms[-1] = -1.0e4, 1.0e4
+    sigma = 1.0 / np.array([b[2] * values for b in DECON_BEDS])
+    return 1.0 / (response_weights(depth, tops, bottoms, fwhm) @ sigma)
+
+
+def lrlc_decon_data():
+    """Thin sands in shale from a Gaussian vertical-response forward model: known beds, no invasion.
+
+    The deep curve ``RT`` is the 10 ft-bed profile of ``DECON_BEDS`` blurred by a 4 ft FWHM
+    response (conductivity domain) with 1 percent multiplicative noise; ``RXO`` is the same
+    beds read at 0.5 ft (the high-resolution reference). GR, RHOB, NPHI and DT follow the
+    sand/shale beds. Deterministic.
+    """
+    rng = np.random.default_rng(20261115)
+    depth = np.linspace(1000.0, 1100.0, 201)
+    truth = decon_truth(depth)
+    sand = (truth > 10.0).astype(float)
+    rt = _bed_blur(depth, 1.0, DECON_FWHM_FT) * (1.0 + 0.01 * rng.standard_normal(len(depth)))
+    rxo = _bed_blur(depth, 0.3, 0.5)
+    shale = 1.0 - _bed_blur_flag(depth, sand, 1.5)
+    return pd.DataFrame({
+        "DEPTH": depth,
+        "GR": 30.0 + 75.0 * shale,
+        "RHOB": 2.30 + 0.25 * shale,
+        "NPHI": 0.20 + 0.14 * shale,
+        "DT": 80.0 + 20.0 * shale,
+        "RT": rt,
+        "RXO": rxo,
+    })
+
+
+def _bed_blur_flag(depth, sand, fwhm):
+    """Gaussian-smoothed 0/1 sand flag (the porosity-type logs read thin beds almost as they are)."""
+    from scipy.ndimage import gaussian_filter1d
+
+    step = float(np.median(np.diff(depth)))
+    return gaussian_filter1d(sand, fwhm / 2.3548 / step, mode="nearest")
+
+
 # Literal rock-type definitions (as Project.rock_types stores them) for the
 # rock_typing_enabled case: three FZI types, pooled over the project.
 ROCK_TYPE_SET = {
@@ -378,6 +449,27 @@ CASES = {
         "lrlc": {"settings": {"enabled": True},
                  "params": {"default": {"rt_steps": ["invasion"], "inv_tool": "generic_induction",
                                         "rt_fallback": "nan"}, "zones": {}}},
+    },
+    # Rt deconvolution of thin sands: RXO is the high-resolution reference, two tops, the Upper/Lower
+    # boundary is also a bed boundary. Elastic screening off.
+    "lrlc_decon": {
+        "builder": lrlc_decon_data,
+        "tops": True,
+        "params": {
+            "vsh_baseline_method": "Custom (Manual)",
+            "gr_min_manual": 30.0,
+            "gr_max_manual": 105.0,
+            "sw_methods": ["Archie"],
+            "sw_primary_method": "Archie",
+            "rw": 0.05,
+            "rw_mode": "manual",
+            "a": 1.0,
+            "m": 2.0,
+            "n": 2.0,
+        },
+        "lrlc_curves": {"RXO": "RXO"},
+        "lrlc": {"settings": {"enabled": True},
+                 "params": {"default": {"rt_steps": ["decon"], "rt_fallback": "nan"}, "zones": {}}},
     },
     # A log-derived fit with use for pay requested: refused, pay stays on resistivity Sw.
     "shf_log_derived": {

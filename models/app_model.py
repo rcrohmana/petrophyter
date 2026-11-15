@@ -1054,6 +1054,7 @@ class AppModel(QObject):
             "diagnosis": dict(lrlc.get("diagnosis") or {}),
             "variable_mn": dict(lrlc.get("variable_mn") or {}),
             "invasion": dict(lrlc.get("invasion") or {}),
+            "elastic": dict(lrlc.get("elastic") or {}),
             "curves": curves,
             "resolved": {
                 "default": resolve_lrlc(project_params, well_params, None),

@@ -116,6 +116,9 @@ INVASION_DEFAULTS: Dict[str, Any] = {
     "max_iter": 40,
 }
 
+# Elastic-attribute screening switch (project level; the thresholds are ladder keys ``el_*``).
+ELASTIC_DEFAULTS: Dict[str, Any] = {"enabled": False}
+
 LRLC_DEFAULTS: Dict[str, Any] = {
     "enabled": False,
     "screening": {"use_gas_flag": True, "use_rs": True},
@@ -130,6 +133,7 @@ LRLC_DEFAULTS: Dict[str, Any] = {
     "diagnosis": DIAGNOSIS_DEFAULTS,
     "variable_mn": VARIABLE_MN_DEFAULTS,
     "invasion": INVASION_DEFAULTS,
+    "elastic": ELASTIC_DEFAULTS,
     "params": {"default": {}, "zones": {}},
 }
 
@@ -141,6 +145,9 @@ L2_BLOCKS = ("thomas_stieber", "pyrite", "qv", "guard", "diagnosis")
 
 # Blocks added with session format 2.7 (variable m/n, radial invasion).
 L3_BLOCKS = ("variable_mn", "invasion")
+
+# Blocks added with session format 2.8 (elastic-attribute screening switch).
+L4_BLOCKS = ("elastic",)
 
 # Inclusive (low, high) for the numeric keys of the setting blocks; a stored value outside
 # falls back to the default.
@@ -236,6 +243,41 @@ LRLC_PARAM_DEFAULTS: Dict[str, Any] = {
     # Mud-filtrate resistivity (None = not set) at the temperature it was measured.
     "rmf": None,
     "rmf_temp": 75.0,
+    # Rt deconvolution (chain step ``decon``); every key but the last two is a well-only key.
+    "dec_hires_source": "auto",
+    "dec_tool": "custom",
+    "dec_fwhm_ft": 4.0,
+    "dec_response": "gaussian",
+    "dec_doll_spacing_ft": 3.333,
+    "dec_smooth_ft": 0.5,
+    "dec_edge_k": 4.0,
+    "dec_min_contrast": 0.05,
+    "dec_min_bed_ft": None,
+    "dec_window_ft": 200.0,
+    "dec_overlap_ft": 25.0,
+    "dec_solver": "lsq",
+    "dec_lambda": None,
+    "dec_noise_rel": 0.03,
+    "dec_mult_max_iter": 100,
+    "dec_output": "blocky",
+    "dec_max_ratio": 10.0,
+    "dec_misfit_warn": 0.10,
+    "dec_edits": {"add": [], "remove": []},
+    "dec_edit_tol_ft": 1.0,
+    # Elastic-attribute screening thresholds (design defaults).
+    "el_baseline_mode": "rolling",
+    "el_shale_window_ft": 100.0,
+    "el_shale_min_n": 10,
+    "el_vsh_shale": 0.7,
+    "el_shale_interval": None,
+    "el_sw_wet": 0.9,
+    "el_wet_interval": None,
+    "el_trend_scope": "well",
+    "el_min_wet_n": 30,
+    "el_min_phi_span": 0.04,
+    "el_ai_drop": 0.05,
+    "el_vpvs_drop": 0.03,
+    "el_mode": "both",
 }
 
 RT_FALLBACKS = ("nan", "previous")
@@ -253,7 +295,22 @@ LRLC_CHOICES: Dict[str, Tuple[str, ...]] = {
     "phi_source": ("phie", "phit"),
     "inv_tool": ("generic_induction", "generic_laterolog", "custom"),
     "inv_rxo_mode": ("fixed", "ignore"),
+    "dec_hires_source": ("auto", "HIRES", "RXO", "RHOB", "GR"),
+    "dec_tool": ("array_induction_1ft", "array_induction_2ft", "array_induction_4ft",
+                 "laterolog_deep_2ft", "dual_induction_deep_8ft", "custom"),
+    "dec_response": ("gaussian", "doll"),
+    "dec_solver": ("lsq", "mult"),
+    "dec_output": ("blocky", "residual"),
+    "el_baseline_mode": ("rolling", "zone", "window"),
+    "el_trend_scope": ("well", "zone"),
+    "el_mode": ("both", "ai", "vpvs"),
 }
+
+# Integer ladder keys (a whole number inside the range).
+LRLC_INTS = ("screen_min_score", "dec_mult_max_iter", "el_shale_min_n", "el_min_wet_n")
+
+# Depth-interval ladder keys: ``None`` or ``[top, bottom]`` in ft with top < bottom.
+LRLC_INTERVALS = ("el_shale_interval", "el_wet_interval")
 
 # Boolean ladder keys.
 LRLC_BOOLS = ("shell_confirm",)
@@ -270,7 +327,7 @@ INV_R50_RANGE = (2.0, 400.0)
 
 # Numeric ladder keys that also accept None.
 LRLC_NULLABLE = ("cut_sw_target", "phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g",
-                 "rmf", "inv_r50")
+                 "rmf", "inv_r50", "dec_min_bed_ft", "dec_lambda") + LRLC_INTERVALS
 
 # Ladder keys added with session format 2.6.
 L2_PARAM_KEYS = (
@@ -284,6 +341,13 @@ L3_PARAM_KEYS = (
     "inv_tool", "inv_r50", "inv_p", "inv_rxo_mode", "inv_di_min", "inv_di_max",
     "inv_min_contrast", "inv_max_rms", "rmf", "rmf_temp",
 )
+# Ladder keys added with session format 2.8 (deconvolution and elastic screening).
+L4_PARAM_KEYS = tuple(k for k in LRLC_PARAM_DEFAULTS if k.startswith(("dec_", "el_")))
+# Keys that describe the tool, the logging run or the well rather than a zone: read at the well
+# default at every zone (one convolution stays continuous across zone boundaries).
+WELL_ONLY_KEYS = tuple(k for k in L4_PARAM_KEYS if k not in (
+    "dec_max_ratio", "dec_misfit_warn", "el_shale_interval", "el_sw_wet", "el_ai_drop",
+    "el_vpvs_drop"))
 # Chain steps added with session format 2.6.
 L2_STEPS = ("laminated", "pyrite")
 
@@ -319,6 +383,28 @@ LRLC_RANGES: Dict[str, Tuple[float, float]] = {
     "inv_max_rms": (0.01, 1.0),
     "rmf": (0.005, 20.0),
     "rmf_temp": (32.0, 400.0),
+    "dec_fwhm_ft": (0.5, 20.0),
+    "dec_doll_spacing_ft": (0.5, 20.0),
+    "dec_smooth_ft": (0.1, 5.0),
+    "dec_edge_k": (2.0, 10.0),
+    "dec_min_contrast": (0.01, 1.0),
+    "dec_min_bed_ft": (0.25, 20.0),
+    "dec_window_ft": (50.0, 1000.0),
+    "dec_overlap_ft": (5.0, 200.0),
+    "dec_lambda": (1e-6, 10.0),
+    "dec_noise_rel": (0.005, 0.2),
+    "dec_mult_max_iter": (5, 500),
+    "dec_max_ratio": (2.0, 100.0),
+    "dec_misfit_warn": (0.02, 1.0),
+    "dec_edit_tol_ft": (0.25, 5.0),
+    "el_shale_window_ft": (20.0, 1000.0),
+    "el_shale_min_n": (3, 100),
+    "el_vsh_shale": (0.5, 1.0),
+    "el_sw_wet": (0.5, 1.0),
+    "el_min_wet_n": (10, 1000),
+    "el_min_phi_span": (0.01, 0.2),
+    "el_ai_drop": (0.005, 0.5),
+    "el_vpvs_drop": (0.005, 0.5),
 }
 
 SWIRR_COLUMNS = ("SWIRR", "SWIRR_BUCKLES", "SWIRR_CLEANZONE", "SWIRR_STAT")
@@ -355,6 +441,13 @@ def clean_param(key: str, value) -> Tuple[Any, bool]:
         return None, False
     if key in LRLC_NULLABLE and value is None:
         return None, True
+    if key == "dec_edits":
+        return _clean_edits(value)
+    if key in LRLC_INTERVALS:
+        if (isinstance(value, (list, tuple)) and len(value) == 2 and all(_is_number(x) for x in value)
+                and value[0] < value[1]):
+            return [float(value[0]), float(value[1])], True
+        return None, False
     if key in LRLC_BOOLS:
         return (value, True) if isinstance(value, bool) else (None, False)
     if key in LRLC_LISTS:
@@ -372,7 +465,7 @@ def clean_param(key: str, value) -> Tuple[Any, bool]:
     if not _is_number(value):
         return None, False
     lo, hi = LRLC_RANGES[key]
-    if key == "screen_min_score":
+    if key in LRLC_INTS:
         if float(value) != int(value):
             return None, False
         value = int(value)
@@ -381,6 +474,19 @@ def clean_param(key: str, value) -> Tuple[Any, bool]:
     if value < lo or value > hi:
         return None, False
     return value, True
+
+
+def _clean_edits(value) -> Tuple[Any, bool]:
+    """``{"add": [ft...], "remove": [ft...]}`` from a stored deconvolution edit dict (else invalid)."""
+    if not isinstance(value, dict):
+        return None, False
+    out: Dict[str, List[float]] = {}
+    for name in ("add", "remove"):
+        items = value.get(name, [])
+        if not isinstance(items, (list, tuple)) or not all(_is_number(x) for x in items):
+            return None, False
+        out[name] = [float(x) for x in items]
+    return out, True
 
 
 def _clean_level(level) -> Dict[str, Any]:
@@ -497,7 +603,8 @@ def merge_lrlc(stored) -> Dict[str, Any]:
         return out
     if isinstance(stored.get("enabled"), bool):
         out["enabled"] = stored["enabled"]
-    for key in ("screening", "rt_cutoff", "movable", "pickett", "buckles") + L2_BLOCKS + L3_BLOCKS:
+    for key in (("screening", "rt_cutoff", "movable", "pickett", "buckles") + L2_BLOCKS + L3_BLOCKS
+                + L4_BLOCKS):
         _merge_block(key, LRLC_DEFAULTS[key], stored.get(key), out)
     out["params"] = clean_params(stored.get("params"))
     return out
@@ -609,6 +716,33 @@ def lrlc_l3_configured(project) -> bool:
                for ds in wells for level in _levels_of(getattr(ds, "lrlc", None)))
 
 
+def _level_uses_l4(level) -> bool:
+    if any(key in level for key in L4_PARAM_KEYS):
+        return True
+    return "decon" in (level.get("rt_steps") or [])
+
+
+def lrlc_l4_configured(project) -> bool:
+    """True when the project uses a setting of session format 2.8.
+
+    That is the elastic block differing from its default, a ``dec_*`` or ``el_*`` ladder key
+    at any level, or the ``decon`` step at any level.
+    """
+    lrlc = getattr(project, "lrlc", None) or {}
+    defaults = lrlc_defaults()
+    for key in L4_BLOCKS:
+        if key in lrlc and lrlc[key] != defaults[key]:
+            return True
+    if any(_level_uses_l4(level) for level in _levels_of(lrlc.get("params"))):
+        return True
+    try:
+        wells = list(project)
+    except TypeError:
+        return False
+    return any(_level_uses_l4(level)
+               for ds in wells for level in _levels_of(getattr(ds, "lrlc", None)))
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
@@ -632,6 +766,11 @@ def resolve_lrlc_sources(project_params, well_params, zone) -> Dict[str, Tuple[A
         for key, value in level.items():
             if key in out:
                 out[key] = (copy.deepcopy(value), level_name)
+    if zone is not None and (p_zone or w_zone):
+        # A well-only key shows (and runs with) the well default at every zone.
+        at_well = resolve_lrlc_sources(project_params, well_params, None)
+        for key in WELL_ONLY_KEYS:
+            out[key] = at_well[key]
     return out
 
 
