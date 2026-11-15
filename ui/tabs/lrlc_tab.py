@@ -27,8 +27,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.lrlc.config import AUX_ROLES, SWIRR_COLUMNS, resolve_lrlc_sources
+from modules.lrlc.config import AUX_ROLES, SWIRR_COLUMNS, WELL_ONLY_KEYS, resolve_lrlc_sources
 from modules.lrlc.methods import METHOD_TEXT
+from modules.lrlc.screening import CRITERIA
 from modules.param_scopes import normalize_zone
 from services.lrlc_service import LrlcService as svc
 from themes.helpers import set_status
@@ -39,6 +40,7 @@ from ..widgets.lrlc_common import make_table as _table
 from ..widgets.lrlc_common import note as _note
 from ..widgets.lrlc_common import scroll_area as _scroll
 from ..widgets.lrlc_diagnosis import ThomasStieberPanel, ZonesPanel
+from ..widgets.lrlc_elastic_section import ElasticSection
 from ..widgets.lrlc_pickett import PickettPanel
 from ..widgets.lrlc_remediation import RemediationForm
 from ..widgets.lrlc_validation import ValidationPanel
@@ -50,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 PANELS = ("screening", "diagnosis", "remediation", "validation", "methods")
 DIAGNOSIS_SECTIONS = ("zones", "thomas_stieber", "pickett", "buckles")
+SCREENING_SECTIONS = ("rt_cutoff", "curves", "elastic")
 REMEDIATION_SECTIONS = ("rt_source", "laminated", "pyrite", "clay", "sw_basis", "variable_mn",
                         "invasion")
 PANEL_TITLES = {"screening": "Screening", "diagnosis": "Diagnosis",
@@ -324,7 +327,9 @@ class LrlcTab(QWidget):
         self.candidate_table = _table(SCREEN_COLUMNS)
         gl.addWidget(self.candidate_table)
         cl.addWidget(group)
-        self.screening_box = MethodReferenceBox()
+        self.score_note = _note("")
+        gl.addWidget(self.score_note)
+        self.screening_box = MethodReferenceBox(compact=True)
         self.screening_box.set_method(METHOD_TEXT["screening"])
         cl.addWidget(self.screening_box)
 
@@ -342,9 +347,17 @@ class LrlcTab(QWidget):
         self.cut_table = _table(CUT_COLUMNS)
         rl.addWidget(self.cut_table)
         cl.addWidget(self.rt_cutoff_group)
-        self.rt_cutoff_box = MethodReferenceBox()
+        self.rt_cutoff_box = MethodReferenceBox(compact=True)
         self.rt_cutoff_box.set_method(METHOD_TEXT["rt_cutoff"])
         cl.addWidget(self.rt_cutoff_box)
+        self.elastic_section = ElasticSection()
+        self.elastic_section.enable_check.toggled.connect(
+            lambda on: self._on_setting("elastic", "enabled", bool(on)))
+        self.elastic_section.set_here_requested.connect(self._on_elastic_set_here)
+        self.elastic_section.inherit_requested.connect(self._on_elastic_inherit)
+        self.elastic_section.curves_requested.connect(
+            lambda: self.show_panel("screening", "curves"))
+        cl.addWidget(self.elastic_section)
         cl.addStretch(1)
         return content
 
@@ -505,6 +518,47 @@ class LrlcTab(QWidget):
             self._request_stale(level)
             self._render_params()
 
+    def _elastic_target(self, key):
+        """``(level, zone, where)`` an ``el_*`` Set here / Inherit writes to; a well-wide key at
+        a zone scope goes to the default of that level."""
+        level, zone = self._scope_target()
+        if level is None:
+            return None, None, ""
+        where = "the project default" if level == "project" else "the well default"
+        if zone is None:
+            return level, None, where
+        if key in WELL_ONLY_KEYS:
+            return level, None, (f"{where} (a well-wide setting, not zone {zone})")
+        return level, zone, (f"zone {zone} of the " + ("project" if level == "project" else "well"))
+
+    def _on_elastic_set_here(self, key, value):
+        level, zone, where = self._elastic_target(key)
+        if level is None:
+            return
+        if svc.set_param(self.model, level, zone, key, value):
+            self._request_stale(level)
+            self._render_params()
+            text = f"Elastic setting written to {where}."
+            self.elastic_section.show_write_result(text)
+            self.set_status(text, "muted")
+        else:
+            self.elastic_section.show_write_result(
+                "That value is not valid, nothing was written.", "warning")
+
+    def _on_elastic_inherit(self, key):
+        level, zone, where = self._elastic_target(key)
+        if level is None:
+            return
+        if svc.clear_param(self.model, level, zone, key):
+            self._request_stale(level)
+            self._render_params()
+            text = f"Elastic setting cleared from {where}."
+            self.elastic_section.show_write_result(text)
+            self.set_status(text, "muted")
+        else:
+            self.elastic_section.show_write_result(
+                f"Nothing to clear at {where}.")
+
     def _on_setting(self, block, key, value):
         if self._updating:
             return
@@ -526,6 +580,7 @@ class LrlcTab(QWidget):
             changed = svc.set_curve(self.model, ds, role, data)
         if changed:
             self._request_stale("well")
+            self._render_elastic()
 
     def _on_prepare_remedy(self, zone, remedy):
         """A remedy from the zone diagnosis: fill the Remediation panel, write nothing."""
@@ -573,6 +628,7 @@ class LrlcTab(QWidget):
             return
         self._render_diagnosis()
         self._render_remediation_form()
+        self._render_elastic()
         self.validation_panel.set_context(self.model, self._ds(), self.selected_zone())
 
     def _render_diagnosis(self):
@@ -672,6 +728,8 @@ class LrlcTab(QWidget):
                 w["set"].setEnabled(level is not None)
                 w["inherit"].setEnabled(level is not None)
             self._render_cutoffs(zone if needs_zone else None)
+            self.elastic_section.set_resolved(sources, level is not None,
+                                              bool(needs_zone and zone))
         finally:
             self._updating = was
 
@@ -700,6 +758,8 @@ class LrlcTab(QWidget):
             self.use_gas_check.setChecked(bool((lrlc.get("screening") or {}).get("use_gas_flag")))
             self.use_rs_check.setChecked(bool((lrlc.get("screening") or {}).get("use_rs")))
             self.rt_cut_check.setChecked(bool((lrlc.get("rt_cutoff") or {}).get("enabled")))
+            self.elastic_section.set_enabled_state(
+                bool((lrlc.get("elastic") or {}).get("enabled")))
             i = self.swirr_combo.findData((lrlc.get("movable") or {}).get("swirr_column"))
             if i >= 0:
                 self.swirr_combo.setCurrentIndex(i)
@@ -785,7 +845,32 @@ class LrlcTab(QWidget):
             self.cut_note.setText("Switch the Rt cutoff on, then run the analysis.")
         for table in (self.candidate_table, self.cut_table):
             fit_table_height(table)
+        self._render_elastic(summary)
 
+    def score_maximum(self) -> int:
+        """Largest LRLC_SCORE of the last run: ``score_max`` of the summary, else the number of
+        screening criteria."""
+        screening = self._lrlc_summary().get("screening") or {}
+        return int(screening.get("score_max", len(CRITERIA)))
+
+    def _render_elastic(self, summary=None):
+        """The score note and the Elastic flag section for the active well and zone."""
+        summary = self._lrlc_summary() if summary is None else summary
+        has_rows = bool((summary.get("screening") or {}).get("zones"))
+        top = self.score_maximum()
+        self.score_note.setText(
+            f"LRLC_SCORE counts the criteria met, 0 to {top}"
+            + ("; the elastic flag adds the seventh." if top > len(CRITERIA) else ".")
+            if has_rows else "")
+        self.score_note.setVisible(has_rows)
+        drops = {}
+        try:
+            sources = resolve_lrlc_sources(*self._ladder_args(), self.selected_zone())
+            drops = {k: sources[k][0] for k in ("el_ai_drop", "el_vpvs_drop")}
+        except Exception:
+            logger.debug("elastic thresholds unavailable", exc_info=True)
+        self.elastic_section.set_context(self.model, self._ds(), self.selected_zone(), summary,
+                                         drops)
     def _render_remediation(self):
         if self._enabled():
             self._render_remediation_form()
@@ -794,7 +879,8 @@ class LrlcTab(QWidget):
     def show_panel(self, name, section=None):
         """Select a panel ("screening", "diagnosis", "remediation", "validation", "methods")
         and scroll to a section of it (on Remediation, the matching page of the corrections
-        list; ``"rt_source"`` is the Overview): ``"rt_cutoff"`` or ``"curves"`` on Screening;
+        list; ``"rt_source"`` is the Overview): ``"rt_cutoff"``, ``"curves"`` or ``"elastic"`` on
+        Screening;
         ``"zones"``,
         ``"thomas_stieber"``, ``"pickett"`` or ``"buckles"`` on Diagnosis; ``"rt_source"``,
         ``"laminated"``, ``"pyrite"``, ``"clay"``, ``"sw_basis"``, ``"variable_mn"`` or
@@ -805,8 +891,11 @@ class LrlcTab(QWidget):
         if name in PANELS:
             self.panels.setCurrentIndex(PANELS.index(name))
         if name == "screening" and section:
-            target = {"rt_cutoff": self.rt_cutoff_group, "curves": self.curves_group}.get(section)
-            if target is not None:
+            target = {"rt_cutoff": self.rt_cutoff_group, "curves": self.curves_group,
+                      "elastic": self.elastic_section}.get(section)
+            if target is self.elastic_section:
+                self._scroll_to_top_of(target)
+            elif target is not None:
                 self.page_scroll.ensureWidgetVisible(target)
         elif name == "methods" and section:
             self.methods_panel.show_method(section)
@@ -814,6 +903,12 @@ class LrlcTab(QWidget):
             self.diagnosis_tabs.setCurrentIndex(DIAGNOSIS_SECTIONS.index(section))
         elif name == "remediation" and section in REMEDIATION_SECTIONS:
             self.remediation_form.show_section(section)
+
+    def _scroll_to_top_of(self, widget):
+        """Scroll the Screening page so the top of ``widget`` is at the top of the view."""
+        self.page_scroll_widget.layout().activate()
+        y = widget.mapTo(self.page_scroll_widget, widget.rect().topLeft()).y()
+        self.page_scroll.verticalScrollBar().setValue(max(0, y - 4))
 
     def _location(self):
         """(panel, section, screening scroll position) of what the panel shows now."""
@@ -881,6 +976,7 @@ class LrlcTab(QWidget):
     # ------------------------------------------------------------ lifecycle
     def refresh_theme(self):
         self._render_guidance()
+        self.elastic_section.refresh_theme()
         self.pickett_panel.refresh_theme()
         self.buckles_panel.refresh_theme()
         self.ts_panel.refresh_theme()

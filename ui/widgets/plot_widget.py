@@ -615,7 +615,8 @@ class CompositeLogPlot(PlotWidget):
         has_resid = "SW_SHF_RESID" in filtered.columns
         has_lrlc_rt = rt_curve in filtered.columns and any(
             c in filtered.columns
-            for c in ("RT_SW", "RT_CUT", "LRLC_FLAG", "RT_SAND", "RT_PYR", "RT_INV", "RXO_INV")
+            for c in ("RT_SW", "RT_CUT", "LRLC_FLAG", "RT_SAND", "RT_PYR", "RT_INV", "RXO_INV",
+                      "RT_DECON")
         )
         n_axes = 6 + int(has_rock) + int(has_resid) + int(has_lrlc_rt)
         # Axis index map; the Resistivity track sits after Sw and shifts the rest
@@ -796,6 +797,7 @@ class CompositeLogPlot(PlotWidget):
                 ("RT_PYR", "RT_PYR", "--", 0.9),
                 ("RT_INV", "RT_INV", "-", 1.0),
                 ("RXO_INV", "RXO_INV", ":", 1.0),
+                ("RT_DECON", "RT_DECON", ":", 1.0),
             ):
                 if col not in filtered.columns:
                     continue
@@ -849,7 +851,8 @@ class CompositeLogPlot(PlotWidget):
             )
         lrlc_flags = [
             (c, lbl)
-            for c, lbl in (("LRLC_FLAG", "LRLC"), ("WATER_FREE_FLAG", "Water-free"))
+            for c, lbl in (("LRLC_FLAG", "LRLC"), ("ELASTIC_FLAG", "Elastic"),
+                          ("WATER_FREE_FLAG", "Water-free"))
             if c in filtered.columns
         ]
         for col, lbl in lrlc_flags:

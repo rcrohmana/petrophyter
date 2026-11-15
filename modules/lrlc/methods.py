@@ -44,7 +44,10 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             (r"$N_{\mathrm{eval}}$",
              "number of criteria that can be evaluated for the sample"),
         ),
-        equation="score = number of criteria met (0 to 6)",
+        equation=(
+            "score = number of criteria met (0 to 6; 0 to 7 in a well where the elastic flag "
+            "ran, which adds one point)"
+        ),
         criteria=(
             ("LOW_RT", "RT < screen_rt_max"),
             ("HC", "GAS_FLAG = 1  or  RT/RS >= 1.0"),
@@ -482,5 +485,60 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "choice, not a published fit; Doll (1949) is the physical basis."
         ),
         refs=SHIPPED_METHODS["invasion"],
+    ),
+    "elastic": MethodInfo(
+        title="Elastic-attribute screening flag",
+        equation_tex=(
+            r"$V_p = \frac{304800}{\Delta t_c}, \qquad V_s = \frac{304800}{\Delta t_s}, \qquad "
+            r"AI = \rho_b\,V_p, \qquad V_p/V_s = \frac{\Delta t_s}{\Delta t_c}$",
+            r"$AI_{rel} = \frac{AI}{AI_{sh}(z)}, \qquad (V_p/V_s)_{rel} = \frac{V_p/V_s}{(V_p/V_s)_{sh}(z)}$",
+            r"$AI_{rel}^{wet}(\phi) = a_0 + a_1\,\phi, \qquad (V_p/V_s)_{rel}^{wet}(\phi) = c_0 + c_1\,\phi$",
+            r"$dA = \frac{AI_{rel}}{AI_{rel}^{wet}(\phi)} - 1, \qquad dV = \frac{(V_p/V_s)_{rel}}{(V_p/V_s)_{rel}^{wet}(\phi)} - 1$",
+            r"$\mathrm{flag} = 1 \quad \mathrm{when\ net\ reservoir\ and} \quad dA \leq -\delta_{A} \quad \mathrm{and} \quad dV \leq -\delta_{V}$",
+        ),
+        legend=(
+            (r"$\Delta t_c,\ \Delta t_s$", "compressional and shear slowness, us/ft"),
+            (r"$\rho_b$", "bulk density, g/cc"),
+            (r"$AI_{sh},\ (V_p/V_s)_{sh}$",
+             "shale baseline of AI and Vp/Vs (rolling median of the shale samples, the zone "
+             "median, or a median over a shale interval you pick)"),
+            (r"$a_0,\ a_1,\ c_0,\ c_1$",
+             "robust linear fits of the relative attributes against PHIE on the wet samples"),
+            (r"$\delta_{A},\ \delta_{V}$",
+             "relative drops below the wet trend (el_ai_drop, el_vpvs_drop)"),
+        ),
+        equation=(
+            "Vp = 304800 / DT, Vs = 304800 / DTS (m/s; DT, DTS in us/ft)\n"
+            "AI = RHOB * Vp, VPVS = DTS / DT\n"
+            "AI_REL = AI / AI_shale(z), VPVS_REL = VPVS / VPVS_shale(z)\n"
+            "AI_REL_wet(PHIE) = a0 + a1 * PHIE\n"
+            "VPVS_REL_wet(PHIE) = c0 + c1 * PHIE\n"
+            "dA = AI_REL / AI_REL_wet - 1, dV = VPVS_REL / VPVS_REL_wet - 1\n"
+            "ELASTIC_FLAG = 1 when net reservoir and dA <= -ai_drop and dV <= -vpvs_drop"
+        ),
+        assumptions=(
+            "Hydrocarbon in a sand lowers P-wave impedance and Vp/Vs relative to the same sand "
+            "with water, independently of resistivity. Where resistivity is suppressed by "
+            "clay-bound water, saline connate water or thin beds, an elastic anomaly in a net "
+            "reservoir interval is an independent hint that the sand is not water-bearing. The "
+            "porosity and burial trends are removed by normalising to shale and to a robust wet "
+            "trend fitted on the wet samples (net reservoir, Sw at or above el_sw_wet, not an "
+            "LRLC candidate) or on a water interval you pick. The flag is added as one point to "
+            "LRLC_SCORE (maximum 7 where it ran); LRLC_FLAG, Sw, pay and HCPV never change. "
+            "The thresholds are design defaults: calibrate them on wells with known fluids. "
+            "The method class is described in the patent cited below; this flag is a generic "
+            "screening statistic, not a reproduction of that patent or of any thresholds in it."
+        ),
+        limits=(
+            "Sonic and density read the flushed zone, so invasion can replace gas by filtrate "
+            "and weaken the contrast. Porosity, lithology, cement and compaction also move AI "
+            "and Vp/Vs; the normalisation removes only the shale and the wet porosity trends and "
+            "Gassmann fluid substitution is not modelled. Dipole shear (DTS) quality varies and "
+            "slow formations need dipole data. Samples outside DT 40 to 200 us/ft, DTS 60 to 500 "
+            "us/ft, RHOB 1.5 to 3.2 g/cc or Vp/Vs 1.15 to 4.0 have no AI or VPVS and are not "
+            "flagged; curves in us/m skip the stage. Without enough wet samples (30) over a "
+            "porosity span of 0.04 the trend is unavailable and nothing is flagged."
+        ),
+        refs=SHIPPED_METHODS["elastic"],
     ),
 }

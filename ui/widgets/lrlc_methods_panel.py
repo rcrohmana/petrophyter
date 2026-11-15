@@ -38,7 +38,7 @@ TEXT_WIDTH = 800   # widest the paragraphs get, in pixels
 
 # (group heading, method keys) in list order; any other METHOD_TEXT key follows under "Other".
 METHOD_GROUPS = (
-    ("Screening", ("screening", "rt_cutoff", "bvw", "buckles", "pickett")),
+    ("Screening", ("screening", "rt_cutoff", "bvw", "buckles", "pickett", "elastic")),
     ("Diagnosis", ("thomas_stieber",)),
     ("Remediation", ("rt_chain", "laminated", "pyrite", "qv", "variable_mn", "invasion")),
 )

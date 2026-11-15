@@ -751,7 +751,7 @@ class InteractiveLogPlot(QWidget):
         for entry in track3:
             if entry[0] in ("RT_CUT", "RT_PYR"):
                 entry[4]["dashed"] = True
-            elif entry[0] == "RXO_INV":
+            elif entry[0] in ("RXO_INV", "RT_DECON"):
                 entry[4]["dotted"] = True
         perm_label = ts.TRACK_SPECS["permeability"].axis_label
         for c in ts.present_curves("permeability", cols):
@@ -766,7 +766,8 @@ class InteractiveLogPlot(QWidget):
             track4.append(("NET_PAY_FLAG", get_plot_color("PAY"), False, (0, 1)))
         if "NET_RES_FLAG" in columns:
             track4.append(("NET_RES_FLAG", get_plot_color("RESERVOIR"), False, (0, 1)))
-        for flag, flag_label in (("LRLC_FLAG", "LRLC"), ("WATER_FREE_FLAG", "Water-free")):
+        for flag, flag_label in (("LRLC_FLAG", "LRLC"), ("ELASTIC_FLAG", "Elastic"),
+                                 ("WATER_FREE_FLAG", "Water-free")):
             if flag in columns:
                 track4.append(
                     (flag, get_plot_color(flag), False, (0, 1),

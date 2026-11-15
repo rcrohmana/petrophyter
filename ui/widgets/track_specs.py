@@ -85,6 +85,7 @@ TRACK_SPECS: Dict[str, TrackSpec] = {
             CurveSpec("RT_PYR", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RT_INV", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RXO_INV", "ohm·m", 0.2, 2000.0, "log"),
+            CurveSpec("RT_DECON", "ohm·m", 0.2, 2000.0, "log"),
             CurveSpec("RT_CUT", "ohm·m", 0.2, 2000.0, "log"),
         ),
         scale="log", lo=0.2, hi=2000.0, unit="ohm·m", axis_name="RT",
@@ -163,7 +164,7 @@ SHF_RESID_RANGE = (-0.5, 0.5)
 NON_METHOD_SW_COLUMNS = ("SW_SHF", "SW_SHF_RESID", "SW_PAY", "SW_BASE")
 # Curves that are read at the crosshair only (not drawn in the Classic view).
 READOUT_ONLY_COLUMNS = {"VPYR": "v/v", "QV_EST": "meq/cc", "M_VAR": "", "N_VAR": "",
-                        "DI_INV": "in"}
+                        "DI_INV": "in", "AI": "(g/cc)(m/s)", "VPVS": ""}
 SHF_NON_METHOD_COLUMNS = NON_METHOD_SW_COLUMNS  # old name, kept as an alias
 
 

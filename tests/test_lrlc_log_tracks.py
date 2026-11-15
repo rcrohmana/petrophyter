@@ -128,3 +128,68 @@ def test_interactive_draws_shaded_flags_and_readout(w):
     depth = float(df["DEPTH"].iloc[5])
     text = w.format_readout(w._get_values_at_depth(depth), depth)
     assert "RT_SW" in text and "LRLC_FLAG" in text
+
+
+# ---- deconvolved Rt and the elastic columns -----------------------------------------------
+def _elastic_results():
+    df = _results()
+    n = len(df)
+    df["RT_DECON"] = df["RT"] * 2.0
+    df["ELASTIC_FLAG"] = (np.arange(n) % 6 == 0).astype(int)
+    df["AI"] = np.linspace(6000.0, 9000.0, n)
+    df["VPVS"] = np.linspace(1.6, 2.0, n)
+    return df
+
+
+def test_elastic_and_decon_colour_tokens_in_both_themes():
+    for key in ("RT_DECON", "ELASTIC_FLAG"):
+        assert key in tokens.PLOT_COLORS
+        assert get_plot_color(key, "dark") != get_plot_color(key, "light")
+
+
+def test_elastic_and_decon_specs_and_readout_columns():
+    assert "RT_DECON" in [c.name for c in ts.TRACK_SPECS["resistivity"].curves]
+    assert "AI" in ts.READOUT_ONLY_COLUMNS and "VPVS" in ts.READOUT_ONLY_COLUMNS
+    assert "AI" not in [c.name for t in ts.TRACK_SPECS.values() for c in t.curves]
+
+
+def test_classic_draws_rt_decon_dotted_and_elastic_flag_shaded(qtbot):
+    plot = CompositeLogPlot()
+    qtbot.addWidget(plot)
+    plot.plot_petrophysics_summary(_elastic_results())
+    ax = [a for a in plot.figure.axes if a.get_title() == "Resistivity"][0]
+    styles = {ln.get_label(): ln.get_linestyle() for ln in ax.get_lines()}
+    assert styles["RT_DECON"] == ":" and styles["RT_SW"] == "-"
+    flags = [a for a in plot.figure.axes if a.get_title() == "Pay Flags"][0]
+    legend = [t.get_text() for t in flags.get_legend().get_texts()]
+    assert "Elastic" in legend and "LRLC" in legend
+    plot.plot_petrophysics_summary(_results())          # absent columns: no entry
+    flags = [a for a in plot.figure.axes if a.get_title() == "Pay Flags"][0]
+    assert "Elastic" not in [t.get_text() for t in flags.get_legend().get_texts()]
+
+
+def test_classic_rt_decon_alone_makes_the_resistivity_track(qtbot):
+    plot = CompositeLogPlot()
+    qtbot.addWidget(plot)
+    df = _results(lrlc=False)
+    df["RT_DECON"] = df["RT"] * 2.0
+    plot.plot_petrophysics_summary(df)
+    assert "Resistivity" in [a.get_title() for a in plot.figure.axes]
+
+
+def test_interactive_rt_decon_dotted_flag_shaded_ai_vpvs_readout_only(w):
+    df = _elastic_results()
+    config = w._default_curve_config(df.columns.tolist())
+    entries = {c[0]: c for c in config[3]}
+    assert entries["RT_DECON"][4]["dotted"] is True
+    flags = {c[0]: c for c in config[4]}
+    assert flags["ELASTIC_FLAG"][4] == {"label": "Elastic", "shade": True}
+    w.plot_curves(df)
+    assert "RT_DECON" in w.curve_items and "ELASTIC_FLAG" in w.curve_items
+    for name in ("AI", "VPVS"):
+        assert name not in w.curve_items and name in w.curves_data
+    depth = float(df["DEPTH"].iloc[5])
+    text = w.format_readout(w._get_values_at_depth(depth), depth)
+    assert "AI" in text and "VPVS" in text and "ELASTIC_FLAG" in text
+    absent = {c[0] for c in w._default_curve_config(_results().columns.tolist())[4]}
+    assert "ELASTIC_FLAG" not in absent
