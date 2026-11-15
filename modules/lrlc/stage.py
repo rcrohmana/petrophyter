@@ -276,8 +276,9 @@ def _median(values) -> Optional[float]:
 def _invasion_block(run: LrlcRun, chain, results, rt, n) -> Optional[dict]:
     """``summary["lrlc"]["invasion"]``: tool values and counts per zone (None: no zone ran the step)."""
     records = [r for r in chain if r.get("step") == "invasion"]
+    skipped = _invasion_not_applied(run)
     if not records or "RT_INV" not in results.columns:
-        return None
+        return {"zones": [], "not_applied": skipped} if skipped else None
     keys = run.well_labels.reindex(results.index).to_numpy(dtype=object)
     rt_inv = results["RT_INV"].to_numpy(dtype=float)
     rxo = results["RXO_INV"].to_numpy(dtype=float) if "RXO_INV" in results.columns else np.full(n, np.nan)
@@ -311,7 +312,21 @@ def _invasion_block(run: LrlcRun, chain, results, rt, n) -> Optional[dict]:
         for name in ("ok", "nonunique", "di_lower", "di_upper", "poor_fit", "failed", "missing",
                      "rxo_below_rmf"):
             row[f"n_{name}"] += int(counts.get(name, 0))
-    return {"zones": list(rows.values())}
+    out = {"zones": list(rows.values())}
+    if skipped:
+        out["not_applied"] = skipped
+    return out
+
+
+def _invasion_not_applied(run: LrlcRun) -> List[dict]:
+    """Zones where the guard dropped the invasion step because the mapped RT is invasion corrected."""
+    rows = []
+    for key, dec in (run.guard_decisions or {}).items():
+        if ("invasion" in (getattr(dec, "blocked_steps", None) or [])
+                and (getattr(dec, "reasons", None) or {}).get("invasion") == "invasion"):
+            rows.append({"zone": WELL_ZONE if key == UNZONED else key,
+                         "reason": "RT is marked invasion corrected"})
+    return rows
 
 
 def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz, p, summary,

@@ -166,7 +166,8 @@ def test_thomas_stieber_page(window, qtbot, run_result):
     assert ts.endpoint_table.rowCount() >= 1
     assert ts.class_table.rowCount() == 2
     row = [ts.class_table.item(0, c).text() for c in range(ts.class_table.columnCount())]
-    assert row[:7] == ["UPPER", "14", "4", "9", "30", "0", "23"]
+    # the 19 samples of the resolved shale beds (9.5 ft) are left out of the class counts
+    assert row[:7] == ["UPPER", "14", "4", "9", "13", "0", "11"]
     assert row[9] == "32"                                     # structural + clay + below the line
     assert ts.plot.n_drawn > 0
     assert "last run" in ts.plot_note.text()
@@ -233,13 +234,57 @@ def test_rt_source_lines_and_marked_rt(window, qtbot, run_result):
     assert "RT_SBC" not in ds.lrlc_curves
 
 
+def test_invasion_corrected_check_sits_under_the_shoulder_bed_one(window, qtbot, run_result):
+    ds = make_well(window, run_result)
+    tab = enable(window, qtbot)
+    form = tab.remediation_form
+    assert form.ic_check.text() == "The mapped RT is invasion corrected"
+    layout = form.sbc_check.parentWidget().layout()
+    order = [layout.itemAt(i).widget() for i in range(layout.count())]
+    assert order.index(form.ic_check) == order.index(form.sbc_note) + 1
+    assert not form.ic_check.isChecked() and not form.ic_note.text()
+    form.ic_check.setChecked(True)                             # pending until Apply
+    assert "RT_IC" not in ds.lrlc_curves
+    assert "RT invasion-corrected mark" in form.pending_label.text()
+    with qtbot.waitSignal(tab.stale_requested, timeout=500) as blocker:
+        form.apply_button.click()
+    assert blocker.args == [["WELL:A"]]
+    assert ds.lrlc_curves["RT_IC"] == "RT" and "RT_SBC" not in ds.lrlc_curves
+    assert form.ic_note.text() == (
+        "RT is marked invasion corrected. The radial invasion step is not applied while the "
+        "shoulder-bed guard is on; map the raw deep RT to use it.")
+    ds.curve_mapping["RT"] = "RS"
+    tab.update_display()
+    assert not form.ic_check.isChecked() and "no longer the mapped RT" in form.ic_note.text()
+    ds.curve_mapping["RT"] = "RT"
+    tab.update_display()
+    form.ic_check.setChecked(False)
+    with qtbot.waitSignal(tab.stale_requested, timeout=500):
+        form.apply_button.click()
+    assert "RT_IC" not in ds.lrlc_curves
+
+
+def test_guard_lines_say_when_resolved_beds_were_left_out():
+    from ui.widgets.lrlc_remediation import RemediationForm
+    lines = RemediationForm.guard_lines(
+        {"zones": [{"zone": "UPPER", "laminated": False, "resolved_ft": 10.0,
+                    "class_changed": True, "blocked_steps": []},
+                   {"zone": "LOWER", "laminated": True, "lam_share": 0.8, "resolved_ft": 2.5,
+                    "blocked_steps": []}]}, None)
+    assert lines[0] == ("Zone UPPER: not laminated (10 ft of resolved shale beds left out of "
+                        "the laminated check).")
+    assert "Zone LOWER: laminated (laminar share 0.80; 2.5 ft of resolved shale beds left out " \
+           "of the laminated check)." in lines
+
+
 def test_guard_status_texts_and_toggle(window, qtbot, run_result):
     ds = make_well(window, run_result)
     tab = enable(window, qtbot)
     tab.select_zone("UPPER")
     form = tab.remediation_form
     assert "The guard is on." in form.guard_status.text()
-    assert "Zone UPPER: laminated (laminar share 0.98)." in form.guard_status.text()
+    assert ("Zone UPPER: laminated (laminar share 0.95; 9.5 ft of resolved shale beds left out of "
+            "the laminated check).") in form.guard_status.text()
     guard = ds.summary["lrlc"]["guard"]["zones"][0]
     guard["blocked_steps"] = ["decon"]
     guard["sbc_rt"] = True

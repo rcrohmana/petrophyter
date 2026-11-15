@@ -13,6 +13,8 @@ Rules:
   G4  a step of kind "vertical" and the mapped RT marked shoulder-bed corrected (any zone,
       classified or not): dropped (guard on) or only warned about (guard off). When G1 applies
       too, only G1 is reported (one message per zone and step).
+  G5  a step of kind "radial" (the invasion step) and the mapped RT marked invasion corrected
+      (any zone): dropped (guard on) or only warned about (guard off).
 
 The texts name a step by its label (``StepSpec.label``), not by its internal name.
 """
@@ -83,9 +85,12 @@ def resolved_note(row: dict) -> str:
 
 
 def _why(reason):
-    """``(why, tail)`` of a guard sentence for a reason: ``"laminated"`` or ``"shoulder"``."""
+    """``(why, tail)`` of a guard sentence for a reason: ``"laminated"``, ``"shoulder"`` or
+    ``"invasion"``."""
     if reason == "laminated":
         return "laminated", "; use the laminated-sand correction."
+    if reason == "invasion":
+        return "RT is marked invasion corrected", "."
     return "RT is marked shoulder-bed corrected", "."
 
 
@@ -111,7 +116,8 @@ def _vertical_rule(spec, enabled, shown, label, reason, kept, blocked, warned, r
 
 
 def evaluate_guard(zone_key, specs, ctx: ChainContext, *, zone_states: Dict[str, dict],
-                   guard_settings: dict, rt_sbc_marked: bool = False) -> GuardResult:
+                   guard_settings: dict, rt_sbc_marked: bool = False,
+                   rt_ic_marked: bool = False) -> GuardResult:
     state = (zone_states or {}).get(zone_key) or {}
     enabled = bool(guard_settings.get("enabled", True))
     label = _zone_label(zone_key)
@@ -134,6 +140,11 @@ def evaluate_guard(zone_key, specs, ctx: ChainContext, *, zone_states: Dict[str,
                            reasons, issues)
         elif rt_sbc_marked:
             _vertical_rule(spec, enabled, shown, label, "shoulder", kept, blocked, warned,
+                           reasons, issues)
+
+    if rt_ic_marked:        # G5: an invasion-corrected curve is not raw Rt for the radial step
+        for spec in [s for s in kept if s.kind == "radial"]:
+            _vertical_rule(spec, enabled, shown, label, "invasion", kept, blocked, warned,
                            reasons, issues)
 
     has_lam = any(s.name == "laminated" for s in kept)

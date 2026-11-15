@@ -22,8 +22,11 @@ from modules.param_scopes import normalize_zone
 # Auxiliary curve roles a well can map (``WellDataset.lrlc_curves``).
 AUX_ROLES = ("RM", "RS", "RXO", "PEF", "DTS", "HIRES")
 # Marker keys stored beside the roles in ``WellDataset.lrlc_curves`` (not curve roles):
-# ``RT_SBC`` names the log curve the user declares shoulder-bed corrected.
-CURVE_MARKERS = ("RT_SBC",)
+# ``RT_SBC`` names the log curve the user declares shoulder-bed corrected, ``RT_IC`` the one
+# declared invasion corrected.
+CURVE_MARKERS = ("RT_SBC", "RT_IC")
+L2_CURVE_MARKERS = ("RT_SBC",)          # markers of session format 2.6
+L5_CURVE_MARKERS = ("RT_IC",)           # markers of session format 2.9
 
 LEVEL_BUILTIN = "built-in"
 LEVEL_PROJECT_DEFAULT = "project default"
@@ -82,9 +85,14 @@ GUARD_DEFAULTS: Dict[str, Any] = {
     "vlam_share": 0.50,
     "min_vlam": 0.05,
     "vsh_min": 0.10,
-    # Resolved shale beds (thick enough for the tool to see) are left out of the laminated
-    # check: the margin (ft) on each side, and the retained share of the zone below which
-    # the zone has no laminated population. Not shown in the UI; stored only when changed.
+}
+
+# Resolved shale beds (thick enough for the tool to see) are left out of the laminated check:
+# the switch, the margin (ft) on each side, and the retained share of the zone below which the
+# zone has no laminated population. Members of the guard block that exist in the project
+# settings only while they differ from these values (so a session that never changed them is
+# written as before); ``l2.block`` fills them in. Not shown in the UI.
+GUARD_RESOLVED_DEFAULTS: Dict[str, Any] = {
     "exclude_resolved": True,
     "edge_ft": 3.0,
     "min_frac": 0.10,
@@ -577,8 +585,17 @@ def _overlay(path: str, default: dict, value, block: dict) -> None:
         elif isinstance(sub_default, str):
             if isinstance(v, str) and v:
                 block[sub] = v
+    if path == "guard":
+        for sub, sub_default in GUARD_RESOLVED_DEFAULTS.items():
+            v = value.get(sub, sub_default)
+            if isinstance(sub_default, bool):
+                ok = isinstance(v, bool)
+            else:
+                ok = _is_number(v) and BLOCK_RANGES["guard"][sub][0] <= v <= BLOCK_RANGES["guard"][sub][1]
+            if ok and v != sub_default:
+                block[sub] = v if isinstance(v, bool) else float(v)
     for sub, (lo, hi) in BLOCK_RANGES.get(path, {}).items():
-        if not lo <= block[sub] <= hi:
+        if sub in block and not lo <= block[sub] <= hi:
             block[sub] = copy.deepcopy(default[sub])
     for sub, (lo, hi) in BLOCK_PAIRS.get(path, {}).items():
         pair = block[sub]
@@ -688,7 +705,7 @@ def lrlc_l2_configured(project) -> bool:
         if any(_level_uses_l2(level) for level in _levels_of(getattr(ds, "lrlc", None))):
             return True
         curves = getattr(ds, "lrlc_curves", None) or {}
-        if any(curves.get(marker) for marker in CURVE_MARKERS):
+        if any(curves.get(marker) for marker in L2_CURVE_MARKERS):
             return True
     return False
 
@@ -748,6 +765,16 @@ def lrlc_l4_configured(project) -> bool:
         return False
     return any(_level_uses_l4(level)
                for ds in wells for level in _levels_of(getattr(ds, "lrlc", None)))
+
+
+def lrlc_l5_configured(project) -> bool:
+    """True when a well of the project marks its mapped RT as invasion corrected (session 2.9)."""
+    try:
+        wells = list(project)
+    except TypeError:
+        return False
+    return any(any((getattr(ds, "lrlc_curves", None) or {}).get(marker)
+                   for marker in L5_CURVE_MARKERS) for ds in wells)
 
 
 # ---------------------------------------------------------------------------

@@ -18,8 +18,8 @@ import pandas as pd
 from modules.lrlc import chain
 from modules.lrlc.chain import DeriveSpec, register_derive, resolve_steps
 from modules.lrlc.config import (
-    DIAGNOSIS_DEFAULTS, GUARD_DEFAULTS, LRLC_PARAM_DEFAULTS, PYRITE_DEFAULTS, QV_DEFAULTS,
-    THOMAS_STIEBER_DEFAULTS)
+    DIAGNOSIS_DEFAULTS, GUARD_DEFAULTS, GUARD_RESOLVED_DEFAULTS, LRLC_PARAM_DEFAULTS,
+    PYRITE_DEFAULTS, QV_DEFAULTS, THOMAS_STIEBER_DEFAULTS)
 from modules.lrlc.diagnosis import diagnose_zone, lrlc_note, zone_evidence
 from modules.lrlc.guard import evaluate_guard, guard_summary, zone_state
 from modules.lrlc.pyrite import solve_volumes
@@ -32,7 +32,7 @@ TS_COLUMNS = ("VLAM", "VDISP", "PHI_SAND", "TS_CLASS")
 WELL_ZONE = "WELL"
 _BLOCK_DEFAULTS = {
     "thomas_stieber": THOMAS_STIEBER_DEFAULTS, "pyrite": PYRITE_DEFAULTS, "qv": QV_DEFAULTS,
-    "guard": GUARD_DEFAULTS, "diagnosis": DIAGNOSIS_DEFAULTS,
+    "guard": {**GUARD_DEFAULTS, **GUARD_RESOLVED_DEFAULTS}, "diagnosis": DIAGNOSIS_DEFAULTS,
 }
 DERIVE_NAMES = ("thomas_stieber", "pyrite_volume", "qv_estimate")
 
@@ -87,6 +87,7 @@ class L2Plan:
     qv_on: bool = False
     any_active: bool = False        # a remediation is active in at least one zone of the well
     rt_sbc: bool = False            # the mapped RT is marked shoulder-bed corrected
+    rt_ic: bool = False             # the mapped RT is marked invasion corrected
 
     @property
     def l2_on(self) -> bool:
@@ -98,13 +99,15 @@ def make_plan(lrlc: dict, well_keys, rt_curve: str) -> L2Plan:
     prms = [_resolved(lrlc, k) for k in keys]
     py = block(lrlc, "pyrite")
     marker = (lrlc.get("curves") or {}).get("RT_SBC")
+    marker_ic = (lrlc.get("curves") or {}).get("RT_IC")
     return L2Plan(
         ts_on=bool(block(lrlc, "thomas_stieber")["enabled"]),
         vpyr_on=bool(py["enabled"]) or any(
             prm.get("pyr_method") == "rhob_pef" and "pyrite" in step_names(prm) for prm in prms),
         qv_on=any(prm.get("qv_source") == "estimate" for prm in prms),
         any_active=any(zone_active(prm) for prm in prms),
-        rt_sbc=bool(marker) and marker == rt_curve)
+        rt_sbc=bool(marker) and marker == rt_curve,
+        rt_ic=bool(marker_ic) and marker_ic == rt_curve)
 
 
 def segment_active(lrlc: dict, keys) -> bool:
@@ -311,11 +314,12 @@ def run_derives(env: SegEnv) -> Dict[str, np.ndarray]:
 # ---------------------------------------------------------------------------
 # Guard
 # ---------------------------------------------------------------------------
-def vertical_requested(lrlc: dict, keys) -> bool:
-    """True when a zone of the segment lists a step of kind ``vertical`` (deconvolution)."""
+def vertical_requested(lrlc: dict, keys, kind: str = "vertical") -> bool:
+    """True when a zone of the segment lists a step of kind ``vertical`` (deconvolution), or of
+    the given ``kind`` (``"radial"``: the invasion step)."""
     for key in _unique(keys):
         specs = resolve_steps(_resolved(lrlc, key).get("rt_steps", []))[0]
-        if any(s.kind == "vertical" for s in specs):
+        if any(s.kind == kind for s in specs):
             return True
     return False
 
@@ -346,7 +350,8 @@ def build_guard(env: SegEnv, derived: Dict[str, np.ndarray], decisions: dict, st
     """
     gs = block(env.lrlc, "guard")
     if "TS_CLASS" not in derived:
-        if not vertical_requested(env.lrlc, env.keys):
+        if not (vertical_requested(env.lrlc, env.keys)
+                or (env.plan.rt_ic and vertical_requested(env.lrlc, env.keys, "radial"))):
             return None
         zone_states: Dict[str, dict] = {}
     else:
@@ -355,7 +360,7 @@ def build_guard(env: SegEnv, derived: Dict[str, np.ndarray], decisions: dict, st
         zone_states = {k: zone_state(v, gs) for k, v in stats.items()}
         states.update(zone_states)
     bound = partial(evaluate_guard, zone_states=zone_states, guard_settings=gs,
-                    rt_sbc_marked=env.plan.rt_sbc)
+                    rt_sbc_marked=env.plan.rt_sbc, rt_ic_marked=env.plan.rt_ic)
 
     def guard(zone, specs, ctx):
         dec = bound(zone, specs, ctx)

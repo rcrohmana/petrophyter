@@ -19,7 +19,7 @@ from tests.test_session_v2 import three_wells, _save, _restore  # noqa: F401
 
 
 def test_session_version_constant():
-    assert SessionService.SESSION_VERSION == "2.8"
+    assert SessionService.SESSION_VERSION == "2.9"
 
 
 def test_scalar_only_project_stays_below_2_7(three_wells):  # noqa: F811

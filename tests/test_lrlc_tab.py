@@ -354,7 +354,7 @@ def test_restore_appends_the_newer_minor_notice(window, tmp_path, monkeypatch, q
     path = tmp_path / "s.json"
     assert window.session_service.save_session(window.model, str(path))
     data = json.loads(path.read_text(encoding="utf-8"))
-    data["_session_version"] = "2.9"
+    data["_session_version"] = "2.10"
     path.write_text(json.dumps(data), encoding="utf-8")
     window.model.reset()
     monkeypatch.setattr(QFileDialog, "getOpenFileName",
@@ -362,7 +362,7 @@ def test_restore_appends_the_newer_minor_notice(window, tmp_path, monkeypatch, q
     window._on_load_session()
     qtbot.waitUntil(lambda: window._restore_worker is None, timeout=15000)
     text = window.banner.message_label.text()
-    assert "saved by a newer Petrophyter (format 2.9)" in text
+    assert "saved by a newer Petrophyter (format 2.10)" in text
     window._cancel_restore()
 
 

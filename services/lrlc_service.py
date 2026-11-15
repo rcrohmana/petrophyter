@@ -20,8 +20,8 @@ import numpy as np
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from modules.lrlc.config import (
-    AUX_ROLES, BLOCK_PAIRS, BLOCK_RANGES, CURVE_MARKERS, L2_BLOCKS, L3_BLOCKS, L4_BLOCKS,
-    LRLC_PARAM_DEFAULTS, clean_param,
+    AUX_ROLES, BLOCK_PAIRS, BLOCK_RANGES, CURVE_MARKERS, GUARD_RESOLVED_DEFAULTS, L2_BLOCKS,
+    L3_BLOCKS, L4_BLOCKS, LRLC_PARAM_DEFAULTS, clean_param,
     lrlc_defaults, resolve_lrlc)
 from modules.param_scopes import UNZONED, normalize_zone
 
@@ -186,6 +186,8 @@ class LrlcService:
             return False
         current = model.project.lrlc.get(block)
         defaults = lrlc_defaults()[block]
+        if block == "guard":
+            defaults = {**defaults, **GUARD_RESOLVED_DEFAULTS}
         if not isinstance(current, dict) or key not in defaults:
             return False
         if block in L3_BLOCKS:
@@ -205,6 +207,16 @@ class LrlcService:
                 return False
             if current.get(key) == value:
                 return True
+        if block == "guard" and key in GUARD_RESOLVED_DEFAULTS:
+            # kept in the block only while it differs from the default
+            if value == GUARD_RESOLVED_DEFAULTS[key]:
+                if key not in current:
+                    return True
+                del current[key]
+            else:
+                current[key] = copy.deepcopy(value)
+            model.mark_dirty()
+            return True
         current[key] = copy.deepcopy(value)
         model.mark_dirty()
         return True
@@ -223,26 +235,37 @@ class LrlcService:
         return True
 
     @staticmethod
-    def set_rt_sbc(model, ds, marked: bool) -> bool:
-        """Declare the well's mapped RT curve shoulder-bed corrected (or remove the mark).
+    def set_rt_marker(model, ds, marker: str, marked: bool) -> bool:
+        """Declare the well's mapped RT curve shoulder-bed corrected (``RT_SBC``) or invasion
+        corrected (``RT_IC``), or remove the mark.
 
         True when the stored marker changed; False when there is no well, no mapped RT curve to
         mark, or nothing to change.
         """
-        if ds is None or "RT_SBC" not in CURVE_MARKERS:
+        if ds is None or marker not in CURVE_MARKERS:
             return False
         curves = ds.lrlc_curves
         if marked:
             name = (ds.curve_mapping or {}).get("RT")
-            if not name or curves.get("RT_SBC") == name:
+            if not name or curves.get(marker) == name:
                 return False
-            curves["RT_SBC"] = name
+            curves[marker] = name
         else:
-            if "RT_SBC" not in curves:
+            if marker not in curves:
                 return False
-            del curves["RT_SBC"]
+            del curves[marker]
         model.mark_dirty()
         return True
+
+    @staticmethod
+    def set_rt_sbc(model, ds, marked: bool) -> bool:
+        """Declare the well's mapped RT curve shoulder-bed corrected (or remove the mark)."""
+        return LrlcService.set_rt_marker(model, ds, "RT_SBC", marked)
+
+    @staticmethod
+    def set_rt_ic(model, ds, marked: bool) -> bool:
+        """Declare the well's mapped RT curve invasion corrected (or remove the mark)."""
+        return LrlcService.set_rt_marker(model, ds, "RT_IC", marked)
 
     @staticmethod
     def _log_arrays(ds, vsh_column: Optional[str] = None):

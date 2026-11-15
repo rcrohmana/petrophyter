@@ -1023,7 +1023,7 @@ class AppModel(QObject):
         """
         from modules.las_parser import find_curve
         from modules.lrlc.config import (
-            AUX_ROLES, ladder_zones, resolve_lrlc)
+            AUX_ROLES, CURVE_MARKERS, ladder_zones, resolve_lrlc)
 
         lrlc = self.project.lrlc
         project_params = lrlc.get("params") or {}
@@ -1041,8 +1041,9 @@ class AppModel(QObject):
         for z in ladder_zones(project_params, well_params):
             if z not in zones:
                 zones.append(z)
-        if assigned.get("RT_SBC"):
-            curves["RT_SBC"] = assigned["RT_SBC"]
+        for marker in CURVE_MARKERS:
+            if assigned.get(marker):
+                curves[marker] = assigned[marker]
         return {
             "enabled": True,
             "screening": dict(lrlc.get("screening") or {}),

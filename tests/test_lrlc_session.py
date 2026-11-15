@@ -15,7 +15,7 @@ from tests.test_session_v2 import three_wells, _save, _restore  # noqa: F401
 
 
 def test_version_constant():
-    assert SessionService.SESSION_VERSION == "2.8"
+    assert SessionService.SESSION_VERSION == "2.9"
 
 
 def test_not_in_use_stays_old_version(three_wells, tmp_path):  # noqa: F811
@@ -113,7 +113,7 @@ def test_restore_drops_unknown_and_invalid(three_wells, tmp_path):  # noqa: F811
 
 
 @pytest.mark.parametrize("version,notice", [
-    ("2.4", False), ("2.5", False), ("2.6", False), ("2.7", False), ("2.8", False), ("2.9", True), ("1.9", False)])
+    ("2.4", False), ("2.5", False), ("2.6", False), ("2.7", False), ("2.8", False), ("2.9", False), ("2.10", True), ("1.9", False)])
 def test_minor_notice(tmp_path, version, notice):
     path = tmp_path / "v.json"
     path.write_text(json.dumps({"_session_version": version, "rw": 0.1}))
@@ -129,7 +129,7 @@ def test_minor_notice(tmp_path, version, notice):
 
 def test_notice_reset_on_next_load_and_major_guard(tmp_path):
     newer = tmp_path / "n.json"
-    newer.write_text(json.dumps({"_session_version": "2.9", "rw": 0.1}))
+    newer.write_text(json.dumps({"_session_version": "2.10", "rw": 0.1}))
     ok = tmp_path / "ok.json"
     ok.write_text(json.dumps({"_session_version": "2.1", "rw": 0.1}))
     major = tmp_path / "m.json"

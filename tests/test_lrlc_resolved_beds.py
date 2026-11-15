@@ -251,3 +251,50 @@ def test_the_rule_reads_the_deconvolution_width_even_when_it_is_off():
     assert rule["run_ft"] == 6.0 and rule["shale_vsh"] == 0.80
     assert rule["edge_ft"] == 3.0 and rule["min_frac"] == 0.10
     assert l2.resolved_rule({**lrlc, "guard": {"exclude_resolved": False}}) is None
+
+
+# ---- the settings and the session ----------------------------------------------------------
+from modules.lrlc.config import BLOCK_RANGES, GUARD_RESOLVED_DEFAULTS, merge_lrlc  # noqa: E402
+from services.lrlc_service import LrlcService  # noqa: E402
+from tests.test_session_v2 import three_wells, _save, _restore  # noqa: E402,F401
+
+
+def test_the_ranges_and_defaults_of_the_three_settings():
+    assert GUARD_RESOLVED_DEFAULTS == {"exclude_resolved": True, "edge_ft": 3.0, "min_frac": 0.10}
+    assert BLOCK_RANGES["guard"]["edge_ft"] == (0.0, 10.0)
+    assert BLOCK_RANGES["guard"]["min_frac"] == (0.0, 0.5)
+    assert l2.block({}, "guard")["edge_ft"] == 3.0
+
+
+def test_the_merged_block_keeps_only_values_that_differ_from_the_default():
+    assert merge_lrlc({"guard": {"edge_ft": 3.0, "min_frac": 0.1, "exclude_resolved": True}}
+                      )["guard"] == GUARD_DEFAULTS
+    out = merge_lrlc({"guard": {"edge_ft": 5.0, "min_frac": 0.3, "exclude_resolved": False}})["guard"]
+    assert out["edge_ft"] == 5.0 and out["min_frac"] == 0.3 and out["exclude_resolved"] is False
+    bad = merge_lrlc({"guard": {"edge_ft": 50.0, "min_frac": -1, "exclude_resolved": "no"}})["guard"]
+    assert bad == GUARD_DEFAULTS
+
+
+def test_a_session_that_never_touched_the_keys_is_written_without_them(three_wells, tmp_path):  # noqa: F811
+    model, _ = three_wells
+    LrlcService.set_enabled(model, True)
+    assert LrlcService.set_setting(model, "guard", "edge_ft", 3.0) is True      # the default
+    path, saved = _save(model, tmp_path)
+    assert set(saved["lrlc"]["guard"]) == set(GUARD_DEFAULTS)
+    assert saved["lrlc"]["guard"] == model.project.lrlc["guard"]
+
+
+def test_changed_keys_are_saved_and_come_back(three_wells, tmp_path):  # noqa: F811
+    model, _ = three_wells
+    LrlcService.set_enabled(model, True)
+    assert LrlcService.set_setting(model, "guard", "edge_ft", 5.0)
+    assert LrlcService.set_setting(model, "guard", "exclude_resolved", False)
+    assert LrlcService.set_setting(model, "guard", "min_frac", 0.7) is False     # out of range
+    path, saved = _save(model, tmp_path)
+    assert saved["lrlc"]["guard"]["edge_ft"] == 5.0
+    assert saved["lrlc"]["guard"]["exclude_resolved"] is False
+    assert saved["_session_version"] == "2.6"
+    fresh, _, _ = _restore(path)
+    assert fresh.project.lrlc["guard"] == model.project.lrlc["guard"]
+    assert LrlcService.set_setting(model, "guard", "edge_ft", 3.0)               # back to default
+    assert "edge_ft" not in model.project.lrlc["guard"]

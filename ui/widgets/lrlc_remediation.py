@@ -142,10 +142,12 @@ SETTING_LABELS = {
     "vpyr_enabled": "VPYR column on (project)",
     "rt_fallback": "step fallback",
     "rt_sbc": "RT shoulder-bed mark (this well)",
+    "rt_ic": "RT invasion-corrected mark (this well)",
     "guard_enabled": "shoulder-bed guard (project)",
 }
 SETTING_SECTION = {"ts_enabled": "laminated", "vpyr_enabled": "pyrite", "rt_fallback": "rt_source",
-                   "rt_sbc": "rt_source", "guard_enabled": "rt_source"}
+                   "rt_sbc": "rt_source", "rt_ic": "rt_source", "guard_enabled": "rt_source"}
+SETTING_MARKERS = {"rt_sbc": "RT_SBC", "rt_ic": "RT_IC"}
 PROJECT_SETTINGS = ("ts_enabled", "vpyr_enabled", "guard_enabled")
 SCOPE_NOTE = {
     "zone": "Written to this well for the chosen zone.",
@@ -462,6 +464,12 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
             "correction is meant for the raw deep RT.")
         self.sbc_note = note("")
         v.addWidget(self.sbc_note)
+        self.ic_check = self._setting_check(v, "rt_ic", "The mapped RT is invasion corrected")
+        self.ic_check.setToolTip(
+            "Declare the mapped RT curve already invasion corrected. The radial invasion step "
+            "is meant for the raw deep RT.")
+        self.ic_note = note("")
+        v.addWidget(self.ic_note)
         self.guard_check = self._setting_check(v, "guard_enabled",
                                                "Shoulder-bed guard (laminated zones)")
         self.guard_status = note("")
@@ -720,16 +728,18 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
             return bool((lrlc.get(block) or {}).get(key))
         if name == "rt_fallback":
             return resolve_lrlc(*self._ladder(), None)["rt_fallback"]
-        if name == "rt_sbc":
+        if name in SETTING_MARKERS:
             ds = self.ds
             mapped = (getattr(ds, "curve_mapping", None) or {}).get("RT") if ds is not None else None
-            marked = (getattr(ds, "lrlc_curves", None) or {}).get("RT_SBC") if ds is not None else None
+            marked = ((getattr(ds, "lrlc_curves", None) or {}).get(SETTING_MARKERS[name])
+                      if ds is not None else None)
             return bool(marked) and marked == mapped
         return bool((lrlc.get("guard") or {}).get("enabled", True))
 
     def _setting_widget(self, name):
         return {"ts_enabled": self.ts_check, "vpyr_enabled": self.vpyr_check,
                 "rt_fallback": self.fallback_combo, "rt_sbc": self.sbc_check,
+                "rt_ic": self.ic_check,
                 "guard_enabled": self.guard_check}[name]
 
     def _show_setting(self, name, value):
@@ -946,8 +956,9 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
             return LrlcService.set_setting(self.model, block, key, value)
         if name == "rt_fallback":
             return LrlcService.set_param(self.model, level, None, "rt_fallback", value, self.ds)
-        if name == "rt_sbc":
-            return LrlcService.set_rt_sbc(self.model, self.ds, bool(value))
+        if name in SETTING_MARKERS:
+            return LrlcService.set_rt_marker(self.model, self.ds, SETTING_MARKERS[name],
+                                             bool(value))
         if LrlcService.set_guard_enabled(self.model, bool(value)):
             self.guard_changed.emit(bool(value))
             return True
@@ -1126,6 +1137,18 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
             text = ""
         self.sbc_note.setText(text)
         self.sbc_note.setVisible(bool(text))
+        marked_ic = (getattr(ds, "lrlc_curves", None) or {}).get("RT_IC") if ds is not None else None
+        self.ic_check.setEnabled(bool(mapped))
+        if marked_ic and marked_ic != mapped:
+            text = (f"The marked curve {marked_ic} is no longer the mapped RT, so the mark is "
+                    "ignored.")
+        elif marked_ic:
+            text = (f"{marked_ic} is marked invasion corrected. The radial invasion step is not "
+                    "applied while the shoulder-bed guard is on; map the raw deep RT to use it.")
+        else:
+            text = ""
+        self.ic_note.setText(text)
+        self.ic_note.setVisible(bool(text))
 
     @staticmethod
     def guard_lines(summary_guard, zone):
