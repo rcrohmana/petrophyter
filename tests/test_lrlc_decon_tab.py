@@ -138,7 +138,7 @@ def test_the_method_text_is_in_the_remediation_group():
     info = METHOD_TEXT["decon"]
     assert info.refs == ("doll1949", "thadani1981", "coll1993")
     text = info.assumptions + info.limits
-    assert "to verify" in text and "width" in text and "generic" in text
+    assert "original paper was not consulted" in text and "width" in text and "generic" in text
     assert "skin effect" in info.limits and "anisotropy" in info.limits
 
 
