@@ -103,7 +103,7 @@ The Excel workbook gets an **SHF** sheet, in the all-wells workbook for every we
 
 - **Well**, **Zone** and **Rock type**: the well row reads *All zones* and *All*; a zone row names the zone and a rock-type row the rock type.
 - **n**, **Bias**, **RMSE**, **MAE** and **R2**: the misfit of `SW` against `SW_SHF` (bias is the mean of `SW - SW_SHF`) over net reservoir samples above the free water level, and **Basis**: *core Pc*, *log-derived* or *mixed*.
-- **FWL (TVD)**, **Fluid**, **Water density** and **Delta rho**: the contact, hydrocarbon and densities used in the zone (blank on the well and rock-type rows).
+- **FWL (TVD)**, **Fluid**, **Water density**, **Fluid density**, **Delta rho** and **Sigma cos**: the contact, hydrocarbon, densities and interfacial tension times cosine of the contact angle (dyne/cm) used in the zone (blank on the well and rock-type rows).
 - **Perm source** and **PHIE source**: the columns J was computed from.
 - **SHF Sw for pay**: *used*, *not used* or *refused (log-derived fit)*.
 

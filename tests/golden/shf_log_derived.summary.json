@@ -52,6 +52,13 @@
    "target": "diagnostics",
    "text": "Saturation-height Sw is not used for pay in this well: a log-derived fit is a cross-check only. Pay uses the resistivity Sw.",
    "zone": null
+  },
+  {
+   "code": "SHF_FLUIDS_DEFAULT",
+   "severity": "info",
+   "target": "diagnostics",
+   "text": "Saturation height uses the built-in fluid densities and interfacial tension (water 1.03 g/cc, oil 0.75 g/cc, 26 dyne/cm); enter your reservoir values or confirm them on the Saturation-Height tab.",
+   "zone": null
   }
  ],
  "net_pay": 37.37373737373724,
@@ -247,6 +254,7 @@
     "fluid": "oil",
     "fluid_density": 0.75,
     "fwl_tvd": 1090.0,
+    "sigma_cos": 26.0,
     "water_density": 1.03
    }
   },

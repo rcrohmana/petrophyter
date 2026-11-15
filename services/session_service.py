@@ -1283,6 +1283,9 @@ class SessionService(QObject):
             data["uncertainty"] = config_to_dict(project.uncertainty)
         if project is not None and shf_in_use(project):
             data["shf"] = copy.deepcopy(project.shf)
+            if not data["shf"].get("fluids_confirmed"):
+                # Written only once confirmed, so an unconfirmed session stays as before.
+                data["shf"].pop("fluids_confirmed", None)
         if project is not None and lrlc_in_use(project):
             data["lrlc"] = copy.deepcopy(project.lrlc)
         return _json_safe(data)

@@ -22,6 +22,8 @@ SHF_DEFAULTS: Dict[str, Any] = {
     "min_pc_psi": 0.0,
     "fluids": dict(DEFAULT_FLUIDS),
     "sigma_cos": dict(SIGMA_COS_DEFAULTS),
+    # True once the user confirmed the fluid values or edited a density or tension.
+    "fluids_confirmed": False,
     "fits": {},
 }
 

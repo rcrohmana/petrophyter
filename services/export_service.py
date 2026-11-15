@@ -779,7 +779,8 @@ def rock_types_frame(wells) -> pd.DataFrame:
 
 SHF_COLUMNS = [
     "Well", "Zone", "Rock type", "n", "Bias", "RMSE", "MAE", "R2", "Basis",
-    "FWL (TVD)", "Fluid", "Water density", "Delta rho", "Perm source", "PHIE source",
+    "FWL (TVD)", "Fluid", "Water density", "Fluid density", "Delta rho", "Sigma cos",
+    "Perm source", "PHIE source",
     "SHF Sw for pay",
 ]
 
@@ -810,7 +811,8 @@ def well_shf_rows(shf: dict, well: str) -> list:
                 _num(st.get("mae")), _num(st.get("r2")),
                 SHF_BASIS_LABELS.get(st.get("basis"), st.get("basis") or ""),
                 _num(c.get("fwl_tvd")), c.get("fluid") or "", _num(c.get("water_density")),
-                _num(c.get("delta_rho"))] + common
+                _num(c.get("fluid_density")), _num(c.get("delta_rho")),
+                _num(c.get("sigma_cos"))] + common
 
     rows = [row("All zones", "All", stats.get("well") or {})]
     for z in stats.get("zones") or []:

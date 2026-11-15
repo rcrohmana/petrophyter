@@ -52,6 +52,20 @@
    "target": "diagnostics",
    "text": "Pay Sw: saturation height, 5 samples from resistivity.",
    "zone": null
+  },
+  {
+   "code": "SHF_PERM_FROM_RT",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Saturation-height Sw is used for pay with permeability PERM_TIMUR, which is calculated from the resistivity Sw (through Swirr), so the pay Sw is not independent of resistivity. Check the pay against the resistivity Sw, or use a core-based permeability.",
+   "zone": null
+  },
+  {
+   "code": "SHF_FLUIDS_DEFAULT",
+   "severity": "warning",
+   "target": "diagnostics",
+   "text": "Saturation-height Sw is used for pay with the built-in fluid densities and interfacial tension (water 1.03 g/cc, oil 0.75 g/cc, 26 dyne/cm). Enter your reservoir values or press Confirm on the Saturation-Height tab.",
+   "zone": null
   }
  ],
  "net_pay": 31.313131313131237,
@@ -247,6 +261,7 @@
     "fluid": "oil",
     "fluid_density": 0.75,
     "fwl_tvd": 1090.0,
+    "sigma_cos": 26.0,
     "water_density": 1.03
    }
   },
@@ -296,7 +311,9 @@
   "auto Rsh of 58.48 ohm.m is outside the allowed range 0.5 to 50; 50 is used.",
   "Hierarchical Swirr: 24 samples were limited to the 0.60 maximum.",
   "Saturation height: 5 samples have no usable permeability or porosity; their saturation-height Sw is blank.",
-  "Pay Sw: saturation height, 5 samples from resistivity."
+  "Pay Sw: saturation height, 5 samples from resistivity.",
+  "Saturation-height Sw is used for pay with permeability PERM_TIMUR, which is calculated from the resistivity Sw (through Swirr), so the pay Sw is not independent of resistivity. Check the pay against the resistivity Sw, or use a core-based permeability.",
+  "Saturation-height Sw is used for pay with the built-in fluid densities and interfacial tension (water 1.03 g/cc, oil 0.75 g/cc, 26 dyne/cm). Enter your reservoir values or press Confirm on the Saturation-Height tab."
  ],
  "zones": []
 }

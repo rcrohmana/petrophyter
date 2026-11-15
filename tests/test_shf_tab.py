@@ -124,6 +124,29 @@ def test_fluid_and_tension_edits_clear_the_defaults_badge(window):
     assert not tab.defaults_badge.isHidden()
 
 
+def test_confirm_and_edits_are_kept_on_the_project(window):
+    tab = window.shf_tab
+    shf = window.model.project.shf
+    assert shf["fluids_confirmed"] is False
+    tab.confirm_button.click()
+    assert shf["fluids_confirmed"] is True and tab.defaults_badge.isHidden()
+    assert shf["fluids"] == {"water": 1.03, "oil": 0.75, "gas": 0.25}      # values unchanged
+    window.model.project.clear()
+    tab.reset_ui()
+    assert window.model.project.shf["fluids_confirmed"] is False
+    assert not tab.defaults_badge.isHidden()
+    tab.sigma_spins["oil-water"].setValue(30.0)
+    tab.sigma_spins["oil-water"].editingFinished.emit()
+    assert window.model.project.shf["fluids_confirmed"] is True
+    assert window.model.project.shf["sigma_cos"]["oil-water"] == pytest.approx(30.0)
+
+
+def test_confirm_asks_for_a_stale_check(window, qtbot):
+    with qtbot.waitSignal(window.shf_tab.stale_requested, timeout=500):
+        window.shf_tab.confirm_button.click()
+    assert window.model.dirty
+
+
 # ---- fit, apply ---------------------------------------------------------------------------
 def test_fit_proposes_and_only_apply_fit_writes(window, qtbot):
     ds = _well(window, run=False, fits=False)

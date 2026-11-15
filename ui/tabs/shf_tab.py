@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 from modules.shf import (
     ALL, BASIS_CORE, BASIS_LOG, MODELS, PARAM_NAMES, STATUS_OK, ShfFit, leverett_j, sw_from_j)
 from modules.shf_config import SHF_DEFAULTS
-from modules.shf_stage import fits_in_use, pay_refused_for
+from modules.shf_stage import describe_fluids, fits_in_use, pay_refused_for
 from services import shf_service as svc
 from themes.colors import get_plot_color, get_rock_type_color
 from themes.helpers import set_status
@@ -134,7 +134,6 @@ class ShfTab(QWidget):
         self._worker = None
         self._estimate = None            # last FwlEstimate of the active well
         self._estimate_text = ""
-        self._confirmed = False          # fluids and tensions confirmed or edited by the user
         self._updating = False
         self._batch_running = False
         self._setup_ui()
@@ -418,6 +417,11 @@ class ShfTab(QWidget):
     def _shf(self) -> dict:
         return self.model.project.shf
 
+    @property
+    def _confirmed(self) -> bool:
+        """Fluids and tensions confirmed or edited by the user (kept on the project)."""
+        return bool(self._shf.get("fluids_confirmed"))
+
     def _ds(self):
         return self.model.active_well
 
@@ -455,7 +459,7 @@ class ShfTab(QWidget):
         fluids = {k: float(s.value()) for k, s in self.fluid_spins.items()}
         if fluids == self._shf.get("fluids"):
             return
-        self._confirmed = True
+        self._shf["fluids_confirmed"] = True
         self._write("fluids", fluids)
         self._render_badge()
 
@@ -465,12 +469,12 @@ class ShfTab(QWidget):
         sigma = {k: float(s.value()) for k, s in self.sigma_spins.items()}
         if sigma == self._shf.get("sigma_cos"):
             return
-        self._confirmed = True
+        self._shf["fluids_confirmed"] = True
         self._write("sigma_cos", sigma)
         self._render_badge()
 
     def _on_confirm(self):
-        self._confirmed = True
+        self._write("fluids_confirmed", True)
         self._render_badge()
 
     def _on_fit_setting_changed(self, *_):
@@ -816,9 +820,16 @@ class ShfTab(QWidget):
                                       str(basis))):
                 t.setItem(r, c, QTableWidgetItem(text))
         counts = info.get("counts") or {}
-        self.stats_notes.setText(
-            f"{counts.get('samples_modelled', 0)} of {counts.get('samples', 0)} samples modelled. "
-            f"Height on {info.get('tvd_source') or 'TVD'}. Bias is SW minus SW_SHF.")
+        text = (f"{counts.get('samples_modelled', 0)} of {counts.get('samples', 0)} samples "
+                f"modelled. Height on {info.get('tvd_source') or 'TVD'}. "
+                "Bias is SW minus SW_SHF.")
+        perm = info.get("perm_source")
+        if perm in ("PERM_WR", "PERM_TIMUR"):
+            text += f" Permeability {perm} (calculated from the resistivity Sw)."
+        fluids = describe_fluids(info.get("fluids"))
+        if fluids:
+            text += f" Fluids: {fluids}."
+        self.stats_notes.setText(text)
         fit_table_height(t)
 
     # ------------------------------------------------------------ plots
@@ -1026,7 +1037,6 @@ class ShfTab(QWidget):
         self._proposal = None
         self._estimate = None
         self._estimate_text = ""
-        self._confirmed = False
         self.status_label.setText("")
         self.status_label.setToolTip("")
         self.contact_status.setText("")

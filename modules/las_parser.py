@@ -347,6 +347,36 @@ class LASParser:
             text = self._get_text(mnemonic)
             if text:
                 self.well_info[name] = text
+        # Deviation entries, kept in degrees: a hint that the well is not vertical.
+        for name, mnemonics in (('max_deviation', ('MDEV', 'MAXDEV', 'HDEV', 'MHD')),
+                                ('inclination', ('DEVI', 'DEV', 'INCL'))):
+            degrees = self._header_degrees(mnemonics)
+            if degrees is not None:
+                self.well_info[name] = degrees
+
+    _DEGREE_UNITS = ('DEG', 'DEGREES', 'DEGR')
+    _RADIAN_UNITS = ('RAD', 'RADIANS')
+
+    def _header_degrees(self, mnemonics) -> Optional[float]:
+        """First numeric header entry among ``mnemonics`` as degrees, else None.
+
+        A missing unit counts as degrees, a radian unit is converted and any
+        other unit is skipped. MHD is read only when its unit says degrees,
+        because the mnemonic is also used for other quantities.
+        """
+        for mnemonic in mnemonics:
+            item = self._get_header_item(mnemonic)
+            if item is None:
+                continue
+            number = pd.to_numeric(item.value, errors='coerce')
+            if pd.isna(number):
+                continue
+            unit = (getattr(item, 'unit', '') or '').strip().upper()
+            if unit in self._RADIAN_UNITS:
+                return math.degrees(float(number))
+            if unit in self._DEGREE_UNITS or (unit == '' and mnemonic != 'MHD'):
+                return float(number)
+        return None
 
     def _get_depth_unit(self) -> Optional[str]:
         """

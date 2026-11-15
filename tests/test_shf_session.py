@@ -133,10 +133,31 @@ def test_project_shf_round_trips(three_wells, tmp_path):
                    "All": {"model": "power", "params": {"a": 0.4, "b": -0.3}}}
     expected = json.loads(json.dumps(shf))
     path, saved = _save(model, tmp_path)
-    assert saved["shf"] == expected
+    # Unconfirmed fluids leave the stored block as it was before the flag existed.
+    assert "fluids_confirmed" not in saved["shf"]
+    assert saved["shf"] == {k: v for k, v in expected.items() if k != "fluids_confirmed"}
     fresh, notes, _ = _restore(path)
     assert notes == []
     assert fresh.project.shf == expected
+
+
+def test_confirmed_fluids_round_trip_and_are_written_only_when_true(three_wells, tmp_path):
+    model, _ = three_wells
+    model.project.shf.update(enabled=True, fluids_confirmed=True)
+    path, saved = _save(model, tmp_path)
+    assert saved["shf"]["fluids_confirmed"] is True
+    assert session_version_for(model) == "2.4"
+    fresh, notes, _ = _restore(path)
+    assert notes == [] and fresh.project.shf["fluids_confirmed"] is True
+    # The saved session is the only place that changes: the model keeps its own flag.
+    assert model.project.shf["fluids_confirmed"] is True
+
+
+def test_the_confirmed_flag_tolerates_a_wrong_type_and_older_sessions():
+    assert merge_shf({"enabled": True})["fluids_confirmed"] is False
+    assert merge_shf({"fluids_confirmed": "yes"})["fluids_confirmed"] is False
+    assert merge_shf({"fluids_confirmed": 1})["fluids_confirmed"] is False
+    assert merge_shf({"fluids_confirmed": True})["fluids_confirmed"] is True
 
 
 @pytest.mark.parametrize("version", ["1.0", "2.1", "2.2", "2.3"])

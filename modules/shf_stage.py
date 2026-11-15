@@ -14,13 +14,16 @@ import numpy as np
 import pandas as pd
 
 from modules.param_scopes import UNZONED, normalize_zone
-from modules.shf import ALL, BASIS_CORE, BASIS_LOG, ShfFit, sw_shf
+from modules.shf import (
+    ALL, BASIS_CORE, BASIS_LOG, DEFAULT_FLUIDS, SIGMA_COS_DEFAULTS, ShfFit, sw_shf)
 
 # Water density accepted for a contact row (g/cc); outside it the row is refused.
 WATER_DENSITY_RANGE = (0.95, 1.25)
 K_FLOOR_MD = 0.001
 PHI_FLOOR = 0.01
 PERM_AUTO_ORDER = ("PERM_RT", "PERM_WR", "PERM_TIMUR")
+# Permeability columns calculated from the log (resistivity) Sw through Swirr.
+LOG_PERM_COLUMNS = ("PERM_WR", "PERM_TIMUR")
 
 _COUNT_KEYS = ("samples", "samples_no_contact", "samples_no_tvd", "water_leg_samples",
                "samples_no_kphi", "samples_unclassified", "samples_modelled",
@@ -95,6 +98,103 @@ def fits_basis(fits) -> Optional[str]:
 def pay_refused_for(shf: dict, all_only: bool) -> bool:
     """True when SHF Sw may not be used for pay: some fit in use is log-derived."""
     return any(f.basis == BASIS_LOG for f in fits_in_use(shf, all_only).values())
+
+
+def perm_from_resistivity(perm_column, results) -> Optional[Tuple[int, int]]:
+    """``(samples, modelled)`` that depend on the resistivity Sw through the permeability, or None.
+
+    PERM_WR and PERM_TIMUR are calculated from the resistivity Sw (through Swirr), so every
+    modelled sample counts. PERM_RT follows the rock type: only the samples whose rock type
+    comes from the logs count (core-labelled samples do not). None when nothing depends on it.
+    """
+    if perm_column is None or "SW_SHF" not in results.columns:
+        return None
+    modelled = np.isfinite(np.asarray(results["SW_SHF"], dtype=float))
+    n = int(modelled.sum())
+    if perm_column in LOG_PERM_COLUMNS:
+        return (n, n) if n else None
+    if perm_column == "PERM_RT" and "ROCK_TYPE_SOURCE" in results.columns:
+        source = np.asarray(results["ROCK_TYPE_SOURCE"], dtype=object)
+        from_logs = int((modelled & (source == "log")).sum())
+        return (from_logs, n) if from_logs else None
+    return None
+
+
+def perm_from_resistivity_text(perm_column, counts) -> str:
+    """The pay warning for a permeability calculated from the resistivity Sw."""
+    samples, modelled = counts
+    if perm_column == "PERM_RT":
+        lead = (f"with permeability PERM_RT; {samples} of {modelled} samples take their rock "
+                "type from the logs, which is calculated from the resistivity Sw (through "
+                "Swirr)")
+    else:
+        lead = (f"with permeability {perm_column}, which is calculated from the resistivity Sw "
+                "(through Swirr)")
+    return (f"Saturation-height Sw is used for pay {lead}, so the pay Sw is not independent of "
+            "resistivity. Check the pay against the resistivity Sw, or use a core-based "
+            "permeability.")
+
+
+def describe_fluids(fluids) -> str:
+    """Densities and tension of the contacts in use, e.g. ``water 1.03 g/cc, oil 0.75 g/cc, 26 dyne/cm``."""
+    used = [v for v in (fluids or {}).values() if isinstance(v, dict)]
+
+    def pick(key, fluid=None):
+        values = [v.get(key) for v in used if fluid is None or v.get("fluid") == fluid]
+        return "/".join(dict.fromkeys(f"{float(x):g}" for x in values if _finite(x)))
+
+    parts = []
+    if pick("water_density"):
+        parts.append(f"water {pick('water_density')} g/cc")
+    present = [f for f in ("oil", "gas") if any(v.get("fluid") == f for v in used)]
+    for fluid in present:
+        if pick("fluid_density", fluid):
+            parts.append(f"{fluid} {pick('fluid_density', fluid)} g/cc")
+    sigma = [(f, pick("sigma_cos", f)) for f in present if pick("sigma_cos", f)]
+    if len(sigma) == 1:
+        parts.append(f"{sigma[0][1]} dyne/cm")
+    else:
+        parts.extend(f"{value} dyne/cm ({f})" for f, value in sigma)
+    return ", ".join(parts)
+
+
+def fluids_at_defaults(shf: dict, fluids) -> bool:
+    """True when every contact in use takes the built-in densities and tension, unconfirmed.
+
+    Editing a density or tension, or pressing Confirm, sets ``fluids_confirmed``; a contact
+    row with its own water density also counts as a value the user entered.
+    """
+    used = [v for v in (fluids or {}).values() if isinstance(v, dict)]
+    if not used or shf.get("fluids_confirmed"):
+        return False
+
+    def same(a, b):
+        return _finite(a) and abs(float(a) - float(b)) < 1e-9
+
+    for v in used:
+        fluid = v.get("fluid")
+        if fluid not in ("oil", "gas"):
+            return False
+        system = "oil-water" if fluid == "oil" else "gas-water"
+        if not (same(v.get("water_density"), DEFAULT_FLUIDS["water"])
+                and same(v.get("fluid_density"), DEFAULT_FLUIDS[fluid])
+                and same(v.get("sigma_cos"), SIGMA_COS_DEFAULTS[system])):
+            return False
+    return True
+
+
+def fluids_default_issue(fluids, pay_active: bool) -> Tuple[str, str, Optional[str]]:
+    """``(code, text, severity)`` of the built-in fluids note; a warning when pay uses SHF Sw."""
+    what = describe_fluids(fluids)
+    if pay_active:
+        return ("SHF_FLUIDS_DEFAULT",
+                "Saturation-height Sw is used for pay with the built-in fluid densities and "
+                f"interfacial tension ({what}). Enter your reservoir values or press Confirm on "
+                "the Saturation-Height tab.", "warning")
+    return ("SHF_FLUIDS_DEFAULT",
+            f"Saturation height uses the built-in fluid densities and interfacial tension "
+            f"({what}); enter your reservoir values or confirm them on the Saturation-Height "
+            "tab.", "info")
 
 
 def resolve_perm_column(shf: dict, results, primary_perm: Optional[str]) -> Optional[str]:
@@ -220,7 +320,7 @@ def apply_shf(shf, results, tvd, zones, sw=None, primary_perm=None, all_only=Fal
         m = zl == z
         fwl[m], drho[m], sig[m] = c[0], c[4], c[5]
         fluids[z] = {"fluid": c[1], "water_density": c[2], "fluid_density": c[3],
-                     "delta_rho": c[4], "fwl_tvd": c[0], "contact": c[6]}
+                     "delta_rho": c[4], "sigma_cos": c[5], "fwl_tvd": c[0], "contact": c[6]}
 
     tvd_a = np.asarray(tvd, dtype=float)
     h = fwl - tvd_a

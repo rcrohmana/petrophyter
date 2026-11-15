@@ -276,3 +276,39 @@ def test_a_handler_is_reusable():
     assert h.data is None
     assert h.read_pc_from_buffer(io.StringIO(BASE))
     assert len(h.data) == 5
+
+
+def _porosity_rows(porosity, well="A"):
+    rows = ["Well,Sample,Depth (ft),Porosity,Perm (mD),Pc (psi),Sw,System"]
+    for i, phi in enumerate(porosity):
+        rows.append(f"{well},S{i},{5000 + i},{phi},10,10,0.8,air-brine")
+        rows.append(f"{well},S{i},{5000 + i},{phi},10,100,0.3,air-brine")
+    return rows
+
+
+def test_fraction_well_with_values_above_one_warns():
+    h = read("\n".join(_porosity_rows([0.2] * 17 + [25.0, 22.0, 24.0])) + "\n")
+    assert h.porosity_scale == "fraction"
+    assert h.porosity_warning == (
+        "Porosity of A: median 0.2 read as fractions, but 6 of 40 values are above 1 and were "
+        "excluded. If this well is in percent, set Porosity to Percent.")
+
+
+def test_pc_warning_thresholds_forcing_and_override():
+    few = read("\n".join(_porosity_rows([0.2] * 29 + [25.0])) + "\n")
+    assert few.porosity_warning is None                                    # one typo
+    two = read("\n".join(_porosity_rows([0.2] * 18 + [25.0, 22.0])) + "\n")
+    assert two.porosity_warning is not None                                # 10 % of the values
+    forced = read("\n".join(_porosity_rows([0.2] * 17 + [25.0, 22.0, 24.0])) + "\n",
+                  porosity_scale="fraction")
+    assert forced.porosity_warning is None
+    two.set_porosity_scale("percent")
+    assert two.porosity_warning is None
+
+
+def test_pc_warning_is_per_well_and_kept_by_the_split():
+    rows = _porosity_rows([0.2] * 17 + [25.0, 22.0, 24.0], "A") + _porosity_rows([0.2] * 20, "B")[1:]
+    h = read("\n".join(rows) + "\n")
+    assert h.porosity_warning.startswith("Porosity of A:") and "Porosity of B" not in h.porosity_warning
+    parts = h.split_by_well()
+    assert parts["A"].porosity_warning == h.porosity_warning and parts["B"].porosity_warning is None

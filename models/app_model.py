@@ -976,7 +976,7 @@ class AppModel(QObject):
         source of every scoped value) and ``curve_mapping``. Detached: safe to
         hand to a worker thread.
         """
-        from modules.param_scopes import header_deviation_hint, resolve, zone_plan
+        from modules.param_scopes import header_deviation_degrees, resolve, zone_plan
         from modules.shale_estimation import SHALE_SETTING_DEFAULTS
 
         ds = well if well is not None else self._well
@@ -986,8 +986,9 @@ class AppModel(QObject):
         # What formation temperature needs beyond the numbers (only carried when set).
         if str(ds.well_info.get("depth_reference", "")).upper() == "TVD":
             flat["depth_reference"] = "TVD"
-        if header_deviation_hint(ds.well_info):
-            flat["header_deviation"] = True
+        deviation = header_deviation_degrees(ds.well_info)
+        if deviation is not None:
+            flat["header_deviation"] = deviation
         flat["analysis_mode"] = ds.analysis_mode
         flat["selected_formations"] = list(ds.selected_formations)
         flat["param_info"] = info
@@ -1080,6 +1081,7 @@ class AppModel(QObject):
             "fallback": str(shf.get("fallback") or "none"),
             "fits": {str(k): dict(v) for k, v in (shf.get("fits") or {}).items()},
             "fluids": dict(shf.get("fluids") or {}),
+            "fluids_confirmed": bool(shf.get("fluids_confirmed")),
             "sigma_cos_res": {"oil": sigma.get("oil-water"), "gas": sigma.get("gas-water")},
             "contacts": copy.deepcopy(ds.shf_contacts or {}),
         }

@@ -21,6 +21,7 @@ import pandas as pd
 
 from modules.core_handler import (
     _FEET_TOKENS, _METER_TOKENS, _cell_text, _is_blank, _resolve_override, _tokenize,
+    fraction_scale_note, scale_note_applies,
 )
 from modules.las_utils import COMMON_NULL_VALUES
 from modules.perm_calibration import PAIR_TOLERANCE_FT
@@ -155,6 +156,7 @@ class PcDataHandler:
         self.porosity_scale_mixed: bool = False
         self.porosity_warning: Optional[str] = None
         self._scales_by_group: Dict[str, str] = {}
+        self._scale_notes: Dict[str, tuple] = {}
         self._por_raw: Optional[np.ndarray] = None
         self._row_lines: np.ndarray = np.array([], dtype=int)
 
@@ -483,6 +485,7 @@ class PcDataHandler:
 
         # Porosity: percent or fraction per well, like core.
         por_scales: Dict[str, str] = {}
+        scale_notes: Dict[str, tuple] = {}
         phi_frac = phi.copy()
         por_raw = phi.copy()
         if por_col:
@@ -497,6 +500,10 @@ class PcDataHandler:
                 median = float(np.median(finite)) if len(finite) else 0.0
                 scale = forced.get(key) or ('percent' if median > 1.0 else 'fraction')
                 por_scales[key] = scale
+                if scale == 'fraction' and not forced.get(key):
+                    over_n = int((finite > 1.0).sum())
+                    if scale_note_applies(over_n, len(finite)):
+                        scale_notes[key] = (median, over_n, len(finite))
                 if scale == 'percent':
                     phi_frac[mask] = phi[mask] / 100.0
             over = keep & np.isfinite(phi_frac) & (phi_frac > 1.0)
@@ -506,6 +513,7 @@ class PcDataHandler:
                 self.excluded_row_wells[lines[i]] = wells_txt[i] if self.well_col else ''
             phi_frac[over] = np.nan
         self._scales_by_group = por_scales
+        self._scale_notes = scale_notes
 
         # Sample names. Within a well the id column groups the points; without it
         # (or for a blank id) points of equal depth, porosity and permeability form a curve.
@@ -632,12 +640,15 @@ class PcDataHandler:
         self.porosity_converted = 'percent' in distinct
         self.porosity_scale_mixed = len(distinct) > 1
         self.porosity_scale = next(iter(distinct)) if len(distinct) == 1 else None
+        warnings = []
         if self.porosity_scale_mixed:
             parts = ", ".join(f"{name}: {scale}" for name, scale in self.porosity_scales.items())
-            self.porosity_warning = (
-                f"Porosity scale differs between wells ({parts}). Check each well.")
-        else:
-            self.porosity_warning = None
+            warnings.append(f"Porosity scale differs between wells ({parts}). Check each well.")
+        for key, (median, over, count) in self._scale_notes.items():
+            if self._scales_by_group.get(key) == 'fraction':
+                warnings.append(fraction_scale_note(labels.get(key) or key or "this file",
+                                                    median, over, count))
+        self.porosity_warning = " ".join(warnings) or None
 
     def set_porosity_scale(self, scale: str, well: Optional[str] = None) -> int:
         """Override the porosity scale ('percent' or 'fraction') of this part.
@@ -662,6 +673,7 @@ class PcDataHandler:
         self.data['PHI'] = values
         for key in set(keys[mask]):
             self._scales_by_group[key] = scale
+            self._scale_notes.pop(key, None)
         self._publish_scales()
         return int(invalid.sum())
 
@@ -808,6 +820,7 @@ class PcDataHandler:
             part._por_raw = self._por_raw[idx]
         keys = {group_key(s, self.well_kind) for s in spellings}
         part._scales_by_group = {k: v for k, v in self._scales_by_group.items() if k in keys}
+        part._scale_notes = {k: v for k, v in self._scale_notes.items() if k in keys}
         part._publish_scales()
         return part
 

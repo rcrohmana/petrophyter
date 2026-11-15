@@ -76,6 +76,18 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
+def fraction_scale_note(label, median, over, count) -> str:
+    """Warning for a well whose porosity was read as fractions but holds values above 1."""
+    return (f"Porosity of {label}: median {median:.3g} read as fractions, but {over} of "
+            f"{count} values are above 1 and were excluded. If this well is in percent, "
+            "set Porosity to Percent.")
+
+
+def scale_note_applies(over: int, count: int) -> bool:
+    """True when values above 1 are at least 5 % of a fraction well's values, or three or more."""
+    return over > 0 and (over >= 3 or over >= 0.05 * count)
+
+
 @dataclass
 class CoreValidationResult:
     """Container for validation metrics between core and log data."""
@@ -168,6 +180,7 @@ class CoreDataHandler:
         self.porosity_scale_mixed: bool = False
         self.porosity_warning: Optional[str] = None
         self._scales_by_group: Dict[str, str] = {}
+        self._scale_notes: Dict[str, tuple] = {}
         self._por_raw: Optional[np.ndarray] = None  # porosity as read, aligned with data
 
     def _reset(self):
@@ -205,6 +218,7 @@ class CoreDataHandler:
         self.porosity_scale_mixed = False
         self.porosity_warning = None
         self._scales_by_group = {}
+        self._scale_notes = {}
         self._por_raw = None
 
     def _detect_columns(self, df: pd.DataFrame) -> dict:
@@ -557,6 +571,7 @@ class CoreDataHandler:
             forced = {k: requested for k in set(keys)}
 
         scales: Dict[str, str] = {}
+        notes: Dict[str, tuple] = {}
         converted = raw.copy()
         for key in dict.fromkeys(keys):
             mask = keys == key
@@ -567,6 +582,10 @@ class CoreDataHandler:
             median = float(np.median(finite)) if len(finite) else 0.0
             scale = forced.get(key) or ('percent' if median > 1.0 else 'fraction')
             scales[key] = scale
+            if scale == 'fraction' and not forced.get(key):
+                over = int((finite > 1.0).sum())
+                if scale_note_applies(over, len(finite)):
+                    notes[key] = (median, over, len(finite))
             if pmax > 100.0:
                 logger.warning(
                     "Core porosity max is %.1f (> 100); data may be corrupt; "
@@ -586,6 +605,7 @@ class CoreDataHandler:
         df['__por_raw__'] = raw
         df[col] = converted
         self._scales_by_group = scales
+        self._scale_notes = notes
         self._publish_scales(df)
         return df
 
@@ -602,12 +622,15 @@ class CoreDataHandler:
         self.porosity_converted = 'percent' in distinct
         self.porosity_scale_mixed = len(distinct) > 1
         self.porosity_scale = next(iter(distinct)) if len(distinct) == 1 else None
+        warnings = []
         if self.porosity_scale_mixed:
             parts = ", ".join(f"{name}: {scale}" for name, scale in self.porosity_scales.items())
-            self.porosity_warning = (
-                f"Porosity scale differs between wells ({parts}). Check each well.")
-        else:
-            self.porosity_warning = None
+            warnings.append(f"Porosity scale differs between wells ({parts}). Check each well.")
+        for key, (median, over, count) in self._scale_notes.items():
+            if self._scales_by_group.get(key) == 'fraction':
+                warnings.append(fraction_scale_note(labels.get(key) or key or "this file",
+                                                    median, over, count))
+        self.porosity_warning = " ".join(warnings) or None
 
     def set_porosity_scale(self, scale: str, well: Optional[str] = None) -> int:
         """Override the porosity scale ('percent' or 'fraction') of this part.
@@ -636,6 +659,7 @@ class CoreDataHandler:
         self.data[self.porosity_col] = values
         for key in set(keys[mask]):
             self._scales_by_group[key] = scale
+            self._scale_notes.pop(key, None)
         self._publish_scales()
         return int(invalid.sum())
     
@@ -1006,6 +1030,7 @@ class CoreDataHandler:
             part._por_raw = self._por_raw[idx]
         keys = {group_key(s, self.well_kind) for s in spellings}
         part._scales_by_group = {k: v for k, v in self._scales_by_group.items() if k in keys}
+        part._scale_notes = {k: v for k, v in self._scale_notes.items() if k in keys}
         part._publish_scales()
         return part
 

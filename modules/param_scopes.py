@@ -614,13 +614,55 @@ def _curve_tvd_source(md, tvd, name, notes) -> Optional[TvdSource]:
                      edge_slope(m[-1] - m[-2], t[-1] - t[-2]))
 
 
+# A well counts as deviated for the vertical-well notes from this angle on.
+DEVIATION_HINT_DEG = 5.0
+# Data columns that carry an inclination or deviation angle (upper case).
+INCLINATION_CURVES = ("DEVI", "DEV", "INCL", "HDEV", "DEVIATION", "INCLINATION")
+
+
+def header_deviation_degrees(header: Optional[Dict]) -> Optional[float]:
+    """Largest header deviation or inclination entry in degrees when it reaches 5 degrees.
+
+    Values above 90 degrees are not angles of a wellbore and are ignored.
+    """
+    values = []
+    for key in ("max_deviation", "inclination"):
+        value = (header or {}).get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and math.isfinite(value) and 0.0 <= value <= 90.0:
+            values.append(float(value))
+    best = max(values, default=None)
+    return best if best is not None and best >= DEVIATION_HINT_DEG else None
+
+
 def header_deviation_hint(header: Optional[Dict]) -> bool:
-    """True when the header has an inclination / deviation entry."""
-    return any(("incl" in str(k).lower() or "devi" in str(k).lower()) for k in (header or {}))
+    """True when a header deviation or inclination entry reads 5 degrees or more."""
+    return header_deviation_degrees(header) is not None
+
+
+def inclination_curve_hint(data) -> Optional[Tuple[str, float]]:
+    """(curve name, maximum in degrees) of an inclination curve that reads 5 degrees or more.
+
+    Looks for DEVI, DEV, INCL, HDEV, DEVIATION or INCLINATION (any case) in the
+    data columns; values above 90 are ignored. None when there is none.
+    """
+    columns = getattr(data, "columns", ())
+    best: Optional[Tuple[str, float]] = None
+    for name in columns:
+        if str(name).strip().upper() not in INCLINATION_CURVES:
+            continue
+        values = pd.to_numeric(data[name], errors="coerce").to_numpy(dtype=float)
+        values = values[np.isfinite(values) & (values >= 0.0) & (values <= 90.0)]
+        if not len(values):
+            continue
+        top = float(values.max())
+        if top >= DEVIATION_HINT_DEG and (best is None or top > best[1]):
+            best = (str(name), top)
+    return best
 
 
 def resolve_tvd(data, tvd_curve=None, depth_reference=None,
-                deviation_hint: bool = False, noun: str = "temperatures") -> TvdSource:
+                deviation_hint=False, noun: str = "temperatures") -> TvdSource:
     """TVD source for a well: mapped curve, then TVD depth index, then MD (§5.1).
 
     ``data`` has the ``DEPTH`` column (MD, or TVD when ``depth_reference`` is
@@ -631,6 +673,7 @@ def resolve_tvd(data, tvd_curve=None, depth_reference=None,
     """
     md = np.asarray(data["DEPTH"], dtype=float)
     notes: List[str] = []
+    curve_hint = inclination_curve_hint(data)
     name = tvd_curve if tvd_curve and tvd_curve not in ("None", "DEPTH") else None
     if name is not None:
         if name not in data.columns:
@@ -647,8 +690,14 @@ def resolve_tvd(data, tvd_curve=None, depth_reference=None,
         notes.append(f"Curve {like[0]} looks like TVD but is not mapped; {noun} "
                      "assume a vertical well. Map it in Curve Mapping.")
     elif name is None and deviation_hint:
-        notes.append("The header has an inclination/deviation entry but no TVD curve is "
+        known = (f" (maximum deviation {deviation_hint:.0f} degrees)"
+                 if isinstance(deviation_hint, float) else "")
+        notes.append(f"The header has an inclination/deviation entry{known} but no TVD curve is "
                      f"mapped; {noun} assume a vertical well.")
+    elif name is None and curve_hint:
+        notes.append(f"Curve {curve_hint[0]} reads up to {curve_hint[1]:.0f} degrees, so the "
+                     f"well looks deviated, but no TVD curve is mapped; {noun} assume a "
+                     "vertical well. Map a TVD curve in Curve Mapping.")
     return TvdSource("md", "MD (assumed vertical)", notes)
 
 
@@ -681,7 +730,8 @@ def temperature_readout(data, tvd_curve, depth_reference, header, flat) -> List[
     gradient_now = float(flat.get("temp_gradient") or 0.0)
     datum = float(flat.get("temp_datum_depth") or 0.0)
     if data is not None and "DEPTH" in getattr(data, "columns", ()) and len(data):
-        source = resolve_tvd(data, tvd_curve, depth_reference, header_deviation_hint(header))
+        source = resolve_tvd(data, tvd_curve, depth_reference,
+                             header_deviation_degrees(header) or False)
         t_top, t_bottom = (
             float(formation_temperature(source.at(d), surface, gradient_now, datum))
             for d in (float(data["DEPTH"].min()), float(data["DEPTH"].max()))

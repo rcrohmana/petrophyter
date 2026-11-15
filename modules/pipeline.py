@@ -40,8 +40,9 @@ from modules.rock_typing import (
     apply_rock_types, rock_type_rows, rock_types_zone_scoped, rock_typing_unavailable)
 from modules.shf_stage import compare_stats
 from modules.shf_stage import (
-    apply_shf, merge_counts, new_counts, pay_refused_for, shf_count_issues, shf_summary,
-    zone_series)
+    apply_shf, fluids_at_defaults, fluids_default_issue, merge_counts,
+    new_counts, pay_refused_for, perm_from_resistivity, perm_from_resistivity_text,
+    shf_count_issues, shf_summary, zone_series)
 from modules.shale_estimation import SHALE_PARAMS, estimate_shale_point, is_estimate
 from modules.statistics_utils import (
     MIN_GR_SEPARATION, StatisticsUtils, get_default_matrix_parameters,
@@ -357,7 +358,7 @@ def _tvd_source(data: pd.DataFrame, p: Dict, curve_mapping: Optional[Dict] = Non
     """
     tvd_curve = (curve_mapping or p.get("curve_mapping") or {}).get("TVD")
     return resolve_tvd(data, tvd_curve, p.get("depth_reference"),
-                       bool(p.get("header_deviation")), noun=noun)
+                       p.get("header_deviation") or False, noun=noun)
 
 
 def temperature_context(data: pd.DataFrame, p: Dict,
@@ -1927,6 +1928,13 @@ def _shf_well_summary(p, curve_mapping, results, stages, tvd_source, warnings) -
     for code, text in dict.fromkeys(notes):
         warnings.add(code, text)
     for code, text, severity in shf_count_issues(counts, requested, refused):
+        warnings.add(code, text, severity=severity)
+    if requested and not refused:
+        from_rt = perm_from_resistivity(first.perm_column if first else None, results)
+        if from_rt is not None:
+            warnings.add("SHF_PERM_FROM_RT", perm_from_resistivity_text(first.perm_column, from_rt))
+    if fluids_at_defaults(shf, fluids):
+        code, text, severity = fluids_default_issue(fluids, requested and not refused)
         warnings.add(code, text, severity=severity)
     contacts = shf.get("contacts") or {}
     return shf_summary(

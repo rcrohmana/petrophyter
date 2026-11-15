@@ -68,6 +68,8 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "SHF_TVD_NOTE": ("warning", "diagnostics"),
     "SHF_TVDSS_SUSPECT": ("warning", "diagnostics"),
     "SHF_PAY_FALLBACK": ("warning", "diagnostics"),
+    "SHF_PERM_FROM_RT": ("warning", "diagnostics"),
+    "SHF_FLUIDS_DEFAULT": ("warning", "diagnostics"),
     "SHF_PAY_REFUSED": ("warning", "diagnostics"),
     "SHF_ZONE_SCOPE_RT": ("info", "diagnostics"),
     # LRLC (opt-in low-resistivity low-contrast layer)

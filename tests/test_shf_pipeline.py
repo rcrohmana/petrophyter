@@ -64,7 +64,8 @@ def test_params_have_no_shf_key_unless_enabled():
     model.project.shf["fits"] = {"All": fit_dict()}
     on = model.params_for_well()
     assert set(on["shf"]) == {"enabled", "use_for_pay", "phie_source", "perm_source", "fallback",
-                              "fits", "fluids", "sigma_cos_res", "contacts"}
+                              "fits", "fluids", "fluids_confirmed", "sigma_cos_res",
+                              "contacts"}
     assert on["shf"]["sigma_cos_res"] == {"oil": model.project.shf["sigma_cos"]["oil-water"],
                                           "gas": model.project.shf["sigma_cos"]["gas-water"]}
     assert model.well_params_hash() != hash_off

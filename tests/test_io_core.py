@@ -316,3 +316,68 @@ def test_cec_role_in_import_dialog_and_replay_is_generic():
     # a recorded cec entry reaches the reader unchanged.
     h, ok = _read("Depth\tPorosity\tx\n1000\t0.2\t4\n", columns=dict({"cec": "x"}))
     assert ok and h.data["CEC"].iloc[0] == 4
+
+
+# --------------------------------------------------------------------------- #
+# Porosity read as fractions with values above 1
+# --------------------------------------------------------------------------- #
+def _porosity_text(values, well=None):
+    head = "Well\tDepth (ft)\tPorosity\n" if well else "Depth (ft)\tPorosity\n"
+    rows = "".join(f"{(well + chr(9)) if well else ''}{5000 + i}\t{v}\n"
+                   for i, v in enumerate(values))
+    return head + rows
+
+
+def _read_porosity(values, **kw):
+    handler = CoreDataHandler()
+    assert handler.read_core_from_buffer(_buf(_porosity_text(values)), depth_unit="FT", **kw)
+    return handler
+
+
+def test_fraction_well_with_values_above_one_warns():
+    handler = _read_porosity([0.2] * 17 + [25.0, 22.0, 24.0])
+    assert handler.porosity_scale == "fraction"
+    assert handler.porosity_warning == (
+        "Porosity of this file: median 0.2 read as fractions, but 3 of 20 values are above 1 "
+        "and were excluded. If this well is in percent, set Porosity to Percent.")
+
+
+def test_two_values_above_one_warn_from_five_percent_of_the_values():
+    assert _read_porosity([0.2] * 18 + [25.0, 22.0]).porosity_warning is not None     # 10 %
+    assert _read_porosity([0.2] * 38 + [25.0, 22.0]).porosity_warning is not None     # 5 %
+    assert _read_porosity([0.2] * 58 + [25.0, 22.0]).porosity_warning is None         # 3 %
+
+
+def test_a_single_typo_is_only_an_excluded_row():
+    handler = _read_porosity([0.2] * 29 + [25.0])
+    assert handler.porosity_warning is None
+    assert len(handler.excluded_rows) == 1
+
+
+def test_three_values_above_one_warn_in_a_large_well():
+    assert _read_porosity([0.2] * 97 + [25.0, 22.0, 24.0]).porosity_warning is not None
+
+
+def test_percent_wells_and_forced_scales_do_not_warn():
+    assert _read_porosity([20.0] * 17 + [22.0, 21.0, 19.0]).porosity_warning is None
+    forced = _read_porosity([0.2] * 17 + [25.0, 22.0, 24.0], porosity_scale="fraction")
+    assert forced.porosity_warning is None
+
+
+def test_setting_the_scale_to_percent_clears_the_warning():
+    handler = _read_porosity([0.2] * 17 + [25.0, 22.0, 24.0])
+    assert handler.porosity_warning
+    handler.set_porosity_scale("percent")
+    assert handler.porosity_warning is None
+
+
+def test_warning_names_the_well_and_follows_a_split_part():
+    text = (_porosity_text([0.2] * 17 + [25.0, 22.0, 24.0], well="A")
+            + _porosity_text([0.2] * 20, well="B").split("\n", 1)[1])
+    handler = CoreDataHandler()
+    assert handler.read_core_from_buffer(_buf(text), depth_unit="FT")
+    assert handler.porosity_warning.startswith("Porosity of A: median 0.2 read as fractions")
+    assert "Porosity of B" not in handler.porosity_warning
+    parts = handler.split_by_well()
+    assert parts["A"].porosity_warning == handler.porosity_warning
+    assert parts["B"].porosity_warning is None
