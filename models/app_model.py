@@ -1074,7 +1074,7 @@ class AppModel(QObject):
         """
         shf = self.project.shf
         sigma = shf.get("sigma_cos") or {}
-        return {
+        out = {
             "enabled": True,
             "use_for_pay": bool(shf.get("use_for_pay")),
             "phie_source": str(shf.get("phie_source") or "PHIE"),
@@ -1082,10 +1082,14 @@ class AppModel(QObject):
             "fallback": str(shf.get("fallback") or "none"),
             "fits": {str(k): dict(v) for k, v in (shf.get("fits") or {}).items()},
             "fluids": dict(shf.get("fluids") or {}),
-            "fluids_confirmed": bool(shf.get("fluids_confirmed")),
             "sigma_cos_res": {"oil": sigma.get("oil-water"), "gas": sigma.get("gas-water")},
             "contacts": copy.deepcopy(ds.shf_contacts or {}),
         }
+        if shf.get("fluids_confirmed"):
+            # Carried only once confirmed, so the hash of an unconfirmed well is the same as in
+            # earlier versions and an upgrade does not mark it out of date.
+            out["fluids_confirmed"] = True
+        return out
 
     def _rock_typing_params(self, ds: WellDataset, flat: dict):
         """Rock-type definitions resolved for one well, and its core labels (spec 6.2).

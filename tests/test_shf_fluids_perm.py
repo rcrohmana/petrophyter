@@ -171,7 +171,7 @@ def test_confirmed_flag_enters_the_parameters_and_the_stale_hash():
     model = AppModel()
     model.project.shf["enabled"] = True
     before = model.well_params_hash()
-    assert model.params_for_well()["shf"]["fluids_confirmed"] is False
+    assert "fluids_confirmed" not in model.params_for_well()["shf"]
     model.project.shf["fluids_confirmed"] = True
     assert model.params_for_well()["shf"]["fluids_confirmed"] is True
     assert model.well_params_hash() != before
