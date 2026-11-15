@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import copy
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
@@ -543,6 +544,31 @@ def test_the_worker_solves_the_zone_or_the_whole_well_and_writes_nothing(page):
     sens = whole["block"]["zones"][0]["width_sensitivity"]
     assert sens["widths_ft"] == pytest.approx([3.2, 4.0, 5.0]) and sens["n"] > 0
     assert state_of(window, ds) == before
+
+
+def test_a_zone_proposal_matches_the_run_in_that_zone(page):
+    """With the step stored on in every zone, Propose for one zone solves what the run solves (the
+    whole well) and shows that zone's part: the same RT_DECON there and the same window statuses."""
+    from modules.pipeline import run_pipeline
+    from services.analysis_service import snapshot_well
+    from services.lrlc_service import LrlcService
+
+    window, _tab, _form, ds = page
+    LrlcService.set_param(window.model, "project", None, "rt_steps", ["decon"])
+    snap = snapshot_well(window.model, ds)
+    results, summary = run_pipeline(snap.data, snap.curve_mapping, snap.params,
+                                    formation_tops=snap.formation_tops)
+    out = DeconWorker.from_model(window.model, ds, "UPPER", {}, None, 1).compute()
+    plot = out["plot"]
+    assert [z["zone"] for z in out["block"]["zones"]] == ["UPPER"]
+    assert plot["depth"][0] >= 1000.0 and plot["depth"][-1] <= 1040.0 + 1e-9
+    run = results.set_index("DEPTH")["RT_DECON"].reindex(plot["depth"]).to_numpy(dtype=float)
+    np.testing.assert_allclose(plot["rt_decon"], run, rtol=1e-9, equal_nan=True)
+    ran = [(round(w["top"], 3), round(w["bottom"], 3), w["status"])
+           for w in summary["lrlc"]["decon"]["windows"]
+           if w["bottom"] >= plot["depth"][0] and w["top"] <= plot["depth"][-1]]
+    shown = [(round(w["top"], 3), round(w["bottom"], 3), w["status"]) for w in plot["windows"]]
+    assert shown == ran and shown
 
 
 def test_the_worker_uses_the_pending_values_and_edits(page):

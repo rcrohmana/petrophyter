@@ -672,8 +672,10 @@ class DeconMixin:
             where = ", ".join(f"Zone {n}" if n else "the unzoned interval" for n in names)
             if enabled:
                 lines.append(f"{where} was laminated in the last run: with the shoulder-bed guard "
-                             "on, Deconvolution is not applied there. Use the laminated-sand "
-                             "correction.")
+                             "on, Deconvolution is not applied there. If the laminations are thinner "
+                             "than the reference curve resolves, use the laminated-sand "
+                             "correction; if the reference curve resolves the beds, switch the "
+                             "guard off on the Overview page.")
             else:
                 lines.append(f"{where} was laminated in the last run: with the guard off, "
                              "Deconvolution is applied there and can correct the thin beds twice.")

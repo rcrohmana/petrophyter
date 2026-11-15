@@ -797,7 +797,10 @@ class DeconWorker(QRunnable):
 
         ``values`` are ``dec_*`` ladder values that replace the stored ones for this proposal
         (the page's pending values), ``edits`` the manual boundary edits. ``zone`` is the zone
-        to deconvolve; None deconvolves every zone.
+        to deconvolve; None deconvolves every zone. The solve is the one the run makes: every zone
+        whose stored steps already list the deconvolution stays active beside ``zone``, so the
+        windows, the bed picks and the result in ``zone`` are those the run writes; the payload then
+        keeps only ``zone``'s part.
         """
         from modules.las_utils import mask_nonpositive
         from modules.lrlc.stage import build_aux, zone_keys_for
@@ -845,11 +848,15 @@ class DeconWorker(QRunnable):
         default = dict(res["default"])
         zones = {k: dict(v) for k, v in (res.get("zones") or {}).items()}
         from modules.lrlc.config import WELL_ONLY_KEYS
+        from modules.lrlc.decon_step import decon_zone_keys
 
+        stored_on = set(decon_zone_keys(lrlc, keys))
         for key in dict.fromkeys(keys.tolist()):
             row = dict(zones.get(key, default))
-            row.update({k: v for k, v in values.items() if k not in WELL_ONLY_KEYS})
-            row["rt_steps"] = [DECON_CAPTION_STEP] if target is None or key == target else []
+            if target is None or key == target:
+                row.update({k: v for k, v in values.items() if k not in WELL_ONLY_KEYS})
+            row["rt_steps"] = ([DECON_CAPTION_STEP] if target is None or key == target or key in stored_on
+                               else [])
             zones[key] = row
         default.update({k: v for k, v in values.items() if k in WELL_ONLY_KEYS})
         default["rt_steps"] = [DECON_CAPTION_STEP] if target is None else []
@@ -867,7 +874,7 @@ class DeconWorker(QRunnable):
     # -- the work (also callable on the calling thread, for tests)
     def compute(self) -> dict:
         from modules.lrlc.decon import pick_beds, response_weights
-        from modules.lrlc.decon_step import decon_block, derive_decon_well, pick_reference
+        from modules.lrlc.decon_step import _zone_name, decon_block, derive_decon_well, pick_reference
 
         info: dict = {}
         found: list = []
@@ -875,6 +882,17 @@ class DeconWorker(QRunnable):
                                 zone_keys=self.keys, lrlc=self.lrlc, issues=found, info=info)
         block = decon_block(info, None, self.has_labels)
         active = np.asarray(info.get("active"), dtype=bool) if info else np.zeros(len(self.depth), bool)
+        if self.zone is not None:
+            # the run's solve, shown for the chosen zone only
+            active = active & (np.asarray(self.keys, dtype=object) == self.zone)
+            if block is not None:
+                name = _zone_name(self.zone)
+                block["zones"] = [z for z in block.get("zones", []) if z.get("zone") == name]
+                block["boundaries"] = {k: v for k, v in (block.get("boundaries") or {}).items() if k == name}
+                stats = info["result"].zone_stats.get(str(self.zone), {})
+                block["counts"] = {**(block.get("counts") or {}),
+                                   "amplified": int(stats.get("n_amplified", 0)),
+                                   "edge": int(stats.get("n_edge", 0))}
         payload = {"token": self.token, "zone": self.zone, "block": block,
                    "issues": [{"code": c, "text": t, "zone": z, "severity": s}
                               for c, t, z, s in found],
