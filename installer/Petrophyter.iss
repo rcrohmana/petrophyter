@@ -20,8 +20,8 @@
 ; -----------------------------------------------------------------------------
 #define AppId           "{{978A90D9-EDFB-4F2E-AB78-840138C1574F}"
 #define AppName         "Petrophyter"
-#define AppVersion      "1.13.0 (Build 20261113)"
-#define AppVersionFile  "1.13.0_Build20261113"
+#define AppVersion      "1.14.0 (Build 20261115)"
+#define AppVersionFile  "1.14.0_Build20261115"
 #define AppPublisher    "Petrophysics TAU Research Group"
 #define AppURL          "https://github.com/rcrohmana/petrophyter"
 #define AppExeName      "Petrophyter.exe"

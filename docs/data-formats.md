@@ -25,10 +25,12 @@ The [LRLC Workbench](user-guide.md#lrlc-workbench) can read up to six curves bes
 | `RS` | Shallow resistivity (used for the deep / shallow separation of the screening) | `RS`, `LLS`, `ILS`, `RESS`, `RXOZ`, `RSHALLOW` |
 | `RXO` | Flushed-zone (micro) resistivity *(v1.11.0)* | `RXO`, `MSFL`, `MCFL`, `RXO8` |
 | `PEF` | Photoelectric factor | `PEF`, `PE`, `PEFZ` |
-| `DTS` | Shear slowness *(v1.11.0)* | `DTS`, `DTSM`, `DTSH`, `DT2`, `DTSD` |
-| `HIRES` | High-resolution resistivity | none: chosen by hand |
+| `DTS` | Shear slowness *(v1.11.0)*, in us/ft | `DTS`, `DTSM`, `DTSH`, `DT2`, `DTSD` |
+| `HIRES` | High-resolution reference curve of the Rt deconvolution *(v1.14.0)* | none: chosen by hand |
 
-`RXOZ` stays under `RS`, as before. `RS` is used by the screening and `PEF` by the pyrite volume (**From RHOB and PEF**, together with the mapped density curve). The radial invasion step *(v1.13.0)* reads `RM`, `RS` and `RXO` as its medium, shallow and micro-resistivity observations; the other roles are saved with the well for later tools. The `RM` role is the medium resistivity curve, not the mud resistivity of the header. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+`RXOZ` stays under `RS`, as before. `RS` is used by the screening and `PEF` by the pyrite volume (**From RHOB and PEF**, together with the mapped density curve). The radial invasion step *(v1.13.0)* reads `RM`, `RS` and `RXO` as its medium, shallow and micro-resistivity observations; the elastic flag *(v1.14.0)* reads `DTS` together with the sonic and density curves, and the Rt deconvolution *(v1.14.0)* picks its bed boundaries from `HIRES`, or else `RXO`, `RHOB` or `GR`; the other roles are saved with the well for later tools. The `RM` role is the medium resistivity curve, not the mud resistivity of the header. A mapped curve that is not in the data is ignored with a warning. Values of zero or less in the resistivity roles are set to empty in the LRLC calculations and counted in the run notes; unlike `RT`, a role curve is not reliably masked when the file is loaded (only a curve declared in ohm units is). A resistivity curve that is mapped as `RT` is still the only one that drives Sw.
+
+The elastic flag expects the sonic curves (`DT` and `DTS`) in us/ft; a curve in us/m skips the stage with a note. It computes values only where `DT` lies between 40 and 200 us/ft, `DTS` between 60 and 500 us/ft and `RHOB` between 1.5 and 3.2 g/cc.
 
 ## Mud values in the LAS header *(v1.13.0)*
 
@@ -146,15 +148,19 @@ These columns are added to the results table, and so to the CSV, Excel and LAS e
 | `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
 | `RT_SAND` | ohm.m | laminated-sand resistivity | the laminated-sand step is active |
 | `RT_PYR` | ohm.m | pyrite-corrected resistivity | the pyrite step is active |
+| `RT_DECON` | ohm.m | deconvolved resistivity of the thin-bed step *(v1.14.0)*; empty outside the zones that ran the step, where the guard blocked it and where the solve is invalid | the `decon` step is selected in at least one zone |
 | `RT_INV` | ohm.m | invasion-corrected resistivity | the invasion step is active |
 | `RXO_INV` | ohm.m | flushed-zone resistivity from the invasion step (fitted, or the `RXO` curve when it is used) | same |
 | `DI_INV` | in | invasion diameter from the invasion step; empty where the sample is non-unique or invalid | same |
 | `M_VAR` | unitless | cementation exponent per sample | a zone is in variable m/n Curve mode; written for every segment of that well |
 | `N_VAR` | unitless | saturation exponent per sample | same |
+| `AI` | (g/cc)(m/s); `UNITLESS` in LAS | acoustic impedance `RHOB * 304800 / DT` *(v1.14.0)* | the elastic flag is on and `DTS` is mapped |
+| `VPVS` | unitless | `DTS / DT` | same |
+| `ELASTIC_FLAG` | unitless | elastic screening flag (0 or 1; 0 also where the stage could not be evaluated) | same |
 | `SW_BASE` | v/v | Sw with no LRLC correction | a correction is active somewhere in the well |
 | `NET_PAY_BASE_FLAG` | unitless | net pay flag from `SW_BASE` (0 or 1) | same |
 
-`RT_SW`, `RT_CUT`, `BVW`, `LRLC_SCORE`, `LRLC_FLAG` and `WATER_FREE_FLAG` are described in [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110).
+`RT_SW`, `RT_CUT`, `BVW`, `LRLC_SCORE`, `LRLC_FLAG` and `WATER_FREE_FLAG` are described in [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110). In LAS, `RT_DECON` has the unit `OHMM`, and `AI`, `VPVS` and `ELASTIC_FLAG` are written as `UNITLESS` (the unit of `AI` is given in its description, because `(G/CC)(M/S)` is not a legal LAS unit); the curve descriptions are `MODELLED DECONVOLVED RT (thin-bed)`, `DERIVED ACOUSTIC IMPEDANCE RHOB*304800/DT (G/CC)(M/S)`, `DERIVED VP/VS = DTS/DT` and `FLAG ELASTIC LRLC SCREENING (design thresholds)`.
 
 ### Provenance and the Field total
 

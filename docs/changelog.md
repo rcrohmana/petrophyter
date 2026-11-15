@@ -2,7 +2,34 @@
 
 # Version History
 
-## v1.13.0 (Build 20261113) — Current Release
+## v1.14.0 (Build 20261115) — Current Release
+
+See the [release notes](releases/v1.14.0.md) for details. Both new features are optional: **results do not
+change** unless you add the deconvolution step to a zone or switch the elastic flag on. Wells with LRLC on
+show as out of date once after the upgrade; a rerun gives the same numbers.
+
+- **Rt deconvolution (thin beds)**: the `decon` step is the first of the Rt chain and writes `RT_DECON`.
+  Reference curve, tool presets and response width, **Propose** with editable bed boundaries,
+  **Use proposal**, and a line showing the median Rt increase at 0.8, 1 and 1.25 times the response width.
+  The widths are generic, the result depends on them, and beds thinner than the response width are only
+  partly recovered. The Doll response is offered but its formula is not yet checked against the paper.
+  The misfit warning is automatic (twice the relative noise) unless you set a value.
+- **Elastic flag** on Screening from `AI` and `Vp/Vs` (needs a shear slowness curve, `DTS`): writes `AI`,
+  `VPVS` and `ELASTIC_FLAG`, adds one point to `LRLC_SCORE`, and never changes Sw, pay, HCPV or
+  `LRLC_FLAG`. The thresholds are starting values to calibrate on wells with known fluids.
+- **Advanced settings** of the deconvolution page and of the elastic section are collapsed sections that
+  open by themselves when a value differs from its default.
+- **Pickett iso-Sw curves** from the variable m model for a single zone in curve mode.
+- **LRLC report in the exports**: an `LRLC` sheet in Excel and three CSV files next to a CSV
+  (`.lrlc_zones.csv`, `.lrlc_steps.csv`, `.lrlc_refs.csv`).
+- **Screening method strips** are one line, like those of the Remediation pages.
+- **Specialized → Rt Corrections → Rt Deconvolution…**; `RT_DECON` on the resistivity track and
+  `ELASTIC_FLAG` on the flags track of both log displays; LAS units and descriptions for the new columns.
+- **Session format 2.8** when the new features are used; v1.13.0 opens it with a notice and without the new
+  settings (deconvolution is then skipped with a note).
+- References: Guo et al. (2023) confirmed; details of Coll et al. (1993) and Tolioe et al. (2016) filled in.
+
+## v1.13.0 (Build 20261113)
 
 See the [release notes](releases/v1.13.0.md) for details. **Results do not change** unless you switch
 Variable m/n to curve mode or add the invasion step, and sessions that use neither are saved as before.

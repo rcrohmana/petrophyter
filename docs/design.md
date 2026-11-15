@@ -355,10 +355,13 @@ user choice.
 - Menu bar order, left to right: File, Session, Analysis, Specialized, Parameters,
   Corrections, View, Help (`test_menu_order`). Specialized is created as `Speciali&zed`
   because `P` belongs to Parameters.
-- Specialized holds LRLC Workbench... (`activity`, `Ctrl+L`), a separator and the Saturation
+- Specialized holds LRLC Workbench... (`activity`, `Ctrl+L`), a separator, the Saturation
   Tools submenu (`droplets`, built like the Theme submenu) with Rt Cutoff Overlay...
-  (`scissors`) and Saturation-Height (Rt-independent Sw)... (`droplets`). It lists only
-  entries that exist; there are no disabled placeholders. Help gains Scientific
+  (`scissors`), Saturation-Height (Rt-independent Sw)... (`droplets`) and Variable m/n...,
+  the Rt Corrections submenu with Laminated Sand Rt (Hagiwara)..., Pyrite Correction...,
+  Radial Invasion Correction... and Rt Deconvolution... (v1.14.0, opens the Remediation page
+  `decon`), a separator and the checkable Shoulder-bed Guard. It lists only entries that
+  exist; there are no disabled placeholders. Help gains Scientific
   References... (`book-open`), which opens a read-only dialog with Export BibTeX....
 - Every iconed menu action is in `_action_icons`, so icons follow the theme.
 - The LRLC Workbench tab (`ui/tabs/lrlc_tab.py`) follows the Saturation-Height tab: a stacked
@@ -377,16 +380,45 @@ user choice.
   page, the Rt step switches and the chain options included, is pending until the one Apply
   (Standard button; "Use fit" and "Use header Rmf" fill pending values, they never write).
   Each page puts the inputs most zones need first and the tuning values under an "Advanced"
-  `SectionLabel` (not a collapsible). Notes stay only when they are actionable, in one line;
+  `SectionLabel`. On the Rt deconvolution page and in the Screening elastic section (v1.14.0)
+  the tuning values are a collapsed "Advanced settings" section that opens by itself when a
+  value differs from its default. Notes stay only when they are actionable, in one line;
   a missing curve role is one warning line with a link button to Screening > Curves.
+- The Rt deconvolution page (`ui/widgets/lrlc_decon_page.py`, `DeconMixin`, mixed into the
+  Remediation form; plot in `lrlc_decon_plot.py`) sits in the list directly after Overview. It
+  holds the step switch, the reference curve and tool presets (with the generic badge), the
+  response width, Propose, the response-width sensitivity line, the boundary editor (add,
+  remove, delete or restore a boundary, Reset edits, Use proposal), the window table and the
+  counts. Propose runs in a `QRunnable` (`DeconWorker` in `services/lrlc_service.py`) on a
+  snapshot of the well taken on the GUI thread; it writes nothing, and only Apply stores the
+  settings and the boundary edits. The step switch is disabled, with the reason, when the
+  guard blocks the step because RT is marked shoulder-bed corrected.
+- Screening gains an Elastic flag section (`ui/widgets/lrlc_elastic_section.py`) below the Rt
+  cutoff overlay: the switch (written at once, like the other Screening switches), the
+  curves it reads with a link to Curves when DTS is missing, a zone table, two crossplots of
+  the relative AI and Vp/Vs against porosity, and the thresholds under Advanced settings with
+  Set here / Inherit per value. The Method & Reference strips of Screening are one line
+  (`compact=True`), like those of the Remediation pages; Diagnosis keeps the equations.
+- The Pickett plot (`ui/widgets/lrlc_pickett.py`) draws the iso-Sw lines with the variable m
+  model for a single zone in Curve mode, with a note under the plot, and keeps the constant
+  m otherwise.
 - Each tool carries a Method & Reference strip (`ui/widgets/method_box.py`): title, typeset
   equations, short citations with a "(to verify)" mark on unconfirmed ones, and a link that
-  opens the Methods panel at that method. On the Remediation pages the strip is one line
+  opens the Methods panel at that method. On the Screening and Remediation pages the strip is one line
   (`compact=True`: title, citations, link; no equations). Opened from a strip, the Methods
   panel shows a "Back to ..." link to the panel and page the strip is on. The Data Browser zone node has the context action Analyze as LRLC candidate
   (`activity`); the browser stays read-only.
 - Plot colours for the new curves (`RT_SW`, `RT_CUT`, `BVW`, `LRLC_FLAG`,
-  `WATER_FREE_FLAG`) are plot tokens with dark overrides, like the other curve colours.
+  `WATER_FREE_FLAG`, and from v1.14.0 `RT_DECON` and `ELASTIC_FLAG`) are plot tokens with
+  dark overrides, like the other curve colours. `RT_DECON` is drawn dotted on the resistivity
+  track and `ELASTIC_FLAG` is shaded on the flags track in both log displays; `AI` and `VPVS`
+  appear in the cursor readout only.
+- The LRLC report (`modules/lrlc/report.py`, pandas only) builds three frames (zones, Rt
+  correction chain, references) from the run summaries; `services/export_service.py` writes
+  them as the `LRLC` sheet (three stacked tables) and, for a CSV export, as the sidecars
+  `<name>.lrlc_zones.csv`, `.lrlc_steps.csv` and `.lrlc_refs.csv`, only when a well has an
+  LRLC run. Session format 2.8 is written only when the elastic flag, the `decon` step or a
+  `dec_*` / `el_*` setting is used.
 
 ## 5. Notification policy
 

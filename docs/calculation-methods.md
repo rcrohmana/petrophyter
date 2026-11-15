@@ -448,7 +448,7 @@ References:
 
 ## LRLC screening and diagnostics *(v1.11.0)*
 
-Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and none of the corrections below in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. The corrections (the invasion, laminated-sand and pyrite Rt steps, the Qv estimate, the sand basis and, from v1.13.0, variable m and n) are chosen per zone and change Sw, pay and HCPV only where you switch them on. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
+Low-resistivity low-contrast (LRLC) pay is hydrocarbon-bearing sand that a conventional Sw calls wet. The LRLC tools are optional and off by default; with them off, a run is exactly as in 1.10.0. With them on and none of the corrections below in use, they add diagnostic columns and leave `SW`, pay, HCPV, Swirr and permeability unchanged. The corrections (the deconvolution *(v1.14.0)*, invasion, laminated-sand and pyrite Rt steps, the Qv estimate, the sand basis and, from v1.13.0, variable m and n) are chosen per zone and change Sw, pay and HCPV only where you switch them on. They need a mapped resistivity curve. Citations marked *(to verify)* are listed in the reference registry (**Help → Scientific References…**) with details that are not yet confirmed against the original.
 
 ### Screening criteria and flag
 
@@ -466,7 +466,8 @@ Six criteria are tested at each sample, on the measured `RT` (never `RT_SW`):
 `phi_cutoff`, `vsh_cutoff` and `sw_cutoff` are the pay cutoffs of the zone (there are no separate LRLC cutoffs). `screen_rt_max` (default 5 ohm.m), `screen_contrast_max` (default 2) and `screen_min_score` (default 5) are **design defaults, not published constants; calibrate them per field**. The 1.0 limit on `RT / RS` is fixed: with fresh mud, deep resistivity at or above shallow indicates hydrocarbons and below it indicates water, but the indicator is weak with saline mud. Boyd et al. (1995), Worthington (2000) and Zemanek (1989) are the qualitative basis for the criteria, not for the numbers.
 
 ```
-LRLC_SCORE = number of criteria met (0 to 6; a criterion that cannot be evaluated counts as not met)
+LRLC_SCORE = number of criteria met (0 to 6; a criterion that cannot be evaluated counts as not met;
+             in a well where the elastic flag ran, one more point where ELASTIC_FLAG = 1, so 0 to 7)
 LRLC_FLAG  = 1 when criteria 1, 3 and 6 are evaluable and met,
              and LRLC_SCORE ≥ min(screen_min_score, number of evaluable criteria)
 ```
@@ -524,6 +525,8 @@ so water-bearing samples (`Sw = 1`) fall on a line of slope `−m` and intercept
 | `m_outside_range`, `rw_outside_range` | fitted but outside the range: shown, and not applicable |
 | `no_data` | no usable sample |
 
+**Iso-Sw lines in curve mode** *(v1.14.0)*. For a single zone in variable m/n Curve mode the lines of constant Sw are drawn with the variable m model instead of the constant `m`: `m` is evaluated along the porosity axis at the median `Vsh` of the zone (the formula, or the Shell formula where it applies), clipped to the clip range, and `n` follows its own model. The lines are no longer straight on the log-log plot where `m` changes with porosity. A note under the plot names the model and the porosity it read; where the model cannot be evaluated, or where several zones are plotted and some use curve mode, the lines keep the constant `m` and the note says so. The wet-point fit is not changed.
+
 Limits: the wet points must really be water-bearing (a hydrocarbon-bearing envelope overstates Rw); clay conduction biases m low; Rw is assumed constant over the interval, after the temperature normalisation. References: Pickett (1966); Archie (1942).
 
 ### The Rt array path and the correction chain
@@ -536,7 +539,7 @@ A correction step is a function that takes the resistivity of the previous step 
 RT (measured, never modified) → step 1 → step 2 → …  ⇒  RT_SW (what every Sw model reads)
 ```
 
-`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. Three steps ship: **radial invasion** (`RT_INV`), **laminated sand** (`RT_SAND`) and **pyrite** (`RT_PYR`), run in that order, so the laminated-sand step reads `RT_INV` where the invasion step is on and the measured `RT` otherwise. Each writes its own column, so the output of every step stays visible. With no step selected, Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
+`RT_SW` is written to the results only when at least one step is active somewhere in the well; where no step runs, it equals `RT`. Four steps ship: **deconvolution** (`RT_DECON`, from v1.14.0), **radial invasion** (`RT_INV`), **laminated sand** (`RT_SAND`) and **pyrite** (`RT_PYR`), run in that order, so each step reads the output of the step before it where that step is on, and the measured `RT` otherwise (the invasion step reads `RT_DECON`, the laminated-sand step reads `RT_INV`, and so on). Each writes its own column, so the output of every step stays visible. With no step selected, Sw reads the measured Rt. A step's output must be finite and positive: anything else becomes empty (NaN), is counted and reported, and the Sw of that sample is empty, so it has no pay and no HCPV. The alternative setting, **Use the previous Rt**, substitutes the input of the step instead and counts that too. Nothing is clamped silently. **Auto Rw and auto Rsh always read the measured Rt**, so a correction never feeds back into its own inputs. The run records which steps ran in each zone, and the exports state it (see [Visualization and Export](visualization-and-export.md#lrlc-in-the-exports-v1110)).
 
 ### Thomas-Stieber decomposition
 
@@ -690,13 +693,13 @@ When a correction is active in a well (an Rt step, a Qv estimate or the sand bas
 
 ### Monte Carlo with the corrections
 
-The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `Rsh` is varied as before, and because it also enters the laminated-sand correction, a changed `Rsh` recomputes `RT_SAND` and so `Sw`; the uncertainty page and the export say so with the note **Rsh also varies the laminated-sand Rt**. The following are held at the values of the analysis and are added to the **Not varied** list when they are in use: the Thomas-Stieber `Vlam` (with the sand basis values), the pyrite volume and correction, and the estimated Qv. The end-points, `f`, `Rpy` and `cec_shale` are not among the varied parameters. With variable m and n, `m` and `n` move the whole curve by one additive offset, and the coefficients are held (see [Variable m and n](#variable-m-and-n-v1130)). The invasion-corrected Rt is also held, and the run adds *invasion-corrected Rt (frozen)* to the **Not varied** list.
+The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `Rsh` is varied as before, and because it also enters the laminated-sand correction, a changed `Rsh` recomputes `RT_SAND` and so `Sw`; the uncertainty page and the export say so with the note **Rsh also varies the laminated-sand Rt**. The following are held at the values of the analysis and are added to the **Not varied** list when they are in use: the Thomas-Stieber `Vlam` (with the sand basis values), the pyrite volume and correction, and the estimated Qv. The end-points, `f`, `Rpy` and `cec_shale` are not among the varied parameters. With variable m and n, `m` and `n` move the whole curve by one additive offset, and the coefficients are held (see [Variable m and n](#variable-m-and-n-v1130)). The invasion-corrected Rt is also held, and the run adds *invasion-corrected Rt (frozen)* to the **Not varied** list; the deconvolved Rt *(v1.14.0)* is held the same way and listed as *deconvolved Rt (frozen)*.
 
 ### Results added
 
 | Column | Unit | Meaning | Added when |
 |---|---|---|---|
-| `LRLC_SCORE` | count | screening criteria met, 0 to 6 | LRLC on and RT mapped |
+| `LRLC_SCORE` | count | screening criteria met, 0 to 6 (0 to 7 where the elastic flag ran) | LRLC on and RT mapped |
 | `LRLC_FLAG` | 0/1 | screening candidate | same |
 | `BVW` | v/v | bulk volume water `PHIE × SW` | same |
 | `WATER_FREE_FLAG` | 0/1 | net reservoir with `SW ≤ SWIRR + movable_tol` | same |
@@ -710,11 +713,15 @@ The Monte Carlo run uses the Rt correction and the sand basis of the analysis. `
 | `QV_EST` | meq/mL | Qv estimated from Vsh and the shale CEC | a zone uses the Qv estimate |
 | `RT_SAND` | ohm.m | resistivity of the sand laminae | the laminated-sand step is active |
 | `RT_PYR` | ohm.m | resistivity after the pyrite correction | the pyrite step is active |
+| `RT_DECON` | ohm.m | deconvolved resistivity of thin beds *(v1.14.0)* | the deconvolution step is selected in a zone |
 | `RT_INV` | ohm.m | invasion-corrected resistivity | the invasion step is active |
 | `RXO_INV` | ohm.m | flushed-zone resistivity of the invasion step | same |
 | `DI_INV` | in | invasion diameter of the invasion step | same |
 | `M_VAR` | unitless | cementation exponent per sample | a zone is in curve mode for m and n |
 | `N_VAR` | unitless | saturation exponent per sample | same |
+| `AI` | (g/cc)(m/s) | acoustic impedance *(v1.14.0)* | the elastic flag is on and `DTS` is mapped |
+| `VPVS` | unitless | `DTS / DT` | same |
+| `ELASTIC_FLAG` | 0/1 | elastic screening flag | same |
 | `SW_BASE` | v/v | Sw without any LRLC correction | a correction is active somewhere in the well |
 | `NET_PAY_BASE_FLAG` | 0/1 | net pay flag computed from `SW_BASE` | same |
 
@@ -873,6 +880,112 @@ Because `Rxo = F × Rmf / Sxo^n` with `F ≥ 1` and `Sxo ≤ 1`, the flushed-zon
 - In a Monte Carlo run the invasion-corrected Rt is held at its value; the tool constants and `Rmf` are not varied.
 
 References: Doll (1949); Thadani and Hall (1981); Anderson (2001); Arps (1953).
+
+## Rt deconvolution for thin beds *(v1.14.0)*
+
+A deep induction or laterolog reads an average over a vertical interval wider than a thin bed, so a thin sand between shales reads too low. If the boundaries of the beds are known from a finer curve, the apparent conductivity can be written as a bed-weighted sum and solved for the conductivity of each bed. The **decon** step does this for the deep curve. It is an Rt correction step like the others: its output is `RT_DECON`, it is the first step of the chain, and where it is on the Sw models read `RT_DECON` (or the output of a later step). It is optional and off by default; with it off, a run is unchanged.
+
+### Model
+
+Work in conductivity, `σ = 1 / Rt` (S/m, with Rt in ohm.m), for horizontal beds `k` with top `t_k` and bottom `b_k` (depth in ft, increasing downward):
+
+```
+σ_a(z) = Σ_k σ_k × w_k(z)
+w_k(z) = Φ((z − t_k) / s) − Φ((z − b_k) / s),    s = FWHM / 2.3548
+```
+
+`σ_a` is the apparent conductivity read by the deep curve at depth `z`, `σ_k` the true conductivity of bed `k`, `w_k(z)` the share of the response at `z` that comes from bed `k` (the weights sum to 1 where the beds cover the response), `Φ` the standard normal cumulative distribution, and FWHM the vertical resolution of the deep curve that you enter. Induction tools respond approximately linearly in conductivity, so the model is a linear map; the laterolog response is not linear, and for a laterolog preset the page says the Gaussian blur is only an approximation.
+
+**Doll response (optional).** Instead of the Gaussian, `w_k(z) = G(z − t_k) − G(z − b_k)`, where `G` is the cumulative vertical geometric factor of a two-coil sonde of spacing `L` (coil spacing, default 3.333 ft), tabulated numerically. **The formula is offered as is and is marked *to verify*: it has not yet been checked against the original paper (Doll, 1949).**
+
+### Bed boundaries
+
+The boundaries come from one reference curve, chosen automatically in the order `HIRES`, `RXO`, `RHOB`, `GR` (or the curve you pick). Resistivity curves are used in log10, the others as they are. The curve is smoothed (default 0.5 ft), differentiated, and the peaks of the absolute derivative above `edge threshold × 1.4826 × MAD` (default 4) are candidate boundaries. A candidate is kept when the step across it is at least the minimum contrast (default 0.05 in log10 for a resistivity curve), and a bed thinner than the minimum thickness (default 1.0 ft for a resistivity curve, 1.5 ft for `RHOB`, 2.0 ft for `GR`, and at least twice the sample step) is merged by dropping the weaker of its two boundaries. You can add or remove boundaries by hand on the Remediation page: a removal matches the nearest picked boundary within the edit tolerance (default 1 ft), an addition is inserted unless one exists within it. The picks are counted in the run.
+
+### Solution
+
+The unknowns are written relative to a prior, `x_k = σ_k / σ0_k`, where `σ0_k` is the median conductivity of the deep curve in the central half of bed `k`. With `A` the weight matrix scaled by the prior and the measured conductivity,
+
+```
+minimise ‖A x − 1‖² + λ ‖x − 1‖²,    1/R ≤ x_k ≤ R
+```
+
+with `R` the largest change allowed from the measured value (default 10). The default solver is regularised least squares (a ridge solution first, a bounded solve when a bed hits a bound); the alternative is a multiplicative (Richardson-Lucy) iteration that starts at `x = 1` and stops when the relative misfit reaches the noise, after the iteration cap, or when it stops improving. The smoothing weight `λ` is chosen automatically by the discrepancy principle: the largest value in the range 10⁻⁴ to 1 (six trials) whose relative rms misfit stays at or below 1.1 times the relative noise of the deep curve (default 0.03); if none does, 10⁻⁴ is used and the misfit is reported. You can also set `λ`. The solve runs window by window (default 200 ft with 25 ft of overlap, at least three response widths, windows snapped to bed boundaries, at most 150 beds per window), so a long well is solved in pieces that join without a seam.
+
+Output: by default each sample of a bed gets the bed value (`1 / σ_k`). The alternative output adds the fit residual back, `RT_DECON = 1 / (σ_k × σ_a / f)` with `f` the forward model at the sample, which keeps the variation inside a bed.
+
+### Invalid samples, counts and the misfit warning
+
+A sample gets no value (empty, counted and reported) when its bed sits on a bound (the data cannot determine it), when `RT_DECON / RT` or its inverse exceeds the change limit, within one response width of the end of a continuous segment (a gap in depth, or a run of empty Rt longer than twice the response width, ends a segment), when its bed has no data, and where the sampling is coarser than half the response width. The setting **When a step cannot produce a value** then applies as for every step. Nothing is clamped.
+
+Each window reports its relative rms and largest misfit. A window is reported as fitting badly when its rms exceeds the **misfit warning**; unless you set a value, the warning level is **twice the relative noise** you set for the deep curve (0.06 with the default noise). A high misfit usually means that a bed boundary is missing or wrong, not that the data are noisy.
+
+### Dependence on the response width
+
+The result depends on the response width, and the presets are generic. For each zone with a result the run solves the well again at 0.8 and 1.25 times the response width and reports, for the samples that the correction raises by more than 10 percent, the median increase `RT_DECON / RT` at the three widths (for example `3.2 / 4.0 / 5.0 ft: 1.9 / 2.0 / 1.7 x`). At a width where some samples were rejected by the change limit, the line also gives how many samples are valid at each width. The line is information; it changes no result.
+
+### Shoulder-bed guard
+
+The step acts on the vertical resolution, like the laminated-sand correction, so the shoulder-bed guard treats it the same way. With the guard on, the step is dropped (and the zone shows **not applied** with the reason) in a zone that Thomas-Stieber classes as laminated, and in every zone when the mapped RT is marked shoulder-bed corrected or deconvolved. With the guard off it runs and the run warns. A zone with no Thomas-Stieber result cannot be classified and the step runs there (the guard says so). When the step and the laminated-sand correction are both selected in a zone that is not laminated, both run and the run notes that both act on thin beds. Note that a zone that includes shale beds is itself counted as laminar by the Thomas-Stieber split, so the guard drops the step wherever Thomas-Stieber end-points are applied to a section of thin sands and shales; run the step in a zone without applied end-points, or switch the guard off when you have checked the zone.
+
+### Interaction with the invasion step
+
+The step deconvolves the deep curve only; the medium and shallow curves and `RXO` are used as measured. When the invasion step is also selected in a zone, its deep input is `RT_DECON` while the other curves keep their own vertical resolution, and the run warns. Deconvolve only beds thicker than the vertical resolution of the medium curve, or use a response width close to it.
+
+### What is not corrected, and limits
+
+- Skin effect, dip and high-angle geometry, resistivity anisotropy, borehole and invasion effects, tool-specific processing and lateral variation are ignored. The result is a bed-model estimate, not a measurement.
+- Array induction curves already carry their own vertical enhancement; applying the step to them enhances twice.
+- Beds thinner than the response width are only partly recovered, and the solution amplifies noise. The solution is not unique and depends on the bed picks. A reference curve that does not show a bed gives a bad fit in that window.
+- The response widths of the presets (array induction 1, 2 and 4 ft, deep laterolog 2 ft, deep dual induction 8 ft) are generic placeholders, not specifications of any tool. Confirm the width against the chart book of the tool that was run.
+- Do not use it on a curve that is already shoulder-bed corrected or deconvolved, or in a laminated zone.
+- In a Monte Carlo run the deconvolved Rt is held at its value, and the run adds *deconvolved Rt (frozen)* to the **Not varied** list.
+
+References: Doll (1949); Thadani and Hall (1981); Coll et al. (1993). The presence of the method in the literature is context only; the settings are generic.
+
+## Elastic-attribute flag *(v1.14.0)*
+
+Hydrocarbon in a sand lowers the P-wave impedance and the Vp/Vs ratio compared with the same sand holding water, independently of the resistivity. Where the resistivity is suppressed by clay-bound water, saline connate water or thin beds, an elastic anomaly in a net reservoir interval is an independent hint that the sand is not water-bearing. The **elastic flag** is a screening aid on the Screening panel. It needs the compressional slowness `DT`, the density `RHOB` and a shear slowness curve `DTS`, is off until switched on, and **never changes `SW`, pay, HCPV or `LRLC_FLAG`**. The method class is described in Ashfaq (US 11,709,287 B2); this flag is a generic screening statistic and is not a reproduction of that patent or of any thresholds in it.
+
+### Equations
+
+With `DT` and `DTS` in us/ft and `RHOB` in g/cc:
+
+```
+Vp = 304800 / DT,   Vs = 304800 / DTS          (m/s)
+AI = RHOB × Vp                                  ((g/cc)(m/s))
+VPVS = DTS / DT
+```
+
+For example `DT` 100 us/ft, `DTS` 180 us/ft and `RHOB` 2.30 g/cc give `Vp` 3048 m/s, `Vs` 1693 m/s, `AI` 7010 and `VPVS` 1.80. A sample has `AI` and `VPVS` only when `DT` is between 40 and 200 us/ft, `DTS` between 60 and 500 us/ft, `RHOB` between 1.5 and 3.2 g/cc and `VPVS` between 1.15 and 4.0. If the median `DT` exceeds 200 or the median `DTS` exceeds 500 the curves are probably in us/m and the stage is skipped with a warning; nothing is converted silently.
+
+**Shale baseline.** Shale samples have `VSH` at or above the shale limit (default 0.7). `AI_shale` and `VPVS_shale` are the median over the shale samples within a rolling window of 100 ft (at least 10 shale samples, interpolated in depth), or the median of each zone, or the median inside a shale interval you give. Depths with too few shale samples fall back to the zone median and then the well median, and the run says so. The relative attributes are `AI_REL = AI / AI_shale` and `VPVS_REL = VPVS / VPVS_shale`.
+
+**Wet trend.** The porosity trend is removed with a robust linear fit of the relative attributes against `PHIE` on wet samples: net reservoir, `SW` at or above 0.9 (the resistivity Sw of the primary model) and not an LRLC candidate, or the net reservoir inside a water interval you give.
+
+```
+AI_REL_wet(PHIE)   = a0 + a1 × PHIE
+VPVS_REL_wet(PHIE) = c0 + c1 × PHIE
+dA = AI_REL / AI_REL_wet − 1,    dV = VPVS_REL / VPVS_REL_wet − 1
+ELASTIC_FLAG = 1  when net reservoir and dA ≤ −ai_drop and dV ≤ −vpvs_drop
+```
+
+The fit is iterated twice, dropping residuals beyond three robust sigmas. It needs at least 30 wet samples over a `PHIE` span of 0.04; otherwise the trend is unavailable, nothing is flagged and the run says why. The trend is fitted for the whole well by default, or per zone. The mode can require both attributes, `AI` only, or `VPVS` only. A sample that cannot be evaluated has `ELASTIC_FLAG` 0 and is counted; it is never empty.
+
+**Thresholds.** `ai_drop` (default 0.05) and `vpvs_drop` (default 0.03) are **design defaults, not published constants: calibrate them on wells with known fluids.**
+
+### Effect on the screening score
+
+The flag is computed after the zones are merged, over the whole well. It adds one point to `LRLC_SCORE` where `ELASTIC_FLAG` is 1, so the maximum score is 7 in a well where the flag ran. `LRLC_FLAG` is decided from the six criteria of the screening as before and does not change; the wet samples use that flag. A well without the flag, or without `DTS`, keeps the score of 0 to 6.
+
+### What is not corrected, and limits
+
+- Sonic and density read the flushed zone, so invasion can replace gas by filtrate and weaken the contrast.
+- Porosity, lithology, cement and compaction also move `AI` and Vp/Vs. The normalisation removes the shale and the wet porosity trends and nothing more; Gassmann fluid substitution is not modelled.
+- The quality of dipole shear data varies, and slow formations need dipole data.
+- The elastic flag is not part of the Monte Carlo run: it enters neither Sw nor pay.
+
+References: Ashfaq (US 11,709,287 B2).
 
 ## Uncertainty (Monte Carlo) *(v1.9.0)*
 
