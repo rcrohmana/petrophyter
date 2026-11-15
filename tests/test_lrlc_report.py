@@ -417,7 +417,8 @@ def test_width_sensitivity_text_and_position():
                            "n_valid": [19, 19, 14], "n": 19})
     df = zones_frame([well(summary=s)])
     assert row(df, "UPPER")["Decon_width_sensitivity"] == \
-        "3.2 / 4.0 / 5.0 ft: 1.9 / 2.0 / 1.7 x (valid 19 / 19 / 14 of 19)"
+        ("width 3.2 ft gives 1.9 x, 4.0 ft (set) gives 2.0 x, 5.0 ft gives 1.7 x with 5 of 19 "
+         "samples over the change limit")
     assert blank(row(df, "LOWER")["Decon_width_sensitivity"])
     assert blank(row(df, "(well)")["Decon_width_sensitivity"])
 
@@ -426,7 +427,8 @@ def test_width_sensitivity_none_ratio_rounding_and_blank_cases():
     s = _with_sensitivity({"widths_ft": [3.24, 4.0, 4.96], "median_ratio": [None, 2.04, 3.449],
                            "n_valid": [0, 7, 5], "n": 7})
     assert row(zones_frame([well(summary=s)]), "UPPER")["Decon_width_sensitivity"] == \
-        "3.2 / 4.0 / 5.0 ft: n/a / 2.0 / 3.4 x (valid 0 / 7 / 5 of 7)"
+        ("width 3.2 ft gives no valid sample, 4.0 ft (set) gives 2.0 x, 5.0 ft gives 3.4 x "
+         "with 2 of 7 samples over the change limit")
     for entry in (None, {"widths_ft": [3.0, 4.0, 5.0], "median_ratio": [1.0, 1.0, 1.0],
                          "n_valid": [0, 0, 0], "n": 0}):
         s = _with_sensitivity(entry)

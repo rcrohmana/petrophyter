@@ -11,7 +11,6 @@ the form's one Apply writes them. The page never runs the analysis.
 import logging
 from typing import List, Optional
 
-import numpy as np
 from PyQt6.QtCore import QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -26,14 +25,20 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.lrlc.config import LRLC_RANGES
-from modules.lrlc.decon import GENERIC_LABEL, GENERIC_RESPONSES
+from modules.lrlc.config import LRLC_PARAM_DEFAULTS, LRLC_RANGES
+from modules.lrlc.decon import (
+    GENERIC_LABEL,
+    GENERIC_RESPONSES,
+    MISFIT_AUTO_FACTOR,
+    width_sensitivity_text,
+)
 from services import lrlc_service as svc
 from themes.helpers import set_status, set_variant
 
 from .lrlc_common import fmt, make_table, note
 from .lrlc_common import item as table_item
 from .lrlc_decon_plot import DeconPlot, classify_boundaries
+from .fold_section import FoldSection
 from .lrlc_diagnosis import lrlc_summary
 
 logger = logging.getLogger(__name__)
@@ -81,10 +86,18 @@ DEC_ROWS = (
     ("dec_edit_tol_ft", "Boundary edit tolerance (ft)", 2, 0.25),
 )
 LATEROLOG_NOTE = "approximate: laterolog response is not linear in conductivity"
-SENSITIVITY_TIP = ("The deconvolved Rt depends on the response width. The line shows the median "
+SENSITIVITY_TIP = ("The deconvolved Rt depends on the response width. The lines show the median "
                    "increase of the samples the correction raises, solved again at a narrower and "
                    "a wider response. The width presets are generic: confirm the width against "
                    "the tool's charts. Information only.")
+SENSITIVITY_INTRO = ("Median Rt increase in the raised beds at three response widths. A large "
+                     "spread means the result depends on the width; confirm it against the tool's "
+                     "charts.")
+ADVANCED_TITLE = "Advanced settings"
+ADVANCED_KEYS = ("dec_smooth_ft", "dec_edge_k", "dec_min_contrast", "dec_min_bed_ft",
+                 "dec_window_ft", "dec_overlap_ft", "dec_solver", "dec_lambda", "dec_noise_rel",
+                 "dec_mult_max_iter", "dec_output", "dec_max_ratio", "dec_misfit_warn",
+                 "dec_edit_tol_ft")
 NO_REFERENCE = "No high-resolution reference curve: map HIRES or RXO, or RHOB / GR."
 LAMINATED_LINK = "Open Laminated sand"
 PROPOSE_HINT = "Propose previews the result for this zone; nothing is written."
@@ -131,6 +144,15 @@ class AutoSpin(QWidget):
     def get(self):
         return None if self.auto.isChecked() else float(self.spin.value())
 
+    def show_automatic(self, value):
+        """While Automatic is ticked, show the value it resolves to (the spin is disabled; the
+        stored value stays None). Unticking starts from it."""
+        if value is None or not self.auto.isChecked():
+            return
+        self.spin.blockSignals(True)
+        self.spin.setValue(float(value))
+        self.spin.blockSignals(False)
+
     def setEnabled(self, on):  # noqa: N802 - Qt name
         super().setEnabled(on)
         self.spin.setEnabled(bool(on) and not self.auto.isChecked())
@@ -140,12 +162,6 @@ def _make_form() -> QFormLayout:
     from .lrlc_remediation import make_form
 
     return make_form()
-
-
-def _heading(text) -> QLabel:
-    from .lrlc_remediation import heading
-
-    return heading(text)
 
 
 def _subheading(text) -> QLabel:
@@ -171,18 +187,9 @@ def sensitivity_text(rec: Optional[dict]) -> str:
     sens = (rec or {}).get("width_sensitivity")
     if not sens or not sens.get("n"):
         return ""
-    widths = sens.get("widths_ft") or []
-    medians = sens.get("median_ratio") or []
-    valid = sens.get("n_valid") or []
-    if not (len(widths) == len(medians) == len(valid) == 3):
+    if len(sens.get("widths_ft") or []) != 3:
         return ""
-
-    def num(x, digits=1):
-        return "n/a" if x is None or not np.isfinite(x) else f"{float(x):.{digits}f}"
-
-    return (f"Response width {' / '.join(num(w) for w in widths)} ft: median Rt increase "
-            f"{' / '.join(num(m) for m in medians)} x (valid "
-            f"{' / '.join(str(int(v)) for v in valid)} of {int(sens['n'])})")
+    return width_sensitivity_text(sens) + "."
 
 
 class DeconMixin:
@@ -252,7 +259,7 @@ class DeconMixin:
         self.dec_tool_combo = self._dec_combo(None, "dec_tool", "")
         self.dec_tool_combo.currentIndexChanged.connect(self._on_dec_tool_changed)
         tool_row.addWidget(self.dec_tool_combo)
-        self.dec_generic_badge = QLabel(GENERIC_LABEL)
+        self.dec_generic_badge = QLabel("")
         set_status(self.dec_generic_badge, "warning")
         tool_row.addWidget(self.dec_generic_badge)
         tool_row.addStretch(1)
@@ -276,9 +283,13 @@ class DeconMixin:
         self.dec_status_label = note(PROPOSE_HINT)
         row.addWidget(self.dec_status_label, 1)
         v.addLayout(row)
+        self.dec_sensitivity_intro = note(SENSITIVITY_INTRO)
+        self.dec_sensitivity_intro.setToolTip(SENSITIVITY_TIP)
+        v.addWidget(self.dec_sensitivity_intro)
         self.dec_sensitivity_label = note("")
         self.dec_sensitivity_label.setToolTip(SENSITIVITY_TIP)
         v.addWidget(self.dec_sensitivity_label)
+        self.dec_sensitivity_intro.setVisible(False)
 
         # Boundary editing, tables and the plot.
         left = QVBoxLayout()
@@ -337,7 +348,8 @@ class DeconMixin:
         v.addLayout(_side_by_side(left, self.dec_plot))
 
         # Advanced.
-        v.addWidget(_heading("Advanced"))
+        self.dec_advanced = FoldSection(ADVANCED_TITLE)
+        v.addWidget(self.dec_advanced)
         adv = _make_form()
         keys = ("dec_smooth_ft", "dec_edge_k", "dec_min_contrast")
         self._add_spins(adv, tuple((k, lab, d, s, "") for k, lab, d, s in DEC_ROWS if k in keys))
@@ -350,8 +362,9 @@ class DeconMixin:
                                    if k in ("dec_noise_rel", "dec_mult_max_iter")))
         self._dec_combo(adv, "dec_output", "Output")
         self._add_spins(adv, tuple((k, lab, d, s, "") for k, lab, d, s in DEC_ROWS
-                                   if k in ("dec_max_ratio", "dec_misfit_warn", "dec_edit_tol_ft")))
-        v.addLayout(adv)
+                                   if k in ("dec_max_ratio", "dec_edit_tol_ft")))
+        self._dec_auto(adv, "dec_misfit_warn", "Misfit warning (relative rms)", 2, 0.01)
+        self.dec_advanced.body_layout.addLayout(adv)
         self.dec_box = _strip("decon")
         v.addWidget(self.dec_box)
         self._reset_decon()
@@ -692,14 +705,21 @@ class DeconMixin:
         label = self._dec_form.labelForField(spacing)
         if label is not None:
             label.setVisible(doll)
-        default_width = GENERIC_RESPONSES["custom"]["fwhm_ft"]
-        generic = (not custom) or (not doll and abs(
-            self._read_widget("dec_fwhm_ft") - default_width) < 1e-9)
-        self.dec_generic_badge.setVisible(generic)
+        if not custom:
+            badge = GENERIC_LABEL
+        elif doll:
+            badge = ""
+        else:
+            badge = f"FWHM {self._read_widget('dec_fwhm_ft'):.1f} ft"
+        self.dec_generic_badge.setText(badge)
+        self.dec_generic_badge.setVisible(bool(badge))
+        set_status(self.dec_generic_badge, "warning" if not custom else "muted")
         self.dec_laterolog_note.setVisible(tool.startswith("laterolog"))
         solver = self._read_widget("dec_solver")
         self.controls["dec_lambda"].setEnabled(solver == "lsq")
         self.controls["dec_mult_max_iter"].setEnabled(solver == "mult")
+        noise = self._read_widget("dec_noise_rel")
+        self.controls["dec_misfit_warn"].show_automatic(MISFIT_AUTO_FACTOR * float(noise))
         have = self._dec_proposal is not None and bool(self._dec_proposal.get("plot"))
         self.dec_edit_box.setVisible(have)
         row = self._selected_dec_row()
@@ -790,6 +810,7 @@ class DeconMixin:
                 lines.append(f"{rec.get('zone')}: {line}" if named else line)
         self.dec_sensitivity_label.setText("\n".join(lines))
         self.dec_sensitivity_label.setVisible(bool(lines))
+        self.dec_sensitivity_intro.setVisible(bool(lines))
         if from_run and block and self._dec_proposal is None:
             if dropped and not records:
                 why = "RT is marked shoulder-bed corrected" if any(
@@ -806,6 +827,26 @@ class DeconMixin:
             block = None            # a zone the guard dropped has no result to show
         self._fill_dec_tables(block, from_run)
         self.dec_edits_label.setText(self._dec_edit_state_text())
+        changed = self._dec_advanced_changed()
+        self.dec_advanced.set_changed_count(changed)
+        if changed:
+            self.dec_advanced.set_expanded(True)
+
+    def _dec_advanced_changed(self) -> int:
+        """How many Advanced values (pending, else resolved for the zone) differ from the
+        defaults."""
+        n = 0
+        for key in ADVANCED_KEYS:
+            if key not in self.controls:
+                continue
+            value, default = self._read_widget(key), LRLC_PARAM_DEFAULTS[key]
+            if value is None or default is None:
+                n += value is not default
+            elif isinstance(default, str):
+                n += value != default
+            else:
+                n += abs(float(value) - float(default)) > 1e-9
+        return int(n)
 
     def _fill_dec_tables(self, block, from_run: bool):
         # window table and counts
@@ -866,4 +907,5 @@ class DeconMixin:
 
     def refresh_decon_theme(self):
         self.dec_plot.refresh_theme()
+        self.dec_advanced.refresh_theme()
         self.dec_box.refresh_theme()

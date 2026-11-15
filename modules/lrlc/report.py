@@ -15,6 +15,7 @@ import pandas as pd
 from modules import references
 from modules.lrlc import SHIPPED_METHODS
 from modules.lrlc.chain import CHAIN_ORDER
+from modules.lrlc.decon import width_sensitivity_text
 from modules.petrophysics import depth_increments
 
 WELL_ROW = "(well)"
@@ -110,23 +111,10 @@ def _fmt(value) -> str:
 
 
 def _width_sensitivity_text(entry) -> Optional[str]:
-    """``3.2 / 4.0 / 5.0 ft: 1.9 / 2.0 / 1.7 x (valid 19 / 19 / 14 of 19)`` from a zone's
-    ``width_sensitivity`` (None when absent or when no sample is raised by more than 10 percent)."""
-    if not isinstance(entry, dict):
-        return None
-    if entry.get("n") is not None and _num(entry.get("n")) == 0:
-        return None
-    widths, ratios = entry.get("widths_ft"), entry.get("median_ratio")
-    if not isinstance(widths, (list, tuple)) or not isinstance(ratios, (list, tuple)) or not widths:
-        return None
-    w_text = " / ".join("n/a" if _num(w) is None else f"{_num(w):.1f}" for w in widths)
-    r_text = " / ".join("n/a" if _num(r) is None else f"{_num(r):.1f}" for r in ratios)
-    text = f"{w_text} ft: {r_text} x"
-    valid, total = entry.get("n_valid"), _num(entry.get("n"))
-    if isinstance(valid, (list, tuple)) and valid and total is not None:
-        v_text = " / ".join("n/a" if _num(v) is None else str(int(_num(v))) for v in valid)
-        text += f" (valid {v_text} of {int(total)})"
-    return text
+    """``width 3.2 ft gives 1.9 x, 4.0 ft (set) gives 2.0 x, 5.0 ft gives 1.7 x with 5 of 19
+    samples over the change limit`` from a zone's ``width_sensitivity`` (None when absent or when
+    no sample is raised by more than 10 percent)."""
+    return width_sensitivity_text(entry) or None
 
 
 def _resolved(lrlc: dict, zone) -> dict:

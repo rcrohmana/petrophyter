@@ -13,7 +13,7 @@ import pytest
 from PyQt6.QtWidgets import QLabel, QMessageBox
 
 from models.project import WellDataset
-from modules.lrlc.config import WELL_ONLY_KEYS
+from modules.lrlc.config import LRLC_PARAM_DEFAULTS, WELL_ONLY_KEYS
 from modules.lrlc.methods import METHOD_TEXT
 from modules.pipeline import run_pipeline
 from services.lrlc_service import LrlcService
@@ -367,5 +367,22 @@ def test_section_text_has_no_internal_ids(window, qtbot, elastic_run):
     run_well(window, elastic_run)
     tab = enable(window, qtbot)
     text = all_text(tab.elastic_section)
-    assert "design defaults" in text and "Advanced".upper() in text
+    assert "design defaults" in text
     assert not SPEC_IDS.search(text)
+
+
+def test_elastic_advanced_is_folded_until_a_value_is_set(window, qtbot):
+    plain_well(window)
+    tab = enable(window, qtbot)
+    adv = tab.elastic_section.advanced
+    assert adv.header.text() == "Advanced settings"
+    assert not adv.is_expanded() and not adv.body.isVisibleTo(tab.elastic_section)
+    adv.header.click()
+    assert adv.body.isVisibleTo(tab.elastic_section)
+    adv.header.click()
+    tab.elastic_section.set_resolved({k: (0.07 if k == "el_ai_drop" else v, "well default"
+                                          if k == "el_ai_drop" else "built-in")
+                                      for k, (v, _s) in {r[0]: (LRLC_PARAM_DEFAULTS[r[0]], "")
+                                                         for r in ELASTIC_ROWS}.items()},
+                                     True, False)
+    assert adv.is_expanded() and adv.header.text() == "Advanced settings (1 changed)"

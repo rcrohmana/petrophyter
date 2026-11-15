@@ -25,11 +25,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from modules.lrlc.config import LRLC_CHOICES, LRLC_RANGES, WELL_ONLY_KEYS
+from modules.lrlc.config import (
+    LEVEL_BUILTIN,
+    LRLC_CHOICES,
+    LRLC_PARAM_DEFAULTS,
+    LRLC_RANGES,
+    WELL_ONLY_KEYS,
+)
 from modules.lrlc.methods import METHOD_TEXT
 from themes.colors import get_plot_chrome, get_plot_color
 from themes.helpers import set_status, set_variant
 from ..tabs.rock_typing_tab import fit_table_height
+from .fold_section import FoldSection
 from .lrlc_common import fmt, item, make_table, note, zone_title
 from .lrlc_pickett import forward_wheel_to_scroll, zone_labels
 from .method_box import MethodReferenceBox
@@ -168,10 +175,13 @@ class ElasticSection(QWidget):
         self.defaults_note = note(DEFAULTS_NOTE)
         v.addWidget(self.defaults_note)
 
-        v.addWidget(_section_label("Advanced"))
+        self.advanced = FoldSection("Advanced settings")
+        v.addWidget(self.advanced)
+        adv = self.advanced.body_layout
+        adv.setSpacing(6)
         self.rows: Dict[str, dict] = {}
         for key, text, kind, decimals, step in ELASTIC_ROWS:
-            v.addWidget(QLabel(text))
+            adv.addWidget(QLabel(text))
             line = QHBoxLayout()
             widgets = self._make_input(key, kind, decimals, step)
             for w in widgets:
@@ -180,9 +190,9 @@ class ElasticSection(QWidget):
             inherit_btn = QPushButton("Inherit")
             line.addWidget(set_btn)
             line.addWidget(inherit_btn)
-            v.addLayout(line)
+            adv.addLayout(line)
             source = note("")
-            v.addWidget(source)
+            adv.addWidget(source)
             set_btn.clicked.connect(lambda _=False, k=key: self._on_set_here(k))
             inherit_btn.clicked.connect(lambda _=False, k=key: self.inherit_requested.emit(k))
             self.rows[key] = {"inputs": widgets, "source": source, "set": set_btn,
@@ -270,8 +280,11 @@ class ElasticSection(QWidget):
     def set_resolved(self, sources, writable: bool, zone_scope: bool):
         """Show the resolved value and its source of every ``el_*`` key; ``zone_scope`` marks
         that the selected scope is a zone (well-wide keys are then written to the default)."""
+        changed, set_somewhere = 0, False
         for key, row in self.rows.items():
             value, src = sources[key]
+            changed += value != LRLC_PARAM_DEFAULTS.get(key)
+            set_somewhere = set_somewhere or src != LEVEL_BUILTIN
             self._set_input(key, value)
             text = f"Resolved: {_shown(key, value)} ({src})"
             if zone_scope and key in WELL_ONLY_KEYS:
@@ -279,6 +292,9 @@ class ElasticSection(QWidget):
             row["source"].setText(text)
             row["set"].setEnabled(writable)
             row["inherit"].setEnabled(writable)
+        self.advanced.set_changed_count(changed)
+        if changed or set_somewhere:
+            self.advanced.set_expanded(True)
 
     def show_write_result(self, text: str, status: str = "muted"):
         self.write_label.setText(text)
@@ -484,6 +500,7 @@ class ElasticSection(QWidget):
         self.plot.canvas.draw_idle()
 
     def refresh_theme(self):
+        self.advanced.refresh_theme()
         self.plot.update_theme_colors()
         summary = {}
         if self.ds is not None:

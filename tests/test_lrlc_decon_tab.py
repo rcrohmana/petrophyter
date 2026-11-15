@@ -303,12 +303,14 @@ def test_apply_writes_the_boundary_edits_to_the_well_default(page, qtbot):
 def test_tool_presets_fill_the_width_and_show_the_generic_badge(page):
     _window, _tab, form, _ds = page
     tool = form.controls["dec_tool"]
-    assert form.dec_generic_badge.isVisibleTo(form)
+    assert form.dec_generic_badge.isVisibleTo(form)           # Custom: the width in use
+    assert form.dec_generic_badge.text() == "FWHM 4.0 ft"
     assert form.controls["dec_fwhm_ft"].isEnabled()
     tool.setCurrentIndex(tool.findData("array_induction_2ft"))
     assert form.controls["dec_fwhm_ft"].value() == GENERIC_RESPONSES["array_induction_2ft"]["fwhm_ft"]
     assert not form.controls["dec_fwhm_ft"].isEnabled()
     assert form.dec_generic_badge.isVisibleTo(form)
+    assert form.dec_generic_badge.text() == "generic, confirm with tool charts"
     assert not form.dec_laterolog_note.isVisibleTo(form)
     tool.setCurrentIndex(tool.findData("laterolog_deep_2ft"))
     assert "not linear in conductivity" in form.dec_laterolog_note.text()
@@ -328,6 +330,57 @@ def test_the_nullable_inputs_have_an_automatic_state(page):
     form.controls["dec_lambda"].spin.setValue(0.01)
     assert form._read_widget("dec_lambda") == 0.01
     assert "Lambda" in form.pending_label.text()
+
+
+def test_misfit_warning_is_automatic_at_twice_the_noise(page):
+    _window, _tab, form, ds = page
+    box = form.controls["dec_misfit_warn"]
+    assert box.auto.isChecked() and form._read_widget("dec_misfit_warn") is None
+    assert box.spin.value() == pytest.approx(0.06) and not box.spin.isEnabled()
+    form.controls["dec_noise_rel"].setValue(0.05)
+    assert box.spin.value() == pytest.approx(0.10)
+    assert form._read_widget("dec_misfit_warn") is None
+    form.step_checks["decon"].setChecked(True)
+    form.apply_button.click()
+    assert ds.lrlc["default"].get("dec_misfit_warn") is None
+    assert ds.lrlc["default"]["dec_noise_rel"] == 0.05
+    # unticking keeps the automatic value as the start and writes a number
+    box.auto.setChecked(False)
+    assert box.spin.isEnabled() and form._read_widget("dec_misfit_warn") == pytest.approx(0.10)
+    box.spin.setValue(0.2)
+    assert "Misfit warning" in form.pending_label.text()
+    form.apply_button.click()
+    assert ds.lrlc["default"]["dec_misfit_warn"] == 0.2
+    box.auto.setChecked(True)
+    form.apply_button.click()
+    assert ds.lrlc["default"].get("dec_misfit_warn") is None
+    assert form.dec_advanced.changed_count() == 1          # only the noise differs from the default
+
+
+def test_advanced_is_folded_until_a_value_differs_from_the_default(page):
+    _window, _tab, form, _ds = page
+    adv = form.dec_advanced
+    assert not adv.is_expanded() and not adv.body.isVisibleTo(form)
+    assert adv.header.text() == "Advanced settings"
+    adv.header.click()
+    assert adv.is_expanded() and adv.body.isVisibleTo(form)
+    assert form.controls["dec_misfit_warn"].isVisibleTo(form)
+    adv.header.click()
+    assert not adv.is_expanded()
+    form.controls["dec_edge_k"].setValue(5.0)
+    form.controls["dec_solver"].setCurrentIndex(form.controls["dec_solver"].findData("mult"))
+    assert adv.header.text() == "Advanced settings (2 changed)"
+    assert adv.is_expanded() and adv.body.isVisibleTo(form)
+    form.discard_button.click()
+    assert adv.header.text() == "Advanced settings"
+
+
+def test_a_stored_advanced_value_opens_the_fold_at_load(page):
+    _window, _tab, form, ds = page
+    ds.lrlc = {"default": {"dec_edge_k": 6.0}}
+    form.set_context(form.model, ds, None, ["UPPER", "LOWER"])
+    assert form.dec_advanced.is_expanded()
+    assert form.dec_advanced.header.text() == "Advanced settings (1 changed)"
 
 
 def test_missing_reference_is_one_warning_line_with_the_curves_link(window, qtbot):
@@ -433,11 +486,14 @@ SENS = {"widths_ft": [3.2, 4.0, 5.0], "median_ratio": [1.9, 2.0, 1.7], "n_valid"
 
 def test_sensitivity_text_format_and_hiding():
     text = sensitivity_text({"width_sensitivity": SENS})
-    assert text == ("Response width 3.2 / 4.0 / 5.0 ft: median Rt increase 1.9 / 2.0 / 1.7 x "
-                    "(valid 19 / 19 / 14 of 19)")
+    assert text == ("width 3.2 ft gives 1.9 x, 4.0 ft (set) gives 2.0 x, 5.0 ft gives 1.7 x with "
+                    "5 of 19 samples over the change limit.")
+    clean = sensitivity_text({"width_sensitivity": {**SENS, "n_valid": [19, 19, 19]}})
+    assert "over the change limit" not in clean
     assert sensitivity_text({"width_sensitivity": {**SENS, "n": 0}}) == ""
     assert sensitivity_text({"width_sensitivity": None}) == "" and sensitivity_text({}) == ""
-    assert "n/a" in sensitivity_text({"width_sensitivity": {**SENS, "median_ratio": [None, 2.0, 1.7]}})
+    none = sensitivity_text({"width_sensitivity": {**SENS, "median_ratio": [None, 2.0, 1.7]}})
+    assert "3.2 ft gives no valid sample," in none
 
 
 def test_the_sensitivity_line_shows_from_the_proposal_and_from_a_run(page, qtbot):
@@ -446,8 +502,10 @@ def test_the_sensitivity_line_shows_from_the_proposal_and_from_a_run(page, qtbot
     tab.select_zone("UPPER")
     propose(qtbot, form)
     text = form.dec_sensitivity_label.text()
-    assert text.startswith("Response width 3.2 / 4.0 / 5.0 ft: median Rt increase ")
-    assert "valid" in text and form.dec_sensitivity_label.isVisibleTo(form)
+    assert text.startswith("width 3.2 ft gives ") and "ft (set) gives" in text
+    assert form.dec_sensitivity_label.isVisibleTo(form)
+    assert form.dec_sensitivity_intro.isVisibleTo(form)
+    assert "confirm it against the tool's charts" in form.dec_sensitivity_intro.text()
     assert "confirm the width" in form.dec_sensitivity_label.toolTip()
     # after a run: from the summary
     form._reset_decon()
@@ -463,6 +521,7 @@ def test_the_sensitivity_line_shows_from_the_proposal_and_from_a_run(page, qtbot
     tab.select_zone("LOWER")
     tab.update_display()
     assert not form.dec_sensitivity_label.isVisibleTo(form)          # not applied there
+    assert not form.dec_sensitivity_intro.isVisibleTo(form)
     assert "not applied" in form.dec_status_label.text()
     tab.select_zone("UPPER")
     tab.update_display()

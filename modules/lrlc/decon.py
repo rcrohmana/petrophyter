@@ -963,3 +963,37 @@ def width_sensitivity(depth, rt, hires, params: DeconParams, active, base: Decon
         out[label] = {"widths_ft": [float(w * low), float(w), float(w * high)],
                       "median_ratio": list(medians), "n_valid": list(counts), "n": int(sel.sum())}
     return out
+
+
+def width_sensitivity_text(sens) -> str:
+    """The per-width reading of a zone's ``width_sensitivity``: ``width 3.2 ft gives 1.9 x, 4.0 ft
+    (set) gives 2.0 x, 5.0 ft gives 1.7 x with 5 of 19 samples over the change limit`` (the count
+    only for a width that rejected samples; a width without a valid sample reads ``no valid
+    sample``). Empty when the zone has nothing to say."""
+    if not isinstance(sens, dict) or not sens.get("n"):
+        return ""
+    widths = sens.get("widths_ft") or []
+    medians = sens.get("median_ratio") or []
+    valid = sens.get("n_valid") or []
+    if not widths or len(medians) != len(widths):
+        return ""
+
+    def finite(x):
+        try:
+            f = float(x)
+        except (TypeError, ValueError):
+            return None
+        return f if np.isfinite(f) else None
+
+    n = int(sens["n"])
+    parts = []
+    for i, (w, m) in enumerate(zip(widths, medians)):
+        wf, mf = finite(w), finite(m)
+        head = ("n/a" if wf is None else f"{wf:.1f}") + " ft"
+        if len(widths) == 3 and i == 1:
+            head += " (set)"
+        part = f"{head} gives " + ("no valid sample" if mf is None else f"{mf:.1f} x")
+        if mf is not None and i < len(valid) and finite(valid[i]) is not None and n - int(valid[i]) > 0:
+            part += f" with {n - int(valid[i])} of {n} samples over the change limit"
+        parts.append(part)
+    return "width " + ", ".join(parts)
