@@ -876,7 +876,7 @@ Because `Rxo = F × Rmf / Sxo^n` with `F ≥ 1` and `Sxo ≤ 1`, the flushed-zon
 - It is not a substitute for service-company tornado charts. Do not use it on resistivity that is already corrected for invasion.
 - If the deep curve was changed by a vertical-resolution step, the medium and shallow curves are used as measured and have a different vertical resolution; the run warns.
 - The pseudo-geometric function is a design choice, not a published fit. Doll (1949) gives the physical basis.
-- The invasion step is not blocked by the shoulder-bed guard, which acts on vertical corrections only.
+- The invasion step is not blocked by the shoulder-bed guard, which acts on vertical corrections, except when the mapped RT is marked invasion corrected: with the guard on the step is then not applied in any zone, with the guard off it runs with a warning *(v1.15.0)*.
 - In a Monte Carlo run the invasion-corrected Rt is held at its value; the tool constants and `Rmf` are not varied.
 
 References: Doll (1949); Thadani and Hall (1981); Anderson (2001); Arps (1953).

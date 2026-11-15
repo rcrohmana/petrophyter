@@ -2,7 +2,34 @@
 
 # Version History
 
-## v1.14.0 (Build 20261115) — Current Release
+## v1.15.0 (Build 20261115) — Current Release
+
+See the [release notes](releases/v1.15.0.md) for details. A clean-up release: the run now warns where a
+number could be wrong. **Two calculations change**: the laminated-zone check of the shoulder-bed guard
+(only wells with Thomas-Stieber end-points applied) and the Doll response of the deconvolution (the Gaussian
+default is unchanged). Everything else adds messages and text.
+
+- **Warnings**: a deviated well without TVD (deviation header entries and inclination curves are now read,
+  threshold 5 degrees); saturation-height pay with `PERM_WR`, `PERM_TIMUR` or log-typed `PERM_RT`; built-in
+  fluid densities and interfacial tension not yet confirmed (Confirm is saved with the session); beds
+  thinner than the response width in the deconvolution; core and Pc porosity read as fractions with
+  values above 1.
+- **Laminated-zone check**: shale beds at least one response width thick are left out (with 3 ft on either
+  side), and a zone with less than a tenth of its thickness left is not classed laminated, so a resolved
+  sand-shale sequence no longer blocks the deconvolution. The guard line says what was left out.
+- **Doll response** is the closed form of the two-coil geometric factor, checked against its numerical
+  integral.
+- **RT invasion-corrected mark** on the Overview page: the radial invasion step is then left out with the
+  guard on, warned with it off. **Session format 2.9** only for sessions that set it.
+- Export: **Fluid density** and **Sigma cos** columns on the saturation-height sheet; the summary carries
+  the interfacial tension used.
+- Limits stated at the laminated, shale PEF, Diagnosis and Shell controls; fuller Uncertainty texts
+  (everything not varied, one draw for all wells, the tornado title).
+- Session file name in the window title; the multi-well import dialog fits the screen.
+- A one-zone deconvolution proposal shows that zone's own bed count and messages.
+- Documents brought up to date.
+
+## v1.14.0 (Build 20261115)
 
 See the [release notes](releases/v1.14.0.md) for details. Both new features are optional: **results do not
 change** unless you add the deconvolution step to a zone or switch the elastic flag on. Wells with LRLC on

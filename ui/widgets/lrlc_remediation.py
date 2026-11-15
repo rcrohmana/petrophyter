@@ -1144,7 +1144,7 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
                     "ignored.")
         elif marked_ic:
             text = (f"{marked_ic} is marked invasion corrected. The radial invasion step is not "
-                    "applied while the shoulder-bed guard is on; map the raw deep RT to use it.")
+                    "applied while the guard is on; map the raw deep RT to use it.")
         else:
             text = ""
         self.ic_note.setText(text)

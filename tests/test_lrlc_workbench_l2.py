@@ -252,7 +252,7 @@ def test_invasion_corrected_check_sits_under_the_shoulder_bed_one(window, qtbot,
     assert ds.lrlc_curves["RT_IC"] == "RT" and "RT_SBC" not in ds.lrlc_curves
     assert form.ic_note.text() == (
         "RT is marked invasion corrected. The radial invasion step is not applied while the "
-        "shoulder-bed guard is on; map the raw deep RT to use it.")
+        "guard is on; map the raw deep RT to use it.")
     ds.curve_mapping["RT"] = "RS"
     tab.update_display()
     assert not form.ic_check.isChecked() and "no longer the mapped RT" in form.ic_note.text()
