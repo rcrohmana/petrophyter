@@ -1,7 +1,7 @@
 """Remediation panel of the LRLC Workbench: a list of corrections and the selected one's settings.
 
-The list on the left holds the Rt corrections (Overview, radial invasion, laminated sand,
-pyrite) and the saturation corrections (clay Qv, Sw basis, variable m/n), each with its state for
+The list on the left holds the Rt corrections (Overview, Rt deconvolution, radial invasion,
+laminated sand, pyrite) and the saturation corrections (clay Qv, Sw basis, variable m/n), each with its state for
 the selected zone. The page on the right edits a scratch copy of the values that apply to the
 zone chosen in the LRLC header. Changing a control writes nothing: the one Apply button writes
 the changes of every page to the chosen scope, through ``LrlcService.apply_remediation`` (the
@@ -33,8 +33,9 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.lrlc import chain
-from modules.lrlc.config import LRLC_RANGES, resolve_lrlc
+from modules.lrlc.config import LRLC_RANGES, WELL_ONLY_KEYS, clean_param, resolve_lrlc
 from modules.lrlc.invasion import GENERIC_TOOLS
+from modules.lrlc.guard import blocked_text
 from modules.lrlc.l2 import resolve_basis
 from modules.lrlc.methods import METHOD_TEXT
 from modules.lrlc.thomas_stieber import check_endpoints
@@ -42,6 +43,7 @@ from services.lrlc_service import LrlcService
 from themes.helpers import set_status
 
 from .lrlc_common import fmt, item, make_table, note, scroll_area, zone_title
+from .lrlc_decon_page import DEC_LABELS, AutoSpin, DeconMixin
 from .lrlc_diagnosis import lrlc_summary
 from .lrlc_mn_invasion import NEW_LABELS, MnInvasionMixin, MultiSpin
 from .lrlc_pickett import zone_labels
@@ -53,16 +55,18 @@ logger = logging.getLogger(__name__)
 SECTIONS = ("laminated", "pyrite", "clay", "sw_basis", "variable_mn", "invasion")
 # The list of corrections: (heading, ((section key, title), ...)). "rt_source" is the Overview.
 SECTION_GROUPS = (
-    ("Rt corrections", (("rt_source", "Overview"), ("invasion", "Radial invasion"),
-                        ("laminated", "Laminated sand"), ("pyrite", "Pyrite"))),
+    ("Rt corrections", (("rt_source", "Overview"), ("decon", "Rt deconvolution"),
+                        ("invasion", "Radial invasion"), ("laminated", "Laminated sand"),
+                        ("pyrite", "Pyrite"))),
     ("Saturation", (("clay", "Clay Qv"), ("sw_basis", "Sw basis"),
                     ("variable_mn", "Variable m/n"))),
 )
 SECTION_TABS = tuple(entry for _heading, entries in SECTION_GROUPS for entry in entries)
 SECTION_TITLES = dict(SECTION_TABS)
 # Rt steps that have a page of their own (section key = step name) and the text of their switch.
-STEP_PAGES = ("invasion", "laminated", "pyrite")
+STEP_PAGES = ("decon", "invasion", "laminated", "pyrite")
 STEP_CHECK_TEXT = {
+    "decon": "Apply the Rt deconvolution",
     "invasion": "Apply the radial invasion correction",
     "laminated": "Apply the laminated-sand correction (Hagiwara)",
     "pyrite": "Apply the pyrite correction",
@@ -122,6 +126,7 @@ KEY_LABELS.update({
     "vlam_source": "Vlam source", "pyr_method": "Pyrite method", "qv_source": "Qv source",
     "sw_basis": "Sw basis", "rt_steps": "Rt steps"})
 KEY_LABELS.update(NEW_LABELS)
+KEY_LABELS.update(DEC_LABELS)
 
 SCOPES = (("zone", "Zone of this well"), ("well", "Well default"), ("project", "Project default"))
 # Switches outside the scoped ladder: where each one is written, whatever "Apply to" says.
@@ -230,7 +235,7 @@ class _ListRow(QWidget):
         lay.addWidget(self.state_label)
 
 
-class RemediationForm(MnInvasionMixin, QWidget):
+class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
     """The Remediation panel: header (Apply to, Apply, Discard), the corrections list and the
     selected correction's page; every page edits the same scratch copy. Public:
     ``set_context``, ``prepare``, ``scroll_target``, ``show_section``, ``current_section``."""
@@ -240,6 +245,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
     panel_requested = pyqtSignal(str, str)  # another LRLC panel and section, e.g. Screening > Curves
     guard_changed = pyqtSignal(bool)        # the shoulder-bed guard was written by Apply
     applied = pyqtSignal(list)              # keys written
+    decon_proposed = pyqtSignal()           # a deconvolution proposal arrived from the worker
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -265,6 +271,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self.page_headings: Dict[str, QLabel] = {}
         self.step_checks: Dict[str, QCheckBox] = {}
         self._other_step_checks: Dict[str, QCheckBox] = {}
+        self._init_decon()
         self._build()
 
     # ------------------------------------------------------------------ build
@@ -289,7 +296,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         builders = {"rt_source": self._build_overview, "laminated": self._build_laminated,
                     "pyrite": self._build_pyrite, "clay": self._build_clay,
                     "sw_basis": self._build_basis, "variable_mn": self._build_variable_mn,
-                    "invasion": self._build_invasion}
+                    "invasion": self._build_invasion, "decon": self._build_decon}
         for group, entries in SECTION_GROUPS:
             head = QListWidgetItem(group.upper())
             head.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -565,6 +572,8 @@ class RemediationForm(MnInvasionMixin, QWidget):
         old_zone = self.zone
         self.zone = new_zone
         self._loaded_for = target
+        if moved:
+            self._reset_decon()
         if reload:
             self._clear_pending()
             self.result_label.setText("")
@@ -624,7 +633,8 @@ class RemediationForm(MnInvasionMixin, QWidget):
         return project, well
 
     def _has_pending(self) -> bool:
-        return bool(self._dirty or self._settings or self._step_toggles)
+        return bool(self._dirty or self._settings or self._step_toggles
+                    or self._dec_edits is not None)
 
     def _clear_pending(self):
         self._step_toggles = {}
@@ -632,6 +642,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self._dirty = set()
         self._models_hint = []
         self._fit_coef = None
+        self._dec_edits = None
 
     def _load_values(self, keep: Optional[set] = None):
         """Show the stored values; keys in ``keep`` keep their pending value."""
@@ -657,7 +668,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         if isinstance(widget, QComboBox):
             i = widget.findData(value)
             widget.setCurrentIndex(max(i, 0))
-        elif isinstance(widget, MultiSpin):
+        elif isinstance(widget, (MultiSpin, AutoSpin)):
             widget.set(value)
         elif isinstance(widget, QCheckBox):
             widget.setChecked(bool(value))
@@ -672,7 +683,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
             return widget.currentData()
         if isinstance(widget, QCheckBox):
             return widget.isChecked()
-        if isinstance(widget, MultiSpin):
+        if isinstance(widget, (MultiSpin, AutoSpin)):
             values = widget.get()
             if key == "inv_r50":
                 preset = GENERIC_TOOLS.get(self.controls["inv_tool"].currentData())
@@ -855,11 +866,14 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self.controls["pyr_vpyr"].setEnabled(manual)
         self._state_variable_mn()
         self._state_invasion()
+        self._state_decon()
         labels = {s.name: s.label for s in chain.available_steps()}
         pending = [KEY_LABELS.get(k, k) for k in sorted(self._dirty)]
         pending += [f"{labels.get(n, n)} {'on' if on else 'off'}"
                     for n, on in sorted(self._step_toggles.items())]
         pending += [SETTING_LABELS[k] for k in sorted(self._settings)]
+        if self._dec_edits is not None:
+            pending.append(KEY_LABELS["dec_edits"])
         self.apply_button.setEnabled(bool(pending) and self.model is not None)
         self.discard_button.setEnabled(bool(pending))
         scope = self.scope_combo.currentData()
@@ -870,6 +884,8 @@ class RemediationForm(MnInvasionMixin, QWidget):
 
     def _section_pending(self, key) -> bool:
         if self._dirty & self._section_keys.get(key, set()):
+            return True
+        if key == "decon" and self._dec_edits is not None:
             return True
         if any(SETTING_SECTION[n] == key for n in self._settings):
             return True
@@ -889,6 +905,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         }
         for name in STEP_PAGES:
             states[name] = "on" if name in steps else "off"
+        states["decon"] = self._dec_row_state(steps)
         for key, row in self._list_rows.items():
             text = states.get(key, "")
             if self._section_pending(key):
@@ -928,6 +945,25 @@ class RemediationForm(MnInvasionMixin, QWidget):
             return True
         return False
 
+    def _apply_values(self, level, zone, values):
+        """``(keys written, well_default)``. At a zone, the well-only keys (the deconvolution tool
+        and solver settings) go to the well default and the others to the zone; every value is
+        checked before anything is written."""
+        if level == "well" and zone is not None:
+            well_vals = {k: v for k, v in values.items() if k in WELL_ONLY_KEYS}
+            if well_vals:
+                if any(not clean_param(k, v)[1] for k, v in values.items()):
+                    return [], False
+                zone_vals = {k: v for k, v in values.items() if k not in WELL_ONLY_KEYS}
+                written: List[str] = []
+                if zone_vals:
+                    written += LrlcService.apply_remediation(self.model, "well", zone, zone_vals,
+                                                             self.ds)
+                well_written = LrlcService.apply_remediation(self.model, "well", None, well_vals,
+                                                             self.ds)
+                return written + well_written, bool(well_written)
+        return LrlcService.apply_remediation(self.model, level, zone, values, self.ds), False
+
     def _on_apply(self):
         if self.model is None or not self._has_pending():
             return
@@ -938,13 +974,17 @@ class RemediationForm(MnInvasionMixin, QWidget):
                 values[key] = list(self._fit_coef)
             else:
                 values[key] = self._read_widget(key)
+        if self._dec_edits is not None:
+            values["dec_edits"] = {"add": list(self._dec_edits["add"]),
+                                   "remove": list(self._dec_edits["remove"])}
         if self._step_toggles:
             values["rt_steps"] = self._target_steps(level, zone)
         # The ladder values first: a refused set stays pending; the switches are written anyway.
         written: List[str] = []
         refused = False
+        well_default = False
         if values:
-            written = LrlcService.apply_remediation(self.model, level, zone, values, self.ds)
+            written, well_default = self._apply_values(level, zone, values)
             refused = not written
         changed_settings = []
         for name, value in list(self._settings.items()):
@@ -955,6 +995,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
             self._dirty = set()
             self._step_toggles = {}
             self._fit_coef = None
+            self._dec_edits = None
         self._load_values(keep=self._dirty if refused else None)
         self._refresh_info()
         self._update_state()
@@ -972,8 +1013,10 @@ class RemediationForm(MnInvasionMixin, QWidget):
                 "Written: " + ", ".join(wrote) + f". The other changes are still pending: {rule}.")
             set_status(self.result_label, "warning")
         else:
+            tail = ("; tool and solver settings as the default of this well"
+                    if well_default else "")
             self.result_label.setText(
-                "Written: " + ", ".join(wrote) + ". Run the analysis to see the effect.")
+                "Written: " + ", ".join(wrote) + tail + ". Run the analysis to see the effect.")
             set_status(self.result_label, "success")
         project_wide = (level == "project" and (written or "rt_fallback" in changed_settings)) \
             or any(n in PROJECT_SETTINGS for n in changed_settings)
@@ -1009,6 +1052,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
         self._info_basis()
         self._info_variable_mn()
         self._info_invasion()
+        self._info_decon()
 
     def _zone_key(self):
         return self.zone
@@ -1078,19 +1122,24 @@ class RemediationForm(MnInvasionMixin, QWidget):
     @staticmethod
     def guard_lines(summary_guard, zone):
         lines = []
+        labels = {s.name: s.label for s in chain.available_steps()}
         for z in summary_guard.get("zones", []):
             name = z.get("zone")
             if zone is not None and name != zone:
                 continue
             where = f"Zone {name}" if name else "the unzoned interval"
-            if not z.get("laminated"):
+            laminated = bool(z.get("laminated"))
+            if laminated:
+                share = fmt(z.get("lam_share"), 2)
+                lines.append(f"{where}: laminated (laminar share {share}).")
+            else:
                 lines.append(f"{where}: not laminated.")
-                continue
-            share = fmt(z.get("lam_share"), 2)
-            lines.append(f"{where}: laminated (laminar share {share}).")
+            reasons = z.get("reasons") or {}
             for step in z.get("blocked_steps") or []:
-                lines.append(f"{step} not applied in {where}: laminated (guard); use the "
-                             "laminated-sand correction.")
+                reason = reasons.get(step) or ("laminated" if laminated else "shoulder")
+                lines.append(blocked_text(labels.get(step, step), where, reason))
+            if not laminated:
+                continue
             if z.get("sbc_rt"):
                 lines.append(f"RT is marked shoulder-bed corrected in {where}, which is "
                              "laminated: map the raw deep RT and use the laminated-sand "
@@ -1266,6 +1315,7 @@ class RemediationForm(MnInvasionMixin, QWidget):
     def refresh_theme(self):
         self.pef_plot.refresh_theme()
         self.refresh_new_themes()
+        self.refresh_decon_theme()
         for box in (self.chain_box, self.laminated_box, self.pyrite_box, self.qv_box,
                     self.mn_box, self.inv_box):
             box.refresh_theme()

@@ -56,19 +56,28 @@ def zone_state(stats: Optional[dict], guard_settings: dict) -> dict:
     return state
 
 
+def _why(reason):
+    """``(why, tail)`` of a guard sentence for a reason: ``"laminated"`` or ``"shoulder"``."""
+    if reason == "laminated":
+        return "laminated", "; use the laminated-sand correction."
+    return "RT is marked shoulder-bed corrected", "."
+
+
+def blocked_text(name, shown, reason):
+    """The guard-on sentence for a dropped step (shared by the issue and the Workbench)."""
+    why, tail = _why(reason)
+    return f"{name} not applied in {shown}: {why} (guard){tail}"
+
+
 def _vertical_rule(spec, enabled, shown, label, reason, kept, blocked, warned, reasons, issues):
     """Drop (guard on) or warn about (guard off) one vertical step; reason is laminated or shoulder."""
     name = spec.label or spec.name
     reasons[spec.name] = reason
-    if reason == "laminated":
-        why, tail = "laminated", "; use the laminated-sand correction."
-    else:
-        why, tail = "RT is marked shoulder-bed corrected", "."
+    why, tail = _why(reason)
     if enabled:
         kept.remove(spec)
         blocked.append(spec.name)
-        issues.append(("LRLC_GUARD_BLOCKED", f"{name} not applied in {shown}: {why} (guard){tail}",
-                       label, None))
+        issues.append(("LRLC_GUARD_BLOCKED", blocked_text(name, shown, reason), label, None))
     else:
         warned.append(spec.name)
         issues.append(("LRLC_GUARD_WARNED", f"{name} applied in {shown}: {why} (guard off){tail}",
@@ -145,11 +154,15 @@ def guard_summary(zone_states: Dict[str, dict], decisions: Dict[str, GuardDecisi
     for key in keys:
         st = (zone_states or {}).get(key) or {}
         dec = (decisions or {}).get(key)
-        zones.append({
+        row = {
             "zone": _zone_label(key),
             "laminated": bool(st.get("laminated", False)),
             "lam_share": st.get("lam_share", float("nan")),
             "blocked_steps": list(getattr(dec, "blocked_steps", []) or []),
             "sbc_rt": bool(getattr(dec, "sbc_rt", False)),
-        })
+        }
+        reasons = dict(getattr(dec, "reasons", {}) or {})
+        if reasons:             # only when a guard rule acted: the block of every other case is unchanged
+            row["reasons"] = reasons
+        zones.append(row)
     return {"enabled": bool(enabled), "zones": zones}

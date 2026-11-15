@@ -40,7 +40,7 @@ TEXT_WIDTH = 800   # widest the paragraphs get, in pixels
 METHOD_GROUPS = (
     ("Screening", ("screening", "rt_cutoff", "bvw", "buckles", "pickett", "elastic")),
     ("Diagnosis", ("thomas_stieber",)),
-    ("Remediation", ("rt_chain", "laminated", "pyrite", "qv", "variable_mn", "invasion")),
+    ("Remediation", ("rt_chain", "decon", "laminated", "pyrite", "qv", "variable_mn", "invasion")),
 )
 
 

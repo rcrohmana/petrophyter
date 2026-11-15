@@ -227,6 +227,59 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
         ),
         refs=(),
     ),
+    "decon": MethodInfo(
+        title="Rt deconvolution (thin beds)",
+        equation_tex=(
+            r"$\sigma_a(z) = \sum_{k} \sigma_k\, w_k(z), \qquad \sigma = 1 / R_t$",
+            r"$w_k(z) = \Phi\!\left(\frac{z - t_k}{s}\right) - \Phi\!\left(\frac{z - b_k}{s}\right),"
+            r" \qquad s = \frac{\mathrm{FWHM}}{2.3548}$",
+            r"$\min_{x}\ \| A x - 1 \|^{2} + \lambda\, \| x - 1 \|^{2}, \qquad 1/R \leq x_k \leq R$",
+        ),
+        legend=(
+            (r"$\sigma_a,\ \sigma_k$",
+             "apparent conductivity read by the deep tool and true conductivity of bed k, S/m"),
+            (r"$w_k(z)$",
+             "share of the tool response at depth z that comes from bed k (sums to 1)"),
+            (r"$t_k,\ b_k$",
+             "top and bottom of bed k, ft; the beds come from the high-resolution curve"),
+            (r"$\Phi$",
+             "standard normal cumulative distribution"),
+            (r"$\mathrm{FWHM}$",
+             "vertical resolution of the deep curve, ft (the response width you enter)"),
+            (r"$x_k,\ R,\ \lambda$",
+             "bed conductivity relative to its prior, the amplification limit and the smoothing weight"),
+        ),
+        equation=(
+            "sigma_a(z) = sum_k sigma_k * w_k(z),   sigma = 1 / Rt\n"
+            "w_k(z) = Phi((z - t_k) / s) - Phi((z - b_k) / s),   s = FWHM / 2.3548\n"
+            "minimise |A x - 1|^2 + lambda |x - 1|^2   with   1/R <= x_k <= R\n"
+            "Doll option: w_k(z) = G(z - t_k) - G(z - b_k), G the cumulative vertical\n"
+            "    geometric factor of a two-coil sonde of spacing L (formula to verify)"
+        ),
+        assumptions=(
+            "Horizontal, homogeneous beds; the tool reads a linear, depth-invariant weighted sum of "
+            "the bed conductivities, with a Gaussian vertical response of the width you enter "
+            "(the Doll geometric factor is the alternative). Bed boundaries are the peaks of the "
+            "smoothed derivative of one high-resolution curve (HIRES, RXO, RHOB or GR). The "
+            "response widths of the presets are generic placeholders, not specifications of any "
+            "tool: confirm the width against the chart book of the tool that was run. "
+            "The result depends on the width: the line under the result shows how the median Rt "
+            "increase moves when the width is 20 percent smaller or 25 percent larger. "
+            "The Doll formula is marked to verify against the 1949 paper."
+        ),
+        limits=(
+            "Ignored: skin effect, dip and high-angle geometry, resistivity anisotropy, borehole "
+            "and invasion (radial) effects, tool-specific processing and lateral variation. "
+            "Array induction curves already carry their own vertical enhancement, so applying "
+            "this step to them is a double enhancement. The laterolog response is not linear in "
+            "conductivity, so the Gaussian model is only an approximate blur there. The solution "
+            "is not unique, depends on the bed picks, amplifies noise, and a bed that the data "
+            "cannot determine is left invalid. Only the deep curve is deconvolved: medium and "
+            "shallow stay measured. The output is a bed-model estimate, not a measurement; do not "
+            "use it with a curve that is already shoulder-bed corrected or in a laminated zone."
+        ),
+        refs=SHIPPED_METHODS["decon"],
+    ),
     "thomas_stieber": MethodInfo(
         title="Thomas-Stieber laminar and dispersed shale",
         equation_tex=(

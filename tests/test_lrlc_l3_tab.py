@@ -239,7 +239,8 @@ def test_sections_exist_and_are_scroll_targets(window, qtbot):
     assert METHOD_TEXT["invasion"].refs == SHIPPED_METHODS["invasion"]
 
 # The corrections list: Rt corrections in chain order, then the saturation corrections.
-REMEDIATION_PAGES = {"rt_source": "Overview", "invasion": "Radial invasion",
+REMEDIATION_PAGES = {"rt_source": "Overview", "decon": "Rt deconvolution",
+                     "invasion": "Radial invasion",
                      "laminated": "Laminated sand", "pyrite": "Pyrite", "clay": "Clay Qv",
                      "sw_basis": "Sw basis", "variable_mn": "Variable m/n"}
 
@@ -250,7 +251,7 @@ def test_show_panel_selects_the_remediation_page(window, qtbot):
     form = tab.remediation_form
     lst = form.section_list
     texts = [lst.item(i).text() for i in range(lst.count())]
-    assert texts[0] == "RT CORRECTIONS" and texts[5] == "SATURATION"
+    assert texts[0] == "RT CORRECTIONS" and texts[6] == "SATURATION"
     assert not lst.item(0).flags() & Qt.ItemFlag.ItemIsSelectable
     keys = [lst.item(i).data(Qt.ItemDataRole.UserRole) for i in range(lst.count())]
     assert [k for k in keys if k] == list(REMEDIATION_PAGES)

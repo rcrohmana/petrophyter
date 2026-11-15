@@ -245,7 +245,7 @@ def test_guard_status_texts_and_toggle(window, qtbot, run_result):
     guard["sbc_rt"] = True
     tab.update_display()
     text = form.guard_status.text()
-    assert "decon not applied in Zone UPPER: laminated (guard); use the laminated-sand " \
+    assert "Deconvolution not applied in Zone UPPER: laminated (guard); use the laminated-sand " \
            "correction." in text
     assert "RT is marked shoulder-bed corrected in Zone UPPER, which is laminated" in text
     seen = []

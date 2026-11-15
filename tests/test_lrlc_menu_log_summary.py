@@ -46,7 +46,8 @@ def test_specialized_menu_has_rt_corrections_and_guard(window):
     sub = window.actions_["rt_corrections_menu"]
     assert acts[3] is sub and sub.text() == "Rt Corrections"
     assert sub.menu().actions() == [window.actions_["rt_laminated"], window.actions_["rt_pyrite"],
-                                    window.actions_["rt_invasion"]]
+                                    window.actions_["rt_invasion"], window.actions_["rt_decon"]]
+    assert window.actions_["rt_decon"].text() == "Rt Deconvolution\u2026"
     tools = window.actions_["saturation_tools_menu"].menu().actions()
     assert tools == [window.actions_["rt_cutoff_overlay"], window.actions_["shf_shortcut"],
                      window.actions_["variable_mn"]]
@@ -60,7 +61,8 @@ def test_specialized_menu_has_rt_corrections_and_guard(window):
     assert guard.text() == "Shoulder-bed Guard (laminated zones)"
     assert guard.icon().isNull() and "lrlc_guard" not in window._action_icons
     expected = {"rt_corrections_menu": "waves-horizontal", "rt_laminated": "layers",
-                "rt_pyrite": "hexagon", "variable_mn": "calculator", "rt_invasion": "move"}
+                "rt_pyrite": "hexagon", "variable_mn": "calculator", "rt_invasion": "move",
+                "rt_decon": "spline"}
     for key, icon in expected.items():
         assert window._action_icons[key] == icon
         assert not window.actions_[key].icon().isNull()

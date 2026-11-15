@@ -17,6 +17,7 @@ from typing import Any, List, Optional, Sequence
 import math
 
 import numpy as np
+from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
 from modules.lrlc.config import (
     AUX_ROLES, BLOCK_PAIRS, BLOCK_RANGES, CURVE_MARKERS, L2_BLOCKS, L3_BLOCKS, L4_BLOCKS,
@@ -721,3 +722,216 @@ def summary_record(block, zone: Optional[str]) -> Optional[dict]:
     if not zone and len(records) == 1:
         return records[0]
     return None
+
+
+# ---------------------------------------------------------------------------
+# Rt deconvolution proposal (the first LRLC worker)
+# ---------------------------------------------------------------------------
+DECON_CAPTION_STEP = "decon"
+_RESIDUAL_CHUNK = 2000
+
+
+class _NoteSink:
+    """Collects the issue texts of the auxiliary-curve build (the proposal does not show them)."""
+
+    def __init__(self):
+        self.items = []
+
+    def add(self, code, text, *args, **kwargs):
+        self.items.append((code, text))
+
+
+def decon_candidates(ds, data=None) -> dict:
+    """``{"HIRES"|"RXO"|"RHOB"|"GR": (array or None, column name)}`` of the possible reference
+    curves of a well, read from ``data`` (the merged log, ``ds.las_data`` when None)."""
+    import pandas as pd
+
+    frame = data if data is not None else getattr(ds, "las_data", None)
+    out = {}
+    mapping = getattr(ds, "curve_mapping", None) or {}
+    for kind in ("HIRES", "RXO", "RHOB", "GR"):
+        name = aux_curve_name(ds, kind) if kind in ("HIRES", "RXO") else mapping.get(kind, kind)
+        if frame is None or not name or name not in frame.columns:
+            out[kind] = (None, name)
+        else:
+            out[kind] = (pd.to_numeric(frame[name], errors="coerce").to_numpy(dtype=float), name)
+    return out
+
+
+def decon_reference(ds, source: str = "auto"):
+    """``(kind, column)`` of the reference curve the deconvolution would use, or ``(None, None)``."""
+    from modules.lrlc.decon_step import pick_reference
+
+    kind, column, _arr = pick_reference(source or "auto", decon_candidates(ds))
+    return kind, column
+
+
+class DeconSignals(QObject):
+    """Signals of the deconvolution proposal worker; ``token`` identifies the request."""
+    completed = pyqtSignal(int, dict)
+    error = pyqtSignal(int, str)
+
+
+class DeconWorker(QRunnable):
+    """Deconvolve the header zone (or the whole well) on a pool thread from a snapshot taken on
+    the GUI thread: ``deconvolve`` and ``width_sensitivity`` through the same well-level derive the
+    pipeline calls, so the proposal and the run agree. It never writes the model."""
+
+    def __init__(self, token: int, depth, rt, candidates: dict, keys, lrlc: dict, has_labels: bool,
+                 zone: Optional[str]):
+        super().__init__()
+        self.token = int(token)
+        self.depth = depth
+        self.rt = rt
+        self.candidates = candidates
+        self.keys = keys
+        self.lrlc = lrlc
+        self.has_labels = bool(has_labels)
+        self.zone = zone
+        self.signals = DeconSignals()
+
+    @classmethod
+    def from_model(cls, model, ds, zone: Optional[str] = None, values: Optional[dict] = None,
+                   edits: Optional[dict] = None, token: int = 0):
+        """Snapshot ``ds`` on the calling (GUI) thread; None when the well has no log.
+
+        ``values`` are ``dec_*`` ladder values that replace the stored ones for this proposal
+        (the page's pending values), ``edits`` the manual boundary edits. ``zone`` is the zone
+        to deconvolve; None deconvolves every zone.
+        """
+        from modules.las_utils import mask_nonpositive
+        from modules.lrlc.stage import build_aux, zone_keys_for
+        from modules.pipeline import _filter_formations, assign_zones
+
+        log = getattr(ds, "las_data", None)
+        if log is None or len(log) == 0 or "DEPTH" not in log.columns:
+            return None
+        import pandas as pd
+
+        mapping = dict(getattr(ds, "curve_mapping", None) or {})
+        data = log.copy()
+        mask_nonpositive(data, [mapping.get(k, k) for k in ("RT", "RHOB", "DT")])
+        tops = getattr(ds, "formation_tops", None)
+        data = _filter_formations(
+            data, {"analysis_mode": getattr(ds, "analysis_mode", None),
+                   "selected_formations": getattr(ds, "selected_formations", None)}, tops)
+        if len(data) == 0:
+            return None
+        labels = None
+        if tops is not None and getattr(tops, "formations", None):
+            labels, _ = assign_zones(data["DEPTH"], tops)
+        keys = zone_keys_for(data.index, labels)
+        lrlc = copy.deepcopy(model._lrlc_params(ds))
+        sink = _NoteSink()
+        aux, aux_names = build_aux(lrlc, data, sink)
+        candidates = {}
+        for role in ("HIRES", "RXO"):
+            series = aux.get(role)
+            candidates[role] = (None if series is None else series.to_numpy(dtype=float),
+                                aux_names.get(role))
+        for kind in ("RHOB", "GR"):
+            name = mapping.get(kind, kind)
+            candidates[kind] = (pd.to_numeric(data[name], errors="coerce").to_numpy(dtype=float)
+                                if name in data.columns else None, name)
+        rt_name = mapping.get("RT", "RT")
+        rt = (pd.to_numeric(data[rt_name], errors="coerce").to_numpy(dtype=float)
+              if rt_name in data.columns else None)
+        values = dict(values or {})
+        if edits is not None:
+            values["dec_edits"] = {"add": list(edits.get("add", [])),
+                                   "remove": list(edits.get("remove", []))}
+        target = None if zone is None else str(zone)
+        res = lrlc["resolved"]
+        default = dict(res["default"])
+        zones = {k: dict(v) for k, v in (res.get("zones") or {}).items()}
+        from modules.lrlc.config import WELL_ONLY_KEYS
+
+        for key in dict.fromkeys(keys.tolist()):
+            row = dict(zones.get(key, default))
+            row.update({k: v for k, v in values.items() if k not in WELL_ONLY_KEYS})
+            row["rt_steps"] = [DECON_CAPTION_STEP] if target is None or key == target else []
+            zones[key] = row
+        default.update({k: v for k, v in values.items() if k in WELL_ONLY_KEYS})
+        default["rt_steps"] = [DECON_CAPTION_STEP] if target is None else []
+        lrlc["resolved"] = {"default": default, "zones": zones}
+        return cls(token, data["DEPTH"].to_numpy(dtype=float), rt, candidates, keys, lrlc,
+                   labels is not None, target)
+
+    def run(self):
+        try:
+            self.signals.completed.emit(self.token, self.compute())
+        except Exception as e:      # noqa: BLE001 - reported to the owner, never raised on the pool
+            logger.exception("Rt deconvolution proposal failed")
+            self.signals.error.emit(self.token, f"Rt deconvolution failed: {e}")
+
+    # -- the work (also callable on the calling thread, for tests)
+    def compute(self) -> dict:
+        from modules.lrlc.decon import pick_beds, response_weights
+        from modules.lrlc.decon_step import decon_block, derive_decon_well, pick_reference
+
+        info: dict = {}
+        found: list = []
+        out = derive_decon_well(depth=self.depth, rt=self.rt, candidates=self.candidates,
+                                zone_keys=self.keys, lrlc=self.lrlc, issues=found, info=info)
+        block = decon_block(info, None, self.has_labels)
+        active = np.asarray(info.get("active"), dtype=bool) if info else np.zeros(len(self.depth), bool)
+        payload = {"token": self.token, "zone": self.zone, "block": block,
+                   "issues": [{"code": c, "text": t, "zone": z, "severity": s}
+                              for c, t, z, s in found],
+                   "reference": dict(info.get("hires") or {}) if info else {},
+                   "params": info.get("params") if info else None,
+                   "inputs": {k: self.lrlc["resolved"]["default"].get(k)
+                              for k in self.lrlc["resolved"]["default"] if k.startswith("dec_")},
+                   "plot": None}
+        if block is None or not active.any() or (info.get("hires") or {}).get("curve") is None:
+            return payload
+        depth = np.asarray(self.depth, dtype=float)
+        rt = None if self.rt is None else np.asarray(self.rt, dtype=float)
+        source = str(self.lrlc["resolved"]["default"].get("dec_hires_source", "auto"))
+        _kind, _col, hires = pick_reference(source, self.candidates)
+        rows = np.flatnonzero(active)
+        lo, hi = rows[0], rows[-1] + 1
+        res = info["result"]
+        params = info["params"]
+        d, r = depth[lo:hi], (None if rt is None else rt[lo:hi])
+        h = None if hires is None else np.asarray(hires, dtype=float)[lo:hi]
+        auto = np.empty(0)
+        log_domain = bool(info["hires"].get("log_domain", True))
+        if h is not None and r is not None:
+            ok = np.isfinite(h) & (h > 0 if log_domain else True) & active[lo:hi]
+            if ok.sum() > 5:
+                try:
+                    auto = np.asarray(pick_beds(d[ok], h[ok], params, log_domain).boundaries, dtype=float)
+                except Exception:      # noqa: BLE001 - the plot then shows no automatic lines
+                    logger.debug("automatic boundaries unavailable", exc_info=True)
+        beds = [b for b in res.beds if d[0] - 1e-6 <= 0.5 * (b.top + b.bottom) <= d[-1] + 1e-6]
+        unique = {(round(float(b.top), 6), round(float(b.bottom), 6)): b for b in beds}
+        beds = sorted(unique.values(), key=lambda b: (b.top, b.bottom))
+        residual = np.full(len(d), np.nan)
+        good = [b for b in beds if np.isfinite(b.rt_decon) and b.rt_decon > 0]
+        if good and r is not None:
+            tops = np.array([b.top for b in good])
+            bottoms = np.array([b.bottom for b in good])
+            sigma = 1.0 / np.array([b.rt_decon for b in good])
+            for s in range(0, len(d), _RESIDUAL_CHUNK):
+                zz = d[s:s + _RESIDUAL_CHUNK]
+                w = response_weights(zz, tops, bottoms, params.width_ft, params.response,
+                                     params.doll_spacing_ft)
+                tot = w.sum(axis=1)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    model_rt = tot / (w @ sigma)
+                    residual[s:s + _RESIDUAL_CHUNK] = (model_rt - r[s:s + _RESIDUAL_CHUNK]) \
+                        / r[s:s + _RESIDUAL_CHUNK]
+        final = sorted(x for lst in (block.get("boundaries") or {}).values() for x in lst
+                       if d[0] <= x <= d[-1])
+        windows = [w for w in block.get("windows", [])
+                   if w["bottom"] >= d[0] and w["top"] <= d[-1]]
+        payload["plot"] = {
+            "depth": d, "rt": r, "hires": h, "rt_decon": np.asarray(out["rt_decon"])[lo:hi],
+            "residual": residual, "auto": auto, "final": np.asarray(final, dtype=float),
+            "beds": [{"top": float(b.top), "bottom": float(b.bottom), "n_rows": int(b.n_rows),
+                      "rt_prior": float(b.rt_prior), "rt_decon": float(b.rt_decon),
+                      "at_bound": bool(b.at_bound)} for b in beds],
+            "windows": windows, "log_domain": log_domain, "reference": payload["reference"],
+            "tol": float(params.edit_tol_ft)}
+        return payload

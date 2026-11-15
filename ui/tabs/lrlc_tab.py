@@ -53,8 +53,8 @@ logger = logging.getLogger(__name__)
 PANELS = ("screening", "diagnosis", "remediation", "validation", "methods")
 DIAGNOSIS_SECTIONS = ("zones", "thomas_stieber", "pickett", "buckles")
 SCREENING_SECTIONS = ("rt_cutoff", "curves", "elastic")
-REMEDIATION_SECTIONS = ("rt_source", "laminated", "pyrite", "clay", "sw_basis", "variable_mn",
-                        "invasion")
+REMEDIATION_SECTIONS = ("rt_source", "decon", "laminated", "pyrite", "clay", "sw_basis",
+                        "variable_mn", "invasion")
 PANEL_TITLES = {"screening": "Screening", "diagnosis": "Diagnosis",
                 "remediation": "Remediation", "validation": "Validation",
                 "methods": "Methods"}

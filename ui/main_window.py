@@ -637,6 +637,8 @@ class MainWindow(QMainWindow):
             lambda: self.show_lrlc("remediation", "variable_mn"))
         act("rt_invasion", "Radial Invasion Correction…", "move", None,
             lambda: self.show_lrlc("remediation", "invasion"))
+        act("rt_decon", "Rt Deconvolution\u2026", "spline", None,
+            lambda: self.show_lrlc("remediation", "decon"))
         act("rt_laminated", "Laminated Sand Rt (Hagiwara)…", "layers", None,
             lambda: self.show_lrlc("remediation", "laminated"))
         act("rt_pyrite", "Pyrite Correction…", "hexagon", None,
@@ -718,6 +720,7 @@ class MainWindow(QMainWindow):
         rt_corrections.addAction(self.actions_["rt_laminated"])
         rt_corrections.addAction(self.actions_["rt_pyrite"])
         rt_corrections.addAction(self.actions_["rt_invasion"])
+        rt_corrections.addAction(self.actions_["rt_decon"])
         specialized.addSeparator()
         specialized.addAction(self.actions_["lrlc_guard"])
         for key, _title, menu, _icon in PAGES:

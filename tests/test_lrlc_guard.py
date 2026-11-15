@@ -202,8 +202,10 @@ def test_guard_summary_shape():
     by = {z["zone"]: z for z in s["zones"]}
     assert set(by) == {"A", "B", None}
     assert by["A"] == {"zone": "A", "laminated": True, "lam_share": 0.7,
-                       "blocked_steps": ["decon"], "sbc_rt": True}
+                       "blocked_steps": ["decon"], "sbc_rt": True,
+                       "reasons": {"decon": "laminated"}}
     assert by["B"]["blocked_steps"] == [] and by["B"]["sbc_rt"] is False
+    assert "reasons" not in by["B"] and "reasons" not in by[None]      # only where a rule acted
     assert by[None]["laminated"] is False
     assert guard_summary(states, decs, enabled=False)["enabled"] is False
 
