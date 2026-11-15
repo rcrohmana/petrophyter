@@ -18,7 +18,8 @@ import pandas as pd
 from modules.lrlc import chain
 from modules.lrlc.chain import DeriveSpec, register_derive, resolve_steps
 from modules.lrlc.config import (
-    DIAGNOSIS_DEFAULTS, GUARD_DEFAULTS, PYRITE_DEFAULTS, QV_DEFAULTS, THOMAS_STIEBER_DEFAULTS)
+    DIAGNOSIS_DEFAULTS, GUARD_DEFAULTS, LRLC_PARAM_DEFAULTS, PYRITE_DEFAULTS, QV_DEFAULTS,
+    THOMAS_STIEBER_DEFAULTS)
 from modules.lrlc.diagnosis import diagnose_zone, lrlc_note, zone_evidence
 from modules.lrlc.guard import evaluate_guard, guard_summary, zone_state
 from modules.lrlc.pyrite import solve_volumes
@@ -131,6 +132,7 @@ class SegEnv:
     plan: L2Plan
     issues: List[tuple] = field(default_factory=list)
     notes: Dict[str, Any] = field(default_factory=dict)
+    depth: Optional[np.ndarray] = None  # per-sample depth (None: the resolved-bed rule is off)
 
     def add(self, code, text, key=UNZONED, severity=None):
         self.issues.append((code, text, _label(key), severity))
@@ -318,6 +320,21 @@ def vertical_requested(lrlc: dict, keys) -> bool:
     return False
 
 
+def resolved_rule(lrlc: dict) -> Optional[dict]:
+    """The resolved-shale-bed rule of the laminated check, or None when it is off.
+
+    The shale threshold is the Thomas-Stieber ``shale_vsh``; the run length is the well's
+    deconvolution width setting (``dec_fwhm_ft``), read even when the deconvolution is off.
+    """
+    gs = block(lrlc, "guard")
+    if not gs["exclude_resolved"]:
+        return None
+    default = ((lrlc or {}).get("resolved") or {}).get("default") or {}
+    return {"shale_vsh": block(lrlc, "thomas_stieber")["shale_vsh"],
+            "run_ft": float(default.get("dec_fwhm_ft", LRLC_PARAM_DEFAULTS["dec_fwhm_ft"])),
+            "edge_ft": gs["edge_ft"], "min_frac": gs["min_frac"]}
+
+
 def build_guard(env: SegEnv, derived: Dict[str, np.ndarray], decisions: dict, states: dict
                 ) -> Optional[Callable]:
     """The chain guard bound to this segment's zone states.
@@ -334,7 +351,7 @@ def build_guard(env: SegEnv, derived: Dict[str, np.ndarray], decisions: dict, st
         zone_states: Dict[str, dict] = {}
     else:
         stats = zone_stats(env.vsh_ts, derived["VLAM"], derived["TS_CLASS"], env.dz, env.keys,
-                           gs["vsh_min"])
+                           gs["vsh_min"], depth=env.depth, resolved=resolved_rule(env.lrlc))
         zone_states = {k: zone_state(v, gs) for k, v in stats.items()}
         states.update(zone_states)
     bound = partial(evaluate_guard, zone_states=zone_states, guard_settings=gs,
@@ -460,10 +477,13 @@ def chain_count_issues(records: List[dict]) -> List[tuple]:
 # ---------------------------------------------------------------------------
 # Thomas-Stieber summary
 # ---------------------------------------------------------------------------
-def ts_stats_by_key(results: pd.DataFrame, vsh, keys, dz, lrlc: dict) -> Dict[Any, dict]:
+def ts_stats_by_key(results: pd.DataFrame, vsh, keys, dz, lrlc: dict, depth=None
+                    ) -> Dict[Any, dict]:
+    """Per-zone Thomas-Stieber statistics: the same rule as the guard (see :func:`build_guard`)."""
     vsh_min = block(lrlc, "guard")["vsh_min"]
     return zone_stats(vsh, results["VLAM"].to_numpy(dtype=float),
-                      results["TS_CLASS"].to_numpy(), dz, keys, vsh_min)
+                      results["TS_CLASS"].to_numpy(), dz, keys, vsh_min, depth=depth,
+                      resolved=resolved_rule(lrlc))
 
 
 def ts_block(stats: Dict[Any, dict], ts_notes: dict, has_labels: bool) -> dict:

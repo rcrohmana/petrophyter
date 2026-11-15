@@ -47,13 +47,39 @@ def zone_state(stats: Optional[dict], guard_settings: dict) -> dict:
     mean_vlam = float(stats.get("mean_vlam", float("nan")))
     n = int(stats.get("n", 0))
     state.update(lam_share=lam_share, mean_vlam=mean_vlam, n=n)
+    state["excluded_ft"] = float(stats.get("excluded_ft", 0.0) or 0.0)
+
+    def laminated_by(share, mean):
+        return bool(np.isfinite(share) and np.isfinite(mean)
+                    and share >= float(guard_settings.get("vlam_share", 0.50))
+                    and mean >= float(guard_settings.get("min_vlam", 0.05)))
+
+    if state["excluded_ft"] > 0 or stats.get("emptied"):
+        # what the zone would have been without the resolved-bed rule (for the guard line)
+        state["laminated_all"] = laminated_by(float(stats.get("lam_share_all", float("nan"))),
+                                              float(stats.get("mean_vlam_all", float("nan"))))
+    if stats.get("emptied"):
+        # Thomas-Stieber classified the zone; only resolved beds (or too little thickness
+        # to call laminated) remain, so it is classified and not laminated.
+        state["classified"] = True
+        return state
     if n <= 0 or not np.isfinite(lam_share) or not np.isfinite(mean_vlam):
         return state
     state["classified"] = True
-    state["laminated"] = bool(
-        lam_share >= float(guard_settings.get("vlam_share", 0.50))
-        and mean_vlam >= float(guard_settings.get("min_vlam", 0.05)))
+    state["laminated"] = laminated_by(lam_share, mean_vlam)
     return state
+
+
+def resolved_note(row: dict) -> str:
+    """Plain words for a guard-summary row when resolved shale beds were left out of the
+    laminated check ("" when the rule did nothing in the zone)."""
+    ft = float(row.get("resolved_ft") or 0.0)
+    if ft > 0:
+        shown = f"{ft:.1f}".rstrip("0").rstrip(".")
+        return f"{shown} ft of resolved shale beds left out of the laminated check"
+    if row.get("class_changed"):
+        return "too little of the zone is left after the resolved shale beds for a laminated check"
+    return ""
 
 
 def _why(reason):
@@ -164,5 +190,12 @@ def guard_summary(zone_states: Dict[str, dict], decisions: Dict[str, GuardDecisi
         reasons = dict(getattr(dec, "reasons", {}) or {})
         if reasons:             # only when a guard rule acted: the block of every other case is unchanged
             row["reasons"] = reasons
+        if st.get("excluded_ft", 0.0) > 0:      # only when the resolved-bed rule left beds out
+            row["resolved_ft"] = round(float(st["excluded_ft"]), 3)
+        if st.get("laminated_all") and not st.get("laminated"):
+            row["class_changed"] = True
         zones.append(row)
-    return {"enabled": bool(enabled), "zones": zones}
+    out = {"enabled": bool(enabled), "zones": zones}
+    if any("resolved_ft" in z or "class_changed" in z for z in zones):
+        out["resolved_beds_left_out"] = True
+    return out

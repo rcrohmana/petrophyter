@@ -139,6 +139,7 @@ ISSUE_CODES: Dict[str, Tuple[str, Optional[str]]] = {
     "LRLC_DECON_BED_MERGED": ("info", None),
     "LRLC_DECON_BED_EDIT_UNMATCHED": ("info", "lrlc.remediation.decon"),
     "LRLC_DECON_AMPLIFIED": ("warning", "lrlc.remediation.decon"),
+    "LRLC_DECON_THIN_BEDS": ("info", "lrlc.remediation.decon"),
     "LRLC_DECON_EDGE": ("info", None),
     "LRLC_DECON_MISFIT": ("warning", "lrlc.remediation.decon"),
     "LRLC_DECON_NOT_CONVERGED": ("warning", "lrlc.remediation.decon"),

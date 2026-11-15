@@ -1396,7 +1396,9 @@ def _lrlc_env(calc, data, curve_mapping, p, vsh, zone, lrlc_run):
               if _has(rhob_curve, data) else None),
         pef=lrlc_run.aux_array("PEF", index),
         gas=column("GAS_FLAG") if "GAS_FLAG" in res.columns else None,
-        plan=lrlc_run.plan)
+        plan=lrlc_run.plan,
+        depth=(pd.to_numeric(data["DEPTH"], errors="coerce").to_numpy(dtype=float)
+               if "DEPTH" in data.columns else None))
 
 
 def _issues_to_log(issues, warnings):
@@ -1848,7 +1850,9 @@ def _lrlc_l2_summary(summary, run, results, data, labels, pay, p, curve_mapping,
         col = l2.block(lrlc, "thomas_stieber")["vsh_column"]
         vsh_arr = (results[col].to_numpy(dtype=float) if col in results.columns
                    else np.asarray(pay["vsh"], dtype=float))
-        ts_stats = l2.ts_stats_by_key(results, vsh_arr, keys, dz, lrlc)
+        depth_arr = (pd.to_numeric(data["DEPTH"], errors="coerce").to_numpy(dtype=float)
+                     if "DEPTH" in data.columns else None)
+        ts_stats = l2.ts_stats_by_key(results, vsh_arr, keys, dz, lrlc, depth=depth_arr)
         out["ts"] = l2.ts_block(ts_stats, run.ts_notes, labels is not None)
     guard_zones = {}
     if run.guard_states or run.guard_decisions:

@@ -166,6 +166,57 @@ def _zone_name(key) -> str:
     return WELL_ZONE if key == UNZONED else str(key)
 
 
+DECON_THIN_WARN_SHARE = 0.25     # share of the bed thickness in thin beds at which the message is a warning
+
+
+def thin_bed_stats(beds, depth, keys, active, width_ft: float) -> Dict[Any, dict]:
+    """Per zone key: the beds thinner than the response width.
+
+    ``{"n_beds", "n_thin", "thick_ft", "thin_ft", "share"}`` over the beds of the solve whose
+    midpoint falls on an active row of the zone (the midpoint and duplicate rule of
+    :func:`decon_block`); a bed is thin when its thickness is strictly below ``width_ft``;
+    ``share`` is the thin beds' part of the beds' thickness.
+    """
+    depth = np.asarray(depth, dtype=float)
+    unique = {(round(float(b.top), 6), round(float(b.bottom), 6)): b for b in beds}
+    out: Dict[Any, dict] = {}
+    if not len(depth):
+        return out
+    for bed in sorted(unique.values(), key=lambda b: (b.top, b.bottom)):
+        idx = int(np.clip(np.searchsorted(depth, 0.5 * (bed.top + bed.bottom)), 0, len(depth) - 1))
+        if not active[idx]:
+            continue
+        row = out.setdefault(keys[idx], {"n_beds": 0, "n_thin": 0, "thick_ft": 0.0, "thin_ft": 0.0})
+        thickness = float(bed.bottom - bed.top)
+        row["n_beds"] += 1
+        row["thick_ft"] += thickness
+        if thickness < float(width_ft):
+            row["n_thin"] += 1
+            row["thin_ft"] += thickness
+    for row in out.values():
+        row["share"] = row["thin_ft"] / row["thick_ft"] if row["thick_ft"] > 0 else 0.0
+    return out
+
+
+def thin_bed_issue(zone_name: str, stats: dict, width_ft: float):
+    """``(text, severity)`` of the thin-bed message of one zone, or None when no bed is thin.
+
+    A warning when the thin beds are at least ``DECON_THIN_WARN_SHARE`` of the bed thickness or
+    more than half of the beds; otherwise info.
+    """
+    n_thin, n_beds = int(stats["n_thin"]), int(stats["n_beds"])
+    if n_thin <= 0:
+        return None
+    warn = stats["share"] >= DECON_THIN_WARN_SHARE or n_thin * 2 > n_beds
+    text = (f"Deconvolution: {n_thin} of {n_beds} beds in {zone_name} "
+            f"{'is' if n_thin == 1 else 'are'} thinner than the response width ({width_ft:.1f} ft), "
+            f"{100.0 * stats['share']:.0f} % of the bed thickness. Thin beds are only partly "
+            "recovered: Rt stays low there and Sw is too high.")
+    if warn:
+        text += " Check them against the log or use the laminated-sand correction."
+    return text, "warning" if warn else "info"
+
+
 def decon_block(info: Optional[dict], guard_decisions: Optional[dict], has_labels: bool = True) -> Optional[dict]:
     """``summary["lrlc"]["decon"]`` from the derive's ``info`` and the guard decisions (None: no zone requested it)."""
     if not info or not info.get("zones"):

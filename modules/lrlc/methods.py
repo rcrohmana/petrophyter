@@ -325,7 +325,18 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
         limits=(
             "The result depends on both end-points and on a total porosity that is free of "
             "shale and gas effects. Samples outside the triangle are clamped to its edge and "
-            "counted. The classes are a screening aid, not a lithofacies log."
+            "counted. The classes are a screening aid, not a lithofacies log. For the "
+            "laminated-zone check of the shoulder-bed guard, shale beds that the tool resolves "
+            "are left out: a run of samples with Vsh at or above the shale threshold (the "
+            "Thomas-Stieber shale Vsh) that is at least one response width thick, plus a margin "
+            "of 3 ft on each side for the sand-shale transition, and a zone that keeps less than "
+            "10 percent of its thickness has no laminated population. The response width is the "
+            "deconvolution width setting of the well, used here even when the deconvolution is "
+            "off. In a thick shale bed Vlam equals Vsh by construction, so without this rule "
+            "interbedded sand and shale would read as laminated. Known gaps: shale with noise "
+            "or a Vsh below the threshold breaks the runs and the zone stays laminated, isolated "
+            "shale beds no thicker than the width in clean sand stay laminated, and the margin "
+            "removes up to 3 ft next to a resolved shale bed."
         ),
         refs=SHIPPED_METHODS["thomas_stieber"],
     ),

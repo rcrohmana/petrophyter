@@ -73,6 +73,20 @@
    "target": "diagnostics",
    "text": "8 net reservoir samples have no Swirr; the water-free flag was not evaluated there.",
    "zone": null
+  },
+  {
+   "code": "LRLC_DECON_THIN_BEDS",
+   "severity": "info",
+   "target": "lrlc.remediation.decon",
+   "text": "Deconvolution: 1 of 4 beds in Zone UPPER is thinner than the response width (4.0 ft), 7 % of the bed thickness. Thin beds are only partly recovered: Rt stays low there and Sw is too high.",
+   "zone": "UPPER"
+  },
+  {
+   "code": "LRLC_DECON_THIN_BEDS",
+   "severity": "info",
+   "target": "lrlc.remediation.decon",
+   "text": "Deconvolution: 2 of 6 beds in Zone LOWER are thinner than the response width (4.0 ft), 10 % of the bed thickness. Thin beds are only partly recovered: Rt stays low there and Sw is too high.",
+   "zone": "LOWER"
   }
  ],
  "lrlc": {

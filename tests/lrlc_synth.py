@@ -3,9 +3,9 @@
 Depth 1000 to 1900 ft in 0.5 ft steps, three zones.
 
 ``THIN``  clean thin sands (6 to 8 ft, 1.5 to 2 times the response width) between shales. The true
-          Rt of every bed is known. The zone has no Thomas-Stieber end-points: the guard classes
-          every zone with shale beds as laminated, so a classified THIN would block the
-          deconvolution. The deep curve is built by applying, in reverse physical order: connected pyrite (parallel
+          Rt of every bed is known. By default the zone has no Thomas-Stieber end-points; with
+          them the guard leaves the resolved shale beds out and does not class it laminated, so
+          the deconvolution still runs. The deep curve is built by applying, in reverse physical order: connected pyrite (parallel
           conductance), a small constant laminated shale fraction (parallel mixing with the shale
           resistivity), a one-step invasion profile (``forward_ra`` of the invasion tool) and, last, a
           Gaussian vertical response of 4 ft FWHM with 2 percent multiplicative noise. ``RM`` and
@@ -183,12 +183,13 @@ def build_chain_well(seed: int = 20261115) -> ChainWell:
 
 
 def lrlc_params(steps: Dict[str, list], fallback="nan", guard=True, marked=False,
-                decon: dict = None, extra_default: dict = None) -> dict:
+                decon: dict = None, extra_default: dict = None, thin_endpoints=False) -> dict:
     """The ``params["lrlc"]`` payload (as ``AppModel._lrlc_params`` builds it) for the chain well.
 
-    ``steps`` maps zone name to its ``rt_steps``. THIN has no Thomas-Stieber end-points (the guard
-    cannot classify it, because the shale beds of any section count as laminar there) and reads a
-    constant laminated fraction and pyrite volume; LAM and GOFF read Vlam from the Thomas-Stieber split.
+    ``steps`` maps zone name to its ``rt_steps``. By default THIN has no Thomas-Stieber end-points
+    (so the guard does not classify it); ``thin_endpoints=True`` gives it the well end-points, and
+    the guard then classifies it from its resolved shale beds. THIN reads a constant laminated
+    fraction and pyrite volume; LAM and GOFF read Vlam from the Thomas-Stieber split.
     """
     default = {**LRLC_PARAM_DEFAULTS, "rt_fallback": fallback, "phi_max": PHI_MAX,
                "phi_sh": PHI_SH, "dec_hires_source": "RXO", "dec_fwhm_ft": FWHM_FT,
@@ -198,8 +199,10 @@ def lrlc_params(steps: Dict[str, list], fallback="nan", guard=True, marked=False
     for name, _, _ in ZONES:
         row = {**default, "rt_steps": list(steps.get(name, []))}
         if name == "THIN":
-            row.update(phi_max=None, phi_sh=None, vlam_source="constant", vlam_const=VLAM_THIN, pyr_method="manual",
+            row.update(vlam_source="constant", vlam_const=VLAM_THIN, pyr_method="manual",
                        pyr_vpyr=VPYR_THIN, pyr_f=PYR_F, pyr_rpy=PYR_RPY)
+            if not thin_endpoints:
+                row.update(phi_max=None, phi_sh=None)
         zones[name] = row
     curves = {**CURVES, **({"RT_SBC": "RT"} if marked else {})}
     lrlc = {"enabled": True, "screening": {"use_gas_flag": True, "use_rs": True},

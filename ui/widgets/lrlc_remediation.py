@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 from modules.lrlc import chain
 from modules.lrlc.config import LRLC_RANGES, WELL_ONLY_KEYS, clean_param, resolve_lrlc
 from modules.lrlc.invasion import GENERIC_TOOLS
-from modules.lrlc.guard import blocked_text
+from modules.lrlc.guard import blocked_text, resolved_note
 from modules.lrlc.l2 import resolve_basis
 from modules.lrlc.methods import METHOD_TEXT
 from modules.lrlc.thomas_stieber import check_endpoints
@@ -1137,9 +1137,13 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
                 continue
             where = f"Zone {name}" if name else "the unzoned interval"
             laminated = bool(z.get("laminated"))
+            left_out = resolved_note(z)
             if laminated:
                 share = fmt(z.get("lam_share"), 2)
-                lines.append(f"{where}: laminated (laminar share {share}).")
+                extra = f"; {left_out}" if left_out else ""
+                lines.append(f"{where}: laminated (laminar share {share}{extra}).")
+            elif left_out:
+                lines.append(f"{where}: not laminated ({left_out}).")
             else:
                 lines.append(f"{where}: not laminated.")
             reasons = z.get("reasons") or {}

@@ -17,7 +17,7 @@ from modules.lrlc import l2
 from modules.lrlc.invasion import GENERIC_LABEL, resolve_tool
 from modules.lrlc.config import (
     AUX_ROLES, L2_PARAM_KEYS, L3_PARAM_KEYS, L4_PARAM_KEYS, LRLC_DEFAULTS, LRLC_PARAM_DEFAULTS)
-from modules.lrlc.decon_step import decon_block
+from modules.lrlc.decon_step import decon_block, thin_bed_issue, thin_bed_stats
 from modules.lrlc.movable import bvw, movable_zone_rows, water_free_flag
 from modules.lrlc.rt_cutoff import rt_cutoff, zone_scalar
 from modules.lrlc.screening import CRITERIA, criteria_counts, screen, unavailable_criteria, zone_table
@@ -210,6 +210,21 @@ def apply_lrlc_stage(calc, data, p, run: LrlcRun, *, rt_curve, zone_keys, sw_inp
                 run.cut_rows.append(row)
 
 
+def _decon_thin_beds(info: dict, dec_block: dict, warnings) -> None:
+    """One message per zone where the deconvolution ran and some beds are thinner than the width."""
+    width = float(dec_block["params"]["width_ft"])
+    stats = thin_bed_stats(info["result"].beds, info["depth"], info["keys"], info["active"], width)
+    for row in dec_block["zones"]:
+        if row["status"] != "ran":
+            continue
+        key = UNZONED if row["zone"] == WELL_ZONE else row["zone"]
+        issue = thin_bed_issue("the unzoned interval" if key == UNZONED else f"Zone {key}",
+                               stats.get(key) or {"n_thin": 0}, width)
+        if issue is not None:
+            warnings.add("LRLC_DECON_THIN_BEDS", issue[0], severity=issue[1],
+                         zone=None if key == UNZONED else key)
+
+
 def _summary_params(resolved: dict) -> dict:
     """The resolved ladder for the summary: 2.6, 2.7 and 2.8 keys only where they differ from built-in.
 
@@ -396,6 +411,7 @@ def lrlc_summary(run: LrlcRun, results: pd.DataFrame, rt, vsh, phie, labels, dz,
     dec_block = decon_block(run.decon_info, run.guard_decisions, run.has_labels)
     if dec_block is not None:
         out["decon"] = dec_block
+        _decon_thin_beds(run.decon_info, dec_block, warnings)
     if elastic is not None and elastic.ran:
         out["elastic"] = elastic.summary
     if cut_on:

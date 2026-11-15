@@ -82,6 +82,12 @@ GUARD_DEFAULTS: Dict[str, Any] = {
     "vlam_share": 0.50,
     "min_vlam": 0.05,
     "vsh_min": 0.10,
+    # Resolved shale beds (thick enough for the tool to see) are left out of the laminated
+    # check: the margin (ft) on each side, and the retained share of the zone below which
+    # the zone has no laminated population. Not shown in the UI; stored only when changed.
+    "exclude_resolved": True,
+    "edge_ft": 3.0,
+    "min_frac": 0.10,
 }
 
 DIAGNOSIS_DEFAULTS: Dict[str, Any] = {
@@ -165,7 +171,8 @@ BLOCK_RANGES: Dict[str, Dict[str, Tuple[float, float]]] = {
         "phi_min": (0.0, 0.2), "qv_max": (0.1, 20.0), "pair_tol_ft": (0.0, 5.0),
         "min_pairs": (2, 1000),
     },
-    "guard": {"vlam_share": (0.1, 0.95), "min_vlam": (0.0, 0.5), "vsh_min": (0.0, 0.5)},
+    "guard": {"vlam_share": (0.1, 0.95), "min_vlam": (0.0, 0.5), "vsh_min": (0.0, 0.5),
+              "edge_ft": (0.0, 10.0), "min_frac": (0.0, 0.5)},
     "diagnosis": {
         "min_n": (1, 10000), "bvw_cv_max": (0.0, 2.0), "rw_low": (0.001, 10.0),
         "contrast_low": (1.0, 100.0), "vpyr_flag": (0.0, 0.5), "pef_flag": (0.0, 20.0),

@@ -17,7 +17,7 @@ from modules.fingerprint import fingerprint_file
 from models.app_model import MERGE_GAP_RANGE, MERGE_STEP_RANGE, clamp_merge_value
 from modules.shf_config import merge_shf, shf_in_use
 from modules.lrlc.config import (
-    clean_curves, clean_well_lrlc, lrlc_in_use, lrlc_l2_configured, lrlc_l3_configured,
+    GUARD_DEFAULTS, clean_curves, clean_well_lrlc, lrlc_in_use, lrlc_l2_configured, lrlc_l3_configured,
     lrlc_l4_configured,
     merge_lrlc)
 from modules.uncertainty import UncertaintyConfig, config_from_dict, config_to_dict
@@ -191,6 +191,9 @@ def _clean_contacts(raw) -> Dict:
     if zones:
         out["zones"] = zones
     return out
+
+
+GUARD_UNSAVED_AT_DEFAULT = ("exclude_resolved", "edge_ft", "min_frac")
 
 
 def session_version_for(project_or_model) -> str:
@@ -1288,4 +1291,11 @@ class SessionService(QObject):
                 data["shf"].pop("fluids_confirmed", None)
         if project is not None and lrlc_in_use(project):
             data["lrlc"] = copy.deepcopy(project.lrlc)
+            guard = data["lrlc"].get("guard")
+            if isinstance(guard, dict):
+                # A guard key still at its default is not written, so a session that never
+                # touched it reads the same as before the key existed.
+                for key in GUARD_UNSAVED_AT_DEFAULT:
+                    if key in guard and guard[key] == GUARD_DEFAULTS[key]:
+                        del guard[key]
         return _json_safe(data)

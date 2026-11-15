@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from modules.lrlc.config import LRLC_PARAM_DEFAULTS, LRLC_RANGES
+from modules.lrlc.guard import resolved_note
 from modules.lrlc.decon import (
     GENERIC_LABEL,
     GENERIC_RESPONSES,
@@ -668,6 +669,13 @@ class DeconMixin:
         names = [z.get("zone") for z in guard.get("zones", [])
                  if z.get("laminated") and (self.zone is None or z.get("zone") == self.zone)]
         lines = []
+        for z in guard.get("zones", []):
+            if (z.get("class_changed") and not z.get("laminated")
+                    and (self.zone is None or z.get("zone") == self.zone)):
+                name = z.get("zone")
+                lines.append(f"{f'Zone {name}' if name else 'the unzoned interval'}: "
+                             f"{resolved_note(z)}, so it is not laminated and the guard does not "
+                             "block Deconvolution there.")
         if names:
             where = ", ".join(f"Zone {n}" if n else "the unzoned interval" for n in names)
             if enabled:

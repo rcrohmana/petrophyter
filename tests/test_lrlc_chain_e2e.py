@@ -111,6 +111,29 @@ def test_issue_codes_of_the_thin_zone(main):
     assert "LRLC_GUARD_NO_TS" in found
 
 
+def test_thin_zone_with_endpoints_is_classified_and_still_runs_the_deconvolution(well, main):
+    """Resolved shale beds between the sands no longer make THIN laminated."""
+    r0, _ = main
+    r, s = run(well, thin_endpoints=True)
+    thin = well.zone_mask("THIN")
+    zones = {z["zone"]: z for z in s["lrlc"]["decon"]["zones"]}
+    assert zones["THIN"]["status"] == "ran"
+    assert r["RT_DECON"][thin].notna().mean() > 0.9
+    guard = {z["zone"]: z for z in s["lrlc"]["guard"]["zones"]}
+    assert guard["THIN"]["laminated"] is False and guard["THIN"]["resolved_ft"] > 50.0
+    assert guard["THIN"]["class_changed"] is True
+    assert s["lrlc"]["guard"]["resolved_beds_left_out"] is True
+    assert not [i for i in s["issues"] if i["code"] == "LRLC_GUARD_NO_TS"
+                and "THIN" in i["text"]]
+    assert not [i for i in s["issues"] if i["code"] in ("LRLC_GUARD_BLOCKED", "LRLC_GUARD_HINT")
+                and "THIN" in i["text"]]
+    # the deconvolved Rt is the one the run without end-points gives
+    np.testing.assert_allclose(r["RT_DECON"].to_numpy()[thin], r0["RT_DECON"].to_numpy()[thin],
+                               equal_nan=True)
+    # LAM stays laminated (the laminations are not resolved shale beds)
+    assert guard["LAM"]["laminated"] is True and "resolved_ft" not in guard["LAM"]
+
+
 # ---- LAM: the guard drops the deconvolution; the laminated step recovers the truth ---------
 def test_guard_drops_decon_in_laminated_zones(well, main):
     r, s = main

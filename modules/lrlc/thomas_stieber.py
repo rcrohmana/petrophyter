@@ -225,19 +225,99 @@ def propose_endpoints(vsh, phit, depth, zone_labels, settings) -> Dict[str, Prop
     return out
 
 
-def zone_stats(vsh, vlam, ts_class, dz, zone_labels, vsh_min) -> Dict[str, dict]:
-    """Per zone ``{"lam_share", "mean_vlam", "n", "class_counts"}`` over samples with
-    ``Vsh >= vsh_min`` and finite VLAM (thickness weighted by ``dz``)."""
+def resolved_runs(vsh, depth, dz, keys, shale_vsh, min_run_ft, gap_factor=1.5) -> np.ndarray:
+    """True for samples inside a resolved shale bed.
+
+    A bed is a run of consecutive samples (in depth order, inside one zone) with
+    ``Vsh >= shale_vsh`` that is at least ``min_run_ft`` thick (sum of ``dz``). A depth gap
+    larger than ``gap_factor`` times the median step, a zone change or a missing Vsh ends a run.
+    Thinner shale runs are not resolved by the tool and stay in the statistic.
+    """
+    n = len(vsh)
+    out = np.zeros(n, dtype=bool)
+    if n == 0:
+        return out
+    order = np.argsort(depth, kind="stable")
+    steps = np.abs(np.diff(depth[order]))
+    steps = steps[np.isfinite(steps)]
+    step = float(np.median(steps)) if len(steps) else 0.0
+    shale = np.isfinite(vsh) & (vsh >= float(shale_vsh))
+    i = 0
+    while i < n:
+        a = order[i]
+        if not shale[a]:
+            i += 1
+            continue
+        j = i
+        while (j + 1 < n and shale[order[j + 1]] and keys[order[j + 1]] == keys[a]
+               and abs(depth[order[j + 1]] - depth[order[j]]) <= gap_factor * step):
+            j += 1
+        idx = order[i:j + 1]
+        if float(np.nansum(dz[idx])) >= float(min_run_ft) - 1e-9:
+            out[idx] = True
+        i = j + 1
+    return out
+
+
+def widen_mask(mask, depth, keys, edge_ft) -> np.ndarray:
+    """``mask`` plus every sample of the same zone within ``edge_ft`` of a marked sample."""
+    out = mask.copy()
+    if edge_ft <= 0 or not mask.any():
+        return out
+    order = np.argsort(depth, kind="stable")
+    d, m, kz = depth[order], mask[order], keys[order]
+    pos = np.flatnonzero(m)
+    # contiguous marked stretches (in depth order) are widened as one interval
+    starts = pos[np.concatenate(([True], np.diff(pos) > 1))]
+    ends = pos[np.concatenate((np.diff(pos) > 1, [True]))]
+    for a, b in zip(starts, ends):
+        lo = np.searchsorted(d, d[a] - edge_ft - 1e-9, "left")
+        hi = np.searchsorted(d, d[b] + edge_ft + 1e-9, "right")
+        sel = kz[lo:hi] == kz[a]
+        out[order[lo:hi][sel]] = True
+    return out
+
+
+def zone_stats(vsh, vlam, ts_class, dz, zone_labels, vsh_min, depth=None, resolved=None
+               ) -> Dict[str, dict]:
+    """Per zone ``{"lam_share", "mean_vlam", "n", "class_counts", ...}`` over samples with
+    ``Vsh >= vsh_min`` and finite VLAM (thickness weighted by ``dz``).
+
+    ``resolved`` (with ``depth``) leaves the resolved shale beds out of the statistic and of
+    ``class_counts``: ``{"shale_vsh", "run_ft", "edge_ft", "min_frac"}``. In a resolved shale bed
+    the laminar line gives Vlam = Vsh, so interbedded sand and shale would otherwise read as
+    laminated; a ``edge_ft`` margin on each side removes the sand/shale ramp the logs smear
+    across the boundary, and a zone whose retained thickness is below ``min_frac`` of its
+    thickness has no laminated population. Extra keys: ``excluded_ft`` (thickness of the
+    resolved beds), ``emptied`` (the rule left no sample of a zone that had some),
+    ``lam_share_all`` and ``mean_vlam_all`` (the statistic without the rule, only when beds were
+    left out). Without ``depth`` or ``resolved`` the rule is off.
+    """
     vsh = np.asarray(vsh, dtype=float)
     vlam = np.asarray(vlam, dtype=float)
     cls = np.asarray(ts_class)
     n = len(vsh)
     dz = np.broadcast_to(np.asarray(dz, dtype=float), (n,))
     keys = _group_keys(zone_labels, n)
+    runs = drop = None
+    if resolved and depth is not None:
+        depth = np.asarray(depth, dtype=float)
+        runs = resolved_runs(vsh, depth, dz, keys, resolved["shale_vsh"], resolved["run_ft"])
+        drop = widen_mask(runs, depth, keys, float(resolved["edge_ft"]))
     out: Dict[str, dict] = {}
     for zone in _unique(keys):
         m = keys == zone
-        use = m & np.isfinite(vsh) & np.isfinite(vlam) & np.isfinite(dz) & (vsh >= float(vsh_min))
+        base = m & np.isfinite(vsh) & np.isfinite(vlam) & np.isfinite(dz) & (vsh >= float(vsh_min))
+        use = base
+        excluded_ft, emptied, counted = 0.0, False, m
+        if drop is not None:
+            excluded_ft = float(dz[m & runs & np.isfinite(dz)].sum())
+            use = base & ~drop
+            counted = m & ~drop
+            total = float(dz[m & np.isfinite(vsh) & np.isfinite(dz)].sum())
+            if total > 0 and float(dz[use].sum()) / total < float(resolved["min_frac"]):
+                use = np.zeros(n, dtype=bool)
+            emptied = bool(base.any()) and not use.any()
         w = dz[use]
         den = float((vsh[use] * w).sum())
         wsum = float(w.sum())
@@ -247,6 +327,17 @@ def zone_stats(vsh, vlam, ts_class, dz, zone_labels, vsh_min) -> Dict[str, dict]
             "lam_share": lam_share,
             "mean_vlam": mean_vlam,
             "n": int(use.sum()),
-            "class_counts": {c: int((m & (cls == c)).sum()) for c in range(6)},
+            "class_counts": {c: int((counted & (cls == c)).sum()) for c in range(6)},
         }
+        if drop is not None:
+            out[zone]["excluded_ft"] = excluded_ft
+            out[zone]["emptied"] = emptied
+            if excluded_ft > 0 or emptied:
+                w0 = dz[base]
+                den0 = float((vsh[base] * w0).sum())
+                ws0 = float(w0.sum())
+                out[zone]["lam_share_all"] = (float((vlam[base] * w0).sum() / den0)
+                                              if den0 > 0 else float("nan"))
+                out[zone]["mean_vlam_all"] = (float((vlam[base] * w0).sum() / ws0)
+                                              if ws0 > 0 else float("nan"))
     return out
