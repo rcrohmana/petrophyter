@@ -10,7 +10,7 @@ from scipy.ndimage import gaussian_filter1d
 
 from modules.lrlc import decon
 from modules.lrlc.decon import (GENERIC_LABEL, GENERIC_RESPONSES, REFS, DeconParams, apply_edits, deconvolve,
-                                doll_gz, doll_table, pick_beds, response_weights)
+                                doll_cumulative, doll_gz, pick_beds, response_weights)
 
 FWHM = 4.0
 
@@ -123,29 +123,58 @@ def test_gaussian_half_maximum_at_half_fwhm():
     assert g(-FWHM / 2) == pytest.approx(g(FWHM / 2), rel=1e-9)
 
 
-def test_doll_response_checks():
+def _numerical_doll_gz(z, L):
+    """Integral over rho of the unit-loop geometric factor (L / 2) rho^3 / (rho_T^3 rho_R^3), by quadrature."""
+    def f(rho):
+        rho_t = np.sqrt(rho * rho + (z + L / 2.0) ** 2)
+        rho_r = np.sqrt(rho * rho + (z - L / 2.0) ** 2)
+        return (L / 2.0) * rho ** 3 / (rho_t ** 3 * rho_r ** 3)
+    knots = sorted({abs(z + L / 2.0), abs(z - L / 2.0)})
+    pieces = [0.0] + [k for k in knots if k > 0.0] + [np.inf]
+    return sum(quad(f, lo, hi, limit=400, epsabs=0, epsrel=1e-11)[0]
+               for lo, hi in zip(pieces[:-1], pieces[1:]))
+
+
+def test_doll_response_is_the_closed_form_of_the_geometric_factor():
     L = 3.333
-    table = doll_table(L, half_range=50.0)
-    assert table["raw_area"] == pytest.approx(1.0, abs=1e-3)
-    assert float(doll_gz([0.0], L)[0]) == pytest.approx(1.0 / (2.0 * L), rel=1e-3)
-    # never sampled at the singular points z = +/-L/2
-    assert np.min(np.abs(np.abs(table["centres"]) - L / 2.0)) > 0.4 * L / decon.DOLL_CELLS_PER_L
-    # agrees with direct quadrature at a point off the singularity
-    z = 0.7 * L
-    a, b = z + L / 2, z - L / 2
-    f = lambda r: (L * L / np.pi) * r * r / ((r * r + a * a) ** 1.5 * (r * r + b * b) ** 1.5)
-    ref = quad(f, 0, abs(a), limit=200)[0] + quad(f, abs(a), np.inf, limit=200)[0]
-    assert float(doll_gz([z], L)[0]) == pytest.approx(ref, rel=1e-6)
-    assert doll_table(L, half_range=50.0) is table                  # cached by L
+    for ratio in (0.0, 0.25, 0.4, 0.75, 1.0, 2.0, 5.0):
+        z = ratio * L
+        closed = float(doll_gz([z], L)[0])
+        assert closed == pytest.approx(_numerical_doll_gz(z, L), rel=1e-7), ratio
+        assert closed == pytest.approx(1.0 / (2.0 * L) if ratio <= 0.5 else L / (8.0 * z * z))
+    # close to the coils on both sides, never on them
+    for z in (L / 2.0 * (1 - 1e-3), L / 2.0 * (1 + 1e-3)):
+        assert float(doll_gz([z], L)[0]) == pytest.approx(_numerical_doll_gz(z, L), rel=1e-6)
+    # flat inside the coil span, even in z, and finite on the coils
+    inside = doll_gz([-1.5, -0.4, 0.0, 0.4, 1.5], L)
+    assert np.allclose(inside, 1.0 / (2.0 * L))
+    assert np.isfinite(doll_gz([L / 2.0, -L / 2.0], L)).all()
+
+
+def test_doll_response_has_area_one_and_a_consistent_cumulative():
+    L = 3.333
+    assert quad(lambda z: float(doll_gz([z], L)[0]), -np.inf, -L / 2.0)[0]         + quad(lambda z: float(doll_gz([z], L)[0]), L / 2.0, np.inf)[0]         + float(doll_gz([0.0], L)[0]) * L == pytest.approx(1.0, abs=1e-9)
+    z = np.array([-np.inf, -50.0, -2.0, -L / 2.0, 0.0, 0.3, L / 2.0, 4.0, 60.0, np.inf])
+    G = doll_cumulative(z, L)
+    assert G[0] == 0.0 and G[-1] == 1.0 and np.all(np.diff(G) >= 0.0)
+    assert G[4] == pytest.approx(0.5)
+    assert doll_cumulative([1.7], L)[0] == pytest.approx(
+        0.5 + quad(lambda t: float(doll_gz([t], L)[0]), 0.0, 1.7)[0], abs=1e-9)
+    assert doll_cumulative([7.0], L)[0] == pytest.approx(
+        0.75 + quad(lambda t: float(doll_gz([t], L)[0]), L / 2.0, 7.0)[0], abs=1e-9)
 
 
 def test_doll_weights_sum_to_one_and_resolve_thick_bed():
     z = np.linspace(-30.0, 130.0, 641)
     w = response_weights(z, [0.0, 50.0], [50.0, 100.0], 0.0, kind="doll", doll_l_ft=3.333)
     interior = (z > 15.0) & (z < 85.0)
-    assert np.allclose(w[interior].sum(axis=1), 1.0, atol=2e-3)
+    # the response has a 1 / z^2 tail, so a bed pair 100 ft thick misses the share beyond its two ends
+    zi = z[interior]
+    assert np.allclose(w[interior].sum(axis=1), 1.0 - 3.333 / (8.0 * zi) - 3.333 / (8.0 * (100.0 - zi)), atol=1e-9)
+    ends = response_weights(z, [-np.inf, 0.0, 50.0], [0.0, 50.0, np.inf], 0.0, kind="doll", doll_l_ft=3.333)
+    assert np.allclose(ends.sum(axis=1), 1.0, atol=1e-12)
     assert np.all(w >= -1e-9)
-    assert w[np.argmin(np.abs(z - 25.0)), 0] > 0.97
+    assert w[np.argmin(np.abs(z - 25.0)), 0] > 0.96
     with pytest.raises(ValueError):
         response_weights(z, [0.0], [1.0], 4.0, kind="doll")
 
@@ -530,7 +559,7 @@ def test_doll_response_deconvolves_too():
     p = DeconParams(response="doll", doll_spacing_ft=3.333, lam=1e-4, noise_rel=0.01)
     r = _run(z, rt, ref, _exact(p, z, ref, edges))
     err = np.abs(r.rt_decon[r.valid] / rts[bed][r.valid] - 1.0)
-    assert r.valid.sum() > 0.8 * z.size and np.percentile(err, 95) < 0.03
+    assert r.valid.sum() > 0.8 * z.size and np.percentile(err, 95) < 0.05
 
 
 # ---------------------------------------------------------------------------

@@ -896,7 +896,7 @@ w_k(z) = Φ((z − t_k) / s) − Φ((z − b_k) / s),    s = FWHM / 2.3548
 
 `σ_a` is the apparent conductivity read by the deep curve at depth `z`, `σ_k` the true conductivity of bed `k`, `w_k(z)` the share of the response at `z` that comes from bed `k` (the weights sum to 1 where the beds cover the response), `Φ` the standard normal cumulative distribution, and FWHM the vertical resolution of the deep curve that you enter. Induction tools respond approximately linearly in conductivity, so the model is a linear map; the laterolog response is not linear, and for a laterolog preset the page says the Gaussian blur is only an approximation.
 
-**Doll response (optional).** Instead of the Gaussian, `w_k(z) = G(z − t_k) − G(z − b_k)`, where `G` is the cumulative vertical geometric factor of a two-coil sonde of spacing `L` (coil spacing, default 3.333 ft), tabulated numerically. **The formula is offered as is and is marked *to verify*: it has not yet been checked against the original paper (Doll, 1949).**
+**Doll response (optional).** Instead of the Gaussian, `w_k(z) = G(z − t_k) − G(z − b_k)`, where `G` is the cumulative vertical geometric factor of a two-coil sonde of spacing `L` (coil spacing, default 3.333 ft), in closed form: `g(z) = 1 / (2 L)` for `|z| ≤ L / 2` and `L / (8 z²)` outside, with `z` from the sonde midpoint and area 1. The response is the closed form of the two-coil geometric factor, checked against its numerical integral; the original paper (Doll, 1949) was not consulted. Its tail falls as `1 / z²`, so it is much longer than the Gaussian tail.
 
 ### Bed boundaries
 

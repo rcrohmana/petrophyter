@@ -254,7 +254,8 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "w_k(z) = Phi((z - t_k) / s) - Phi((z - b_k) / s),   s = FWHM / 2.3548\n"
             "minimise |A x - 1|^2 + lambda |x - 1|^2   with   1/R <= x_k <= R\n"
             "Doll option: w_k(z) = G(z - t_k) - G(z - b_k), G the cumulative vertical\n"
-            "    geometric factor of a two-coil sonde of spacing L (formula to verify)"
+            "    geometric factor of a two-coil sonde of spacing L, g = dG/dz:\n"
+            "    g(z) = 1 / (2 L) for |z| <= L / 2, L / (8 z^2) outside"
         ),
         assumptions=(
             "Horizontal, homogeneous beds; the tool reads a linear, depth-invariant weighted sum of "
@@ -265,7 +266,8 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "tool: confirm the width against the chart book of the tool that was run. "
             "The result depends on the width: the line under the result shows how the median Rt "
             "increase moves when the width is 20 percent smaller or 25 percent larger. "
-            "The Doll formula is marked to verify against the 1949 paper."
+            "The Doll response is the closed form of the two-coil geometric factor, checked against its "
+            "numerical integral; the original paper was not consulted."
         ),
         limits=(
             "Ignored: skin effect, dip and high-angle geometry, resistivity anisotropy, borehole "

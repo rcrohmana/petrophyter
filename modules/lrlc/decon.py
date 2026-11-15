@@ -6,7 +6,8 @@ Forward model, horizontal beds ``k`` with tops ``t_k`` < bottoms ``b_k`` (depth 
     w_k(z)     = integral_{t_k}^{b_k} g(z - z') dz'          (g >= 0, integral g = 1)
 
 Gaussian response: ``w_k(z) = Phi((z - t_k) / s) - Phi((z - b_k) / s)``, ``s = FWHM / 2.3548``.
-Doll response: the vertical geometric factor of a two-coil sonde, tabulated numerically (formula to verify).
+Doll response: the closed form of the vertical geometric factor of a two-coil sonde,
+checked against the numerical integral (the original paper was not consulted).
 
 Bed boundaries come from a high-resolution reference curve (peaks of the smoothed derivative), the bed
 conductivities from a regularised bounded least-squares solve (or a multiplicative iteration) window by
@@ -45,8 +46,6 @@ GENERIC_RESPONSES: Dict[str, dict] = {
 
 FWHM_TO_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))   # 2.3548
 MAX_BEDS_PER_WINDOW = 150
-DOLL_HALF_RANGE = 20.0       # table covers |z| <= 20 L
-DOLL_CELLS_PER_L = 200       # table step L / 200
 LAM_RANGE = (-4.0, 0.0)      # log10 of the automatic Tikhonov weight
 LAM_EVALS = 6
 LAM_FALLBACK = 1e-4
@@ -194,71 +193,31 @@ class DeconResult:
 # ---------------------------------------------------------------------------
 # Vertical response
 # ---------------------------------------------------------------------------
-_DOLL_CACHE: Dict[float, dict] = {}
-
-
 def doll_gz(z, doll_l_ft: float) -> np.ndarray:
-    """Doll vertical response ``g_z(z)``, integral over rho of the unit-volume geometric factor.
+    """Doll vertical response ``g_z(z)`` of a two-coil sonde of spacing ``L``, area 1.
 
-    Has an integrable logarithmic singularity at ``z = +/-L/2``: never call it exactly there.
+    Closed form of the two-coil geometric factor (``z`` from the sonde midpoint)::
+
+        g_z = 1 / (2 L)        for |z| <= L / 2
+        g_z = L / (8 z^2)      for |z| >  L / 2
+
+    It is the integral over the radius of the unit-loop geometric factor
+    ``(L / 2) rho^3 / (rho_T^3 rho_R^3)``, checked against that numerical integral. The original paper was not
+    consulted.
     """
     L = float(doll_l_ft)
-    z = np.atleast_1d(np.asarray(z, dtype=float))
-    u = np.linspace(np.log(1e-8 * L), np.log(1e4 * L), 1500)
-    rho = np.exp(u)
-    rho2 = rho * rho
-    out = np.empty(z.size)
-    for start in range(0, z.size, 400):
-        zc = z[start:start + 400, None]
-        a2 = rho2[None, :] + (zc + L / 2.0) ** 2
-        b2 = rho2[None, :] + (zc - L / 2.0) ** 2
-        f = rho2[None, :] * rho[None, :] / (a2 * np.sqrt(a2) * b2 * np.sqrt(b2))
-        out[start:start + 400] = np.trapezoid(f, u, axis=1) if hasattr(np, "trapezoid") else np.trapz(f, u, axis=1)
-    return out * (L * L / np.pi)
+    z = np.abs(np.atleast_1d(np.asarray(z, dtype=float)))
+    outside = np.maximum(z, L / 2.0)
+    return np.where(z <= L / 2.0, 1.0 / (2.0 * L), L / (8.0 * outside * outside))
 
 
-def _singular_cell_mass(L: float, edge_pos: float, direction: float, dz: float) -> float:
-    """Mass of the cell next to a singular point (``edge_pos = +/-L/2``) by dyadic grading toward the singularity."""
-    nodes, weights = np.polynomial.legendre.leggauss(4)
-    depth = 14
-    total = 0.0
-    for j in range(depth + 1):
-        far, near = dz * 0.5 ** j, dz * 0.5 ** (j + 1)
-        x = 0.5 * (far + near) + 0.5 * (far - near) * nodes          # distance from the singular point
-        total += 0.5 * (far - near) * float(np.sum(weights * doll_gz(edge_pos + direction * x, L)))
-    tail = dz * 0.5 ** (depth + 1)
-    return total + tail * float(doll_gz([edge_pos + direction * tail / 2.0], L)[0])
-
-
-def doll_table(doll_l_ft: float, half_range: float = DOLL_HALF_RANGE) -> dict:
-    """Cumulative Doll response ``G_z`` on ``|z| <= half_range * L`` (cell step L/200, midpoint cells, cached by L).
-
-    Cells next to the log singularities at ``z = +/-L/2`` are graded toward the singular point; no value is ever
-    computed at the singular point itself. Returns ``edges``, ``G`` (renormalised to 1 at +inf), ``centres``, ``gz``
-    (values at the cell centres), ``mass`` (cell integrals) and ``raw_area`` (the integral before renormalisation).
-    """
-    key = (round(float(doll_l_ft), 9), float(half_range))
-    cached = _DOLL_CACHE.get(key)
-    if cached is not None:
-        return cached
+def doll_cumulative(z, doll_l_ft: float) -> np.ndarray:
+    """Cumulative Doll response ``G_z(z)``, the integral of :func:`doll_gz` from minus infinity (0 to 1, exact)."""
     L = float(doll_l_ft)
-    dz = L / DOLL_CELLS_PER_L
-    n_half = int(round(half_range * DOLL_CELLS_PER_L))
-    positive = (np.arange(n_half) + 0.5) * dz
-    gz_pos = doll_gz(positive, L)
-    mass_pos = gz_pos * dz
-    k_edge = DOLL_CELLS_PER_L // 2                  # cell index whose upper edge is L/2 is k_edge - 1
-    mass_pos[k_edge - 1] = _singular_cell_mass(L, L / 2.0, -1.0, dz)
-    mass_pos[k_edge] = _singular_cell_mass(L, L / 2.0, 1.0, dz)
-    mass = np.concatenate([mass_pos[::-1], mass_pos])
-    gz = np.concatenate([gz_pos[::-1], gz_pos])
-    centres = np.concatenate([-positive[::-1], positive])
-    edges = np.concatenate([[-n_half * dz], centres + dz / 2.0])
-    cum = np.concatenate([[0.0], np.cumsum(mass)])
-    raw = float(cum[-1])
-    table = {"edges": edges, "G": cum / raw, "centres": centres, "gz": gz, "mass": mass, "raw_area": raw}
-    _DOLL_CACHE[key] = table
-    return table
+    z = np.asarray(z, dtype=float)
+    far = np.maximum(np.abs(z), L / 2.0)                     # distance used outside the coil span only
+    tail = L / (8.0 * far)
+    return np.where(np.abs(z) <= L / 2.0, 0.5 + z / (2.0 * L), np.where(z > 0.0, 1.0 - tail, tail))
 
 
 def response_weights(z, tops, bottoms, fwhm_ft, kind="gaussian", doll_l_ft=None) -> np.ndarray:
@@ -269,9 +228,7 @@ def response_weights(z, tops, bottoms, fwhm_ft, kind="gaussian", doll_l_ft=None)
     if kind == "doll":
         if doll_l_ft is None or doll_l_ft <= 0:
             raise ValueError("doll response needs doll_l_ft > 0")
-        table = doll_table(doll_l_ft)
-        edges, cum = table["edges"], table["G"]
-        return np.interp(z - tops, edges, cum) - np.interp(z - bottoms, edges, cum)
+        return doll_cumulative(z - tops, doll_l_ft) - doll_cumulative(z - bottoms, doll_l_ft)
     if kind != "gaussian":
         raise ValueError(f"unknown response {kind!r}")
     s = float(fwhm_ft) / FWHM_TO_SIGMA

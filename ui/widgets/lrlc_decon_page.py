@@ -55,7 +55,7 @@ DEC_COMBOS = {
                  ("laterolog_deep_2ft", "Deep laterolog, 2 ft"),
                  ("dual_induction_deep_8ft", "Deep dual induction, 8 ft"),
                  ("custom", "Custom")),
-    "dec_response": (("gaussian", "Gaussian"), ("doll", "Doll geometric factor (to verify)")),
+    "dec_response": (("gaussian", "Gaussian"), ("doll", "Doll geometric factor")),
     "dec_solver": (("lsq", "Regularised least squares"), ("mult", "Multiplicative iteration")),
     "dec_output": (("blocky", "Bed values (blocky)"),
                    ("residual", "Bed values with the fit residual")),
