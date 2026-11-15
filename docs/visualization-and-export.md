@@ -82,7 +82,7 @@ Merged data can also be downloaded as LAS (`.las`).
 
 The Excel workbook gets two more sheets when a Monte Carlo result exists; without one, the workbook is as before. A result that is out of date is exported as it is, with the stale flag set in the header. CSV and LAS exports are unchanged.
 
-- **Uncertainty sheet.** A header block gives the seed, N, sampling, the exceedance convention (*P90 = low case, exceeded with 90% probability*), the parameters that are not varied (porosity, shale point, GR baseline), and whether the result is out of date. The table has one row for each metric of the field, each well, and each well and zone, with the columns Scope, Metric, P90, P50, P10, Mean, Std, Min, Max, N valid, P(zero) and Deterministic.
+- **Uncertainty sheet.** A header block gives the seed, N, sampling, the exceedance convention (*P90 = low case, exceeded with 90% probability*), the parameters that are not varied (porosity inputs: densities, shale point, NPHI matrix and gas correction; GR baseline; temperature; depth), and whether the result is out of date. The table has one row for each metric of the field, each well, and each well and zone, with the columns Scope, Metric, P90, P50, P10, Mean, Std, Min, Max, N valid, P(zero) and Deterministic.
 - **Tornado sheet.** One row for each parameter, with its mode, the low and high input (numeric offsets, plus a text column for each that adds the percent sign or unit), the output at each, the swing and the rank correlation with the field metric.
 
 A well named *Uncertainty* or *Tornado* gets a numbered sheet name such as *Uncertainty (2)*, so it never collides with these sheets.

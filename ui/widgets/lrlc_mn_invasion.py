@@ -444,7 +444,9 @@ class MnInvasionMixin:
         preset = flat.get("lithology_preset") or "unknown"
         if self._read_widget("m_model") == "shell":
             if preset == SHELL_PRESET:
-                text, status = f"Zone preset: {preset}. Shell is evaluated.", "success"
+                text, status = (f"Zone preset: {preset}. Shell is evaluated. Borai (1987) found the "
+                                "opposite trend in tight carbonates; check m against core.",
+                                "success")
             elif self._read_widget("shell_confirm"):
                 text, status = (f"Zone preset: {preset}, not {SHELL_PRESET}. Shell is evaluated "
                                 "because you confirmed it for this zone.", "warning")

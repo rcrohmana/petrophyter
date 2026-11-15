@@ -96,6 +96,12 @@ LAMINATED_ROWS = (
     ("s_warn", "Sensitivity warning limit (s)", 2, 0.05, ""),
     ("s_invalid", "Sensitivity invalid limit (s)", 2, 0.05, ""),
 )
+LAMINATED_STEP_TIP = (
+    "One Rsh is used for the whole zone, so the shale laminae are assumed to look like the "
+    "thick shale; shale anisotropy is not modelled. Set Rsh from a shale in the zone.")
+SHALE_PEF_TIP = (
+    "Shales read about 3 to 3.5 b/e, higher with iron-bearing minerals. The default 3.42 is an "
+    "average; set it from a shale interval in this well.")
 PYRITE_ROWS = (
     ("pyr_vpyr", "Constant VPYR (v/v)", 3, 0.01, ""),
     ("pyr_rho", "Pyrite density (g/cc)", 2, 0.05, ""),
@@ -467,6 +473,7 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
 
     def _build_laminated(self, v: QVBoxLayout):
         self._step_check(v, "laminated")
+        self.step_checks["laminated"].setToolTip(LAMINATED_STEP_TIP)
         self.ts_check = self._setting_check(
             v, "ts_enabled", "Compute Thomas-Stieber (laminar shale volume) on the next run")
         v.addWidget(subheading("End-points"))
@@ -515,6 +522,7 @@ class RemediationForm(MnInvasionMixin, DeconMixin, QWidget):
         left.addWidget(subheading("Matrix and shale end-points"))
         mat = make_form()
         self._rows(mat, self._row_slice(PYRITE_ROWS, "ma_rho", "ma_pef", "sh_rho", "sh_pef"))
+        self.controls["sh_pef"].setToolTip(SHALE_PEF_TIP)
         left.addLayout(mat)
         left.addStretch(1)
         self.pef_plot = PefRhobPlot()

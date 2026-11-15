@@ -33,14 +33,15 @@ _FIELDS = ("low", "mid", "high", "sd")
 RHO_PAIR = ("m", "n")
 _RHO_TIP = "Rank correlation between the m and n draws (0 = independent)"
 _RHO_OFF_TIP = _RHO_TIP + ". Ignored while m or n is not enabled."
-INFO_TEXT = ("Applied to every well and zone as a change of the resolved value. "
-             f"Not varied: {NOT_VARIED}.")
+INFO_TEXT = ("One draw per realisation is applied to every well and zone, so wells and zones "
+             "move together. " f"Not varied: {NOT_VARIED}.")
 
 
 def info_text(shf_pay: bool = False, lrlc: tuple = (), laminated: bool = False) -> str:
     """The page note; with saturation-height Sw used for pay it also names the SHF Sw as not varied,
     and ``lrlc`` the laminated-sand inputs held fixed (``laminated``: Rsh also moves the sand Rt)."""
-    text = ("Applied to every well and zone as a change of the resolved value. "
+    text = ("One draw per realisation is applied to every well and zone, so wells and zones "
+            "move together. "
             f"Not varied: {not_varied_text(shf_pay, lrlc)}.")
     return f"{text} {RSH_LAMINATED_NOTE}." if laminated else text
 

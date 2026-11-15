@@ -588,7 +588,9 @@ def test_inputs_are_not_mutated():
 # ---- sw_hold (SHF Sw held fixed for pay) -----------------------------------
 
 def test_not_varied_text_default_unchanged_and_shf_appended():
-    assert U.not_varied_text() == U.NOT_VARIED == "porosity, shale point, GR baseline"
+    assert U.not_varied_text() == U.NOT_VARIED == (
+        "porosity inputs (densities, shale point, NPHI matrix, gas correction), GR baseline, "
+        "temperature, depth")
     assert U.not_varied_text(shf_pay=True) == U.NOT_VARIED + ", SHF Sw where used for pay"
 
 

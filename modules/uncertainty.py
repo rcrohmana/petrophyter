@@ -79,7 +79,8 @@ NORMAL_TRUNCATION_SD = 3.0
 CONVERGENCE_TOLERANCE = 0.02   # half-sample percentiles within 2 % of P50
 
 # Inputs held at their base value in every realisation (stated in the result header and exports).
-NOT_VARIED = "porosity, shale point, GR baseline"
+NOT_VARIED = ("porosity inputs (densities, shale point, NPHI matrix, gas correction), GR baseline, "
+              "temperature, depth")
 NOT_VARIED_SHF = "SHF Sw where used for pay"
 
 

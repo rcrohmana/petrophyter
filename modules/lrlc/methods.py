@@ -361,7 +361,9 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "A relative error in Rt is amplified by 1 / (1 - s). Samples with s above the warning "
             "limit are counted and samples above the invalid limit are left empty. Where the "
             "shale volume is above the Hagiwara limit nothing is corrected. A curve that is "
-            "already shoulder-bed corrected or deconvolved is not raw Rt; use the raw deep curve."
+            "already shoulder-bed corrected or deconvolved is not raw Rt; use the raw deep curve. "
+            "One Rsh is used for the whole zone, so the shale laminae are assumed to look like "
+            "the thick shale; shale anisotropy is not modelled. Set Rsh from a shale in the zone."
         ),
         refs=SHIPPED_METHODS["laminated"],
     ),
@@ -395,7 +397,9 @@ METHOD_TEXT: Dict[str, MethodInfo] = {
             "Pyrite adds density and photoelectric absorption that a clean sand does not, so the "
             "volume is solved from RHOB and PEF with fixed end-points. Only the connected "
             "fraction f of the pyrite conducts; f and the pyrite resistivity Rpy are calibration "
-            "values for the field, not defaults to trust."
+            "values for the field, not defaults to trust. Shales read about 3 to 3.5 b/e, higher "
+            "with iron-bearing minerals; the default shale PEF of 3.42 is an average, so set it "
+            "from a shale interval in the well."
         ),
         limits=(
             "Barite mud, siderite, heavy minerals and a padded PEF raise PEF without pyrite. "

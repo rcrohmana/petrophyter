@@ -595,7 +595,7 @@ RT_SAND = Rsand = (1 − Vlam) × Rt / (1 − s)
 | Invalid | `s ≥ s_invalid` (default 0.95), or `Vlam ≥ 1` | empty, counted |
 | Sensitive | `s ≥ s_warn` (default 0.80), error amplified five times or more | value kept, counted and warned |
 
-Samples whose corrected Rt is still below Rsh are counted too. A step that gives an empty value follows the setting **When a step cannot produce a value** (see the chain above). Without a `Vlam` (Thomas-Stieber off or without end-points in the zone) the step returns nothing for the zone and says so. The correction is meant for the raw deep resistivity: a curve that is already shoulder-bed corrected or deconvolved is not raw Rt (see the guard below). References: Poupon, Loy and Tixier (1954); Hagiwara (1988, US patent 4,739,255); Hagiwara (1995, 1997).
+One Rsh is used for the whole zone, so the shale laminae are assumed to look like the thick shale; shale anisotropy is not modelled. Set Rsh from a shale in the zone. Samples whose corrected Rt is still below Rsh are counted too. A step that gives an empty value follows the setting **When a step cannot produce a value** (see the chain above). Without a `Vlam` (Thomas-Stieber off or without end-points in the zone) the step returns nothing for the zone and says so. The correction is meant for the raw deep resistivity: a curve that is already shoulder-bed corrected or deconvolved is not raw Rt (see the guard below). References: Poupon, Loy and Tixier (1954); Hagiwara (1988, US patent 4,739,255); Hagiwara (1995, 1997).
 
 ### Pyrite volume and the pyrite Rt correction
 
@@ -656,7 +656,7 @@ The basis is chosen per zone: **Automatic** uses the sand basis where the lamina
 
 Thomas-Stieber classifies each zone as **laminated** when, over the samples with `Vsh ≥ vsh_min` (default 0.10), the thickness-weighted laminar share of the shale volume `Σ(Vlam × dz) / Σ(Vsh × dz)` is at least `vlam_share` (0.50) and the thickness-weighted mean `Vlam` is at least `min_vlam` (0.05). A zone with no Thomas-Stieber result is not classified. The guard acts on laminated zones with these rules:
 
-1. **Vertical-resolution steps** (deconvolution, a step kind that does not ship in this version) are dropped from a laminated zone when the guard is on, and only warned about when it is off. Use the laminated-sand correction instead.
+1. **Vertical-resolution steps** (the Rt deconvolution, v1.14.0) are dropped from a laminated zone when the guard is on, and only warned about when it is off. Use the laminated-sand correction instead.
 2. **Marked curve.** When the mapped RT is declared shoulder-bed corrected (the check box in the Remediation panel) and the laminated-sand step is on in a laminated zone, everything is computed, a warning is raised and the zone is marked. The guard never makes a sample invalid. Map the raw deep RT instead.
 3. **Hint.** With the guard on, a laminated zone without the laminated-sand step gets a hint to consider it.
 4. A zone that is not classified is not blocked, and a warning says why.
@@ -743,7 +743,7 @@ n = d0 + d1 × Vsh                             (n from Vsh)   or   n = the n of 
 
 The coefficients are `m_coef = [c0, c1, c2, c3]` and `n_coef = [d0, d1]`. Their defaults are `[2.15, 0, 0, 0]` and `[2.0, 0]`, so switching a zone to **Curve** with the defaults gives the constant 2.15 and 2.0 and changes nothing until you enter or apply coefficients. The default `c0` does not follow the `m` of the zone; **Set c0 to the zone m** copies it. Allowed ranges: `c0` 0.5 to 5, `c1` −10 to 10, `c2` −3 to 3, `c3` −0.5 to 0.5, `d0` 1 to 4, `d1` −3 to 3.
 
-The porosity-and-clay form `c0 + c1 × φ + c2 × Vsh` is attributed to Guo et al. (2023) *(to verify)*. No published coefficients are shipped: you enter them or take them from the wet-point fit below. The `c3 / φ` term is there so that the Shell form can be written in the same formula.
+The porosity-and-clay form `c0 + c1 × φ + c2 × Vsh` is attributed to Guo et al. (2023). No published coefficients are shipped: you enter them or take them from the wet-point fit below. The `c3 / φ` term is there so that the Shell form can be written in the same formula.
 
 **Shell formula.** `m = 1.87 + 0.019 / φ` gives m = 2.25 at φ = 0.05, 2.06 at 0.10 and 1.965 at 0.20: m rises as porosity falls. It is meant for low-porosity carbonates and is evaluated only in zones whose lithology preset is **Carbonate**. In any other zone it is refused, the zone keeps its constant `m`, and the run warns, unless you tick **Use Shell in this zone although the preset is not Carbonate**; the formula is then used and the run notes that you confirmed it. **Caveat.** Borai (1987) discusses this formula and its limits, and reports that in the tight, low-porosity carbonates he studied offshore Abu Dhabi `m` *decreases* as porosity decreases, the opposite trend. Check the Shell formula against core before relying on it.
 
@@ -806,7 +806,7 @@ In a run with `m` and `n` curves, the offset drawn for `m` (or `n`) is added to 
 - A fit on bulk wet points is applied to the sand-lamina values in a zone that reads the sand basis; check that the two are consistent.
 - Core-derived `m` and `n` are not read; there is no import for them.
 
-References: Archie (1942); Pickett (1966); Borai (1987); Guo et al. (2023) *(to verify)*.
+References: Archie (1942); Pickett (1966); Borai (1987); Guo et al. (2023).
 
 ## Radial invasion correction *(v1.13.0)*
 

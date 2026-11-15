@@ -465,6 +465,8 @@ class UncertaintyTab(QWidget):
                            fontsize=8)
         ax.invert_yaxis()
         ax.set_xlabel(self.metric_combo.currentText())
+        ax.set_title("One parameter at a time, the others at base", fontsize=9,
+                     fontweight="normal")
         self.plot_tornado.refresh()
         rank = (getattr(r, "rank_corr", None) or {}).get(metric, {})
         rows = []

@@ -446,3 +446,10 @@ def test_save_merged_follows_the_active_well(window, qtbot, tmp_path, monkeypatc
     assert not window.actions_["save_merged"].isEnabled()
     window.model.set_active_well("WELL:A")
     assert window.actions_["save_merged"].isEnabled()
+
+
+def test_title_names_the_session_file_with_several_wells(two_wells):
+    window = two_wells
+    window.model.session_path = "C:/work/mysession.json"
+    window._refresh_window_title()
+    assert window.windowTitle() == "*mysession.json — BKS-02 · 2 wells — Petrophyter"

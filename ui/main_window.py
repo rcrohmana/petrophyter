@@ -577,7 +577,9 @@ class MainWindow(QMainWindow):
             name = os.path.basename(str(self.model.las_filename))
         if name and len(self.model.project) > 1:
             name = f"{name} · {len(self.model.project)} wells"
-        title = f"{name} — Petrophyter" if name else "Petrophyter"
+        session = os.path.basename(str(self.model.session_path)) if self.model.session_path else None
+        parts = [p for p in (session, name) if p]
+        title = " — ".join(parts + ["Petrophyter"])
         self.setWindowTitle(f"*{title}" if self.model.dirty else title)
 
     def _build_actions(self):

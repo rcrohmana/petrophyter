@@ -47,7 +47,7 @@ The radial invasion step can use the mud-filtrate resistivity `Rmf` as a lower b
 - **Units.** A resistivity must be in ohm.m (`OHMM`, `OHM.M`, `OHM-M` and similar spellings). A temperature in °C is converted to °F. A value with no unit is taken as ohm.m or °F and the Workbench says so. A value in any other unit is shown as not offered.
 - **Plausible range.** `Rmf` from 0.005 to 20 ohm.m and temperatures from 32 to 400 °F; a value outside it is not offered.
 - **`RM` in the header is the mud, not the curve.** The parser reads `RM` only from the header section. The `RM` *curve* (medium resistivity) is a different thing and is found from the curve names as before.
-- The mud resistivity and its temperature are read and kept with the well information, but no calculation uses them in this version. The header values are not part of the parameter hash, so loading a file never marks a well out of date.
+- The mud resistivity and its temperature are read and kept with the well information, but no calculation reads them by itself (the invasion page copies the header Rmf). The header values are not part of the parameter hash, so loading a file never marks a well out of date.
 
 ## Reading tops and core tables
 

@@ -166,6 +166,15 @@ def test_title_keeps_the_well_name(loaded):
     assert loaded.windowTitle() == "BKS-01 — Petrophyter"
 
 
+def test_title_names_the_session_file_once_it_exists(loaded):
+    loaded.model.mark_clean()
+    loaded.model.session_path = "C:/work/mysession.json"
+    loaded._refresh_window_title()
+    assert loaded.windowTitle() == "mysession.json — BKS-01 — Petrophyter"
+    loaded.model.mark_dirty()
+    assert loaded.windowTitle() == "*mysession.json — BKS-01 — Petrophyter"
+
+
 # ---- Save and Save As ----
 def test_save_as_action_exists_with_its_shortcut(window):
     assert window.actions_["save_session_as"].shortcut().toString() == "Ctrl+Shift+S"

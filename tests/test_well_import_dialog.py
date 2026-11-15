@@ -226,3 +226,13 @@ def test_tops_tvd_depth_needs_a_confirmation(qtbot, tmp_path):
     dialog.tvd_check.setChecked(True)
     dialog.tvd_check.clicked.emit(True)
     assert dialog.ok_button.isEnabled()
+
+
+def test_dialog_is_not_wider_than_the_screen(qtbot, tmp_path):
+    from PyQt6.QtGui import QGuiApplication
+
+    path = write(tmp_path, TOPS)
+    dialog = make(qtbot, path, [ref("BKS-01"), ref("BKS-02")])
+    avail = QGuiApplication.primaryScreen().availableGeometry()
+    assert dialog.width() <= avail.width()
+    assert dialog.height() <= avail.height()

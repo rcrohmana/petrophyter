@@ -181,7 +181,8 @@ class ZonesPanel(QWidget):
         else:
             self.status_label.setText(
                 "Causes are scored from the net reservoir samples of each zone; a cause is "
-                "probable at two thirds of its evaluable criteria and possible at one third.")
+                "probable at two thirds of its evaluable criteria and possible at one third. "
+                "The thresholds are design defaults; calibrate them per field.")
         self._select_row()
         self._render_detail()
         self._render_qv()

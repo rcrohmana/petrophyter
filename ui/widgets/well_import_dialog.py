@@ -80,7 +80,7 @@ class MultiWellImportDialog(QDialog):
 
         self.setWindowTitle(f"Assign {_TITLES[kind]}")
         self.setModal(True)
-        self.resize(1180, 680)
+        self._resize_to_screen(1180, 680)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -130,6 +130,16 @@ class MultiWellImportDialog(QDialog):
         layout.addWidget(buttons)
 
         self._populate()
+
+    def _resize_to_screen(self, width: int, height: int):
+        """Open at the wanted size, but never wider than 95 % or taller than 90 % of the screen."""
+        from PyQt6.QtGui import QGuiApplication
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            width = min(width, int(avail.width() * 0.95))
+            height = min(height, int(avail.height() * 0.90))
+        self.resize(width, height)
 
     def refresh_theme(self):
         self.ok_button.setIcon(get_icon("check"))
