@@ -50,6 +50,7 @@ DOLL_CELLS_PER_L = 200       # table step L / 200
 LAM_RANGE = (-4.0, 0.0)      # log10 of the automatic Tikhonov weight
 LAM_EVALS = 6
 LAM_FALLBACK = 1e-4
+MISFIT_AUTO_FACTOR = 2.0     # automatic misfit warning: twice the relative noise of the deep curve
 BOUND_RTOL = 1e-6
 _LSQ_METHOD = "bvls"         # bvls and trf agree to 1e-9 on the benchmark; bvls was faster (module docstring)
 DEFAULT_MIN_BED = {"resistivity": 1.0, "RHOB": 1.5, "GR": 2.0}
@@ -82,7 +83,7 @@ class DeconParams:
     mult_max_iter: int = 100
     output: str = "blocky"
     max_ratio: float = 10.0
-    misfit_warn: float = 0.10
+    misfit_warn: Optional[float] = None       # None: automatic, MISFIT_AUTO_FACTOR x noise_rel
     edits: Dict[str, list] = field(default_factory=lambda: {"add": [], "remove": []})
     edit_tol_ft: float = 1.0
 
@@ -108,6 +109,11 @@ class DeconParams:
         elif "edits" in values:
             del values["edits"]
         return cls(**values)
+
+    @property
+    def misfit_warn_value(self) -> float:
+        """The misfit warning level in use: the set value, or ``MISFIT_AUTO_FACTOR`` times the noise."""
+        return float(self.misfit_warn) if self.misfit_warn is not None else MISFIT_AUTO_FACTOR * float(self.noise_rel)
 
     @property
     def width_ft(self) -> float:
@@ -823,7 +829,8 @@ def _segment(j0, j1, z, *, hires, params, act, data_ok, sigma_a, log_domain, w, 
                 ev.add("LRLC_DECON_NOT_CONVERGED", zone_c, 1, f"{c_lo:.1f}-{c_hi:.1f} ft")
         resid = A @ xs - 1.0
         m_rms, m_max = _rms(resid), float(np.max(np.abs(resid)))
-        warn = float(warns.get(zone_c, params.misfit_warn))
+        zone_warn = warns.get(zone_c)
+        warn = float(zone_warn) if zone_warn is not None else params.misfit_warn_value
         if m_rms > warn:
             counts["windows_bad_misfit"] += 1
             if status == "ok":

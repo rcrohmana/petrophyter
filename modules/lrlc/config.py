@@ -261,7 +261,7 @@ LRLC_PARAM_DEFAULTS: Dict[str, Any] = {
     "dec_mult_max_iter": 100,
     "dec_output": "blocky",
     "dec_max_ratio": 10.0,
-    "dec_misfit_warn": 0.10,
+    "dec_misfit_warn": None,          # None: automatic, 2 x dec_noise_rel
     "dec_edits": {"add": [], "remove": []},
     "dec_edit_tol_ft": 1.0,
     # Elastic-attribute screening thresholds (design defaults).
@@ -327,7 +327,7 @@ INV_R50_RANGE = (2.0, 400.0)
 
 # Numeric ladder keys that also accept None.
 LRLC_NULLABLE = ("cut_sw_target", "phi_max", "phi_sh", "ma_rho", "sh_rho", "qv_rho_g",
-                 "rmf", "inv_r50", "dec_min_bed_ft", "dec_lambda") + LRLC_INTERVALS
+                 "rmf", "inv_r50", "dec_min_bed_ft", "dec_lambda", "dec_misfit_warn") + LRLC_INTERVALS
 
 # Ladder keys added with session format 2.6.
 L2_PARAM_KEYS = (

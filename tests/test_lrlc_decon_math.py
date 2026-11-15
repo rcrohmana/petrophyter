@@ -609,3 +609,16 @@ def test_misfit_text_hints_at_the_response_width_when_lambda_is_at_its_floor():
     assert "check the response width" in misfit[0]
     fixed = _run(z, rt, ref, replace(wrong, lam=1e-4))          # a fixed lambda says nothing about the width
     assert all("response width" not in text for code, text, _, _ in fixed.issues)
+
+
+def test_misfit_warning_is_automatic_at_twice_the_noise_unless_set():
+    assert DeconParams().misfit_warn is None and DeconParams().misfit_warn_value == pytest.approx(0.06)
+    assert DeconParams(noise_rel=0.05).misfit_warn_value == pytest.approx(0.10)
+    assert DeconParams(misfit_warn=0.2, noise_rel=0.05).misfit_warn_value == 0.2
+    assert DeconParams.from_settings({"dec_misfit_warn": None}).misfit_warn is None
+    z, rt, ref, _, _, _ = _well(noise=0.02)
+    wrong = replace(DeconParams(), fwhm_ft=1.25 * FWHM).with_reference("RXO")
+    auto = _run(z, rt, ref, wrong)
+    loose = _run(z, rt, ref, replace(wrong, misfit_warn=0.5))
+    assert auto.counts["windows_bad_misfit"] >= loose.counts["windows_bad_misfit"]
+    assert loose.counts["windows_bad_misfit"] == 0

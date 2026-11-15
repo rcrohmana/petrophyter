@@ -91,7 +91,8 @@ def derive_decon_well(*, depth, rt, candidates, zone_keys, lrlc, issues: Optiona
     well = well_settings(lrlc)
     params = DeconParams.from_settings(well)
     ratio_by_zone = {str(z): float(_resolved(lrlc, z).get("dec_max_ratio", params.max_ratio)) for z in zones}
-    misfit_by_zone = {str(z): float(_resolved(lrlc, z).get("dec_misfit_warn", params.misfit_warn)) for z in zones}
+    misfit_by_zone = {str(z): _resolved(lrlc, z).get("dec_misfit_warn", params.misfit_warn) for z in zones}
+    misfit_by_zone = {z: (None if v is None else float(v)) for z, v in misfit_by_zone.items()}
     source = str(well.get("dec_hires_source", "auto"))
     kind, column, hires = pick_reference(source, candidates or {})
     params = params.with_reference(kind or ("HIRES" if source == "auto" else source))
@@ -245,7 +246,8 @@ def decon_block(info: Optional[dict], guard_decisions: Optional[dict], has_label
     if p.get("min_bed_ft") is None:
         p["min_bed_ft"] = default_min_bed(info["hires"].get("curve"))
     p["lambda"] = p.pop("lam")
-    p.update({"tool": info.get("tool", "custom"), "label": label, "width_ft": float(params.width_ft)})
+    p.update({"tool": info.get("tool", "custom"), "label": label, "width_ft": float(params.width_ft),
+              "misfit_warn_used": params.misfit_warn_value})
     block = {
         "hires": dict(info["hires"]),
         "params": p,
